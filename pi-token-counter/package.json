@@ -1,0 +1,11 @@
+{
+  "name": "pi-token-counter",
+  "version": "0.1.0",
+  "description": "Live token counter widget for pi",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "tokens", "usage", "tui"],
+  "license": "MIT",
+  "engines": { "node": ">=18.0.0" },
+  "pi": { "extensions": ["./index.ts"] },
+  "files": ["index.ts", "README.md"]
+}
