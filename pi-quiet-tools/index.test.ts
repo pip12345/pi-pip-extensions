@@ -15,8 +15,18 @@ describe("pi-quiet-tools", () => {
     const pi = createMockPi();
     quietTools(pi as any);
     const read = getRegisteredTool(pi, "read");
-    const rendered = read.renderCall({ path: "/tmp/file.ts", offset: 3, limit: 2 }, theme).render(80).join("\n");
+    const rendered = read.renderCall({ path: "/tmp/file.ts", offset: 3, limit: 2 }, theme, { expanded: false }).render(80).join("\n");
     expect(rendered).toContain("› read: /tmp/file.ts:3-4");
+    expect(rendered).not.toContain("expanded");
+  });
+
+  it("warns when quiet tool output is globally expanded", () => {
+    const pi = createMockPi();
+    quietTools(pi as any);
+    const read = getRegisteredTool(pi, "read");
+    const rendered = read.renderCall({ path: "/tmp/file.ts" }, theme, { expanded: true }).render(80).join("\n");
+    expect(rendered).toContain("› read: /tmp/file.ts");
+    expect(rendered).toContain("expanded");
   });
 
   it("hides successful collapsed results but shows errors", () => {

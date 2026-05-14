@@ -8,6 +8,7 @@ export * from "./src/capabilities.ts";
 export * from "./src/content.ts";
 export * from "./src/custom-component.ts";
 export * from "./src/keys.ts";
+export * from "./src/footer-registry.ts";
 export * from "./src/lifecycle.ts";
 export * from "./src/prompt-registry.ts";
 export * from "./src/settings.ts";

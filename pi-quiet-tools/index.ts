@@ -55,8 +55,9 @@ function expandedOutput(result: any, theme: any): Component {
   return new Text("\n" + text.split("\n").map((line) => theme.fg("toolOutput", line)).join("\n"), 0, 0);
 }
 
-function quiet(theme: any, label: string, rest: string): Text {
-  return new Text(theme.fg("dim", `› ${label}: ${rest}`), 0, 0);
+function quiet(theme: any, label: string, rest: string, context?: any): Text {
+  const expandedWarning = context?.expanded ? ` ${theme.fg("warning", "expanded")}` : "";
+  return new Text(theme.fg("dim", `› ${label}: ${rest}`) + expandedWarning, 0, 0);
 }
 
 function renderErrorIfCollapsed(result: any, theme: any): Component {
@@ -122,12 +123,12 @@ export default function (pi: ExtensionAPI) {
       return getBuiltInTools(ctx.cwd).read.execute(toolCallId, params, signal, onUpdate);
     },
 
-    renderCall(args, theme) {
+    renderCall(args, theme, context) {
       const path = shortenPath(args.path, "");
       const start = typeof args.offset === "number" ? args.offset : undefined;
       const end = typeof args.limit === "number" ? (start ?? 1) + args.limit - 1 : undefined;
       const range = start || end ? `:${start ?? 1}${end ? `-${end}` : ""}` : "";
-      return quiet(theme, "read", `${path}${range}`);
+      return quiet(theme, "read", `${path}${range}`, context);
     },
 
     renderResult(result, { expanded }, theme) {
@@ -147,13 +148,13 @@ export default function (pi: ExtensionAPI) {
       return getBuiltInTools(ctx.cwd).grep.execute(toolCallId, params, signal, onUpdate);
     },
 
-    renderCall(args, theme) {
+    renderCall(args, theme, context) {
       const pattern = args.literal ? String(args.pattern ?? "") : `/${String(args.pattern ?? "")}/`;
       const path = shortenPath(args.path, ".");
       const bits = [pattern, `in ${path}`];
       if (args.glob) bits.push(String(args.glob));
       if (args.ignoreCase) bits.push("-i");
-      return quiet(theme, "grep", bits.join(" "));
+      return quiet(theme, "grep", bits.join(" "), context);
     },
 
     renderResult(result, { expanded }, theme) {
@@ -173,10 +174,10 @@ export default function (pi: ExtensionAPI) {
       return getBuiltInTools(ctx.cwd).find.execute(toolCallId, params, signal, onUpdate);
     },
 
-    renderCall(args, theme) {
+    renderCall(args, theme, context) {
       const pattern = String(args.pattern ?? "");
       const path = shortenPath(args.path, ".");
-      return quiet(theme, "find", `${pattern} in ${path}`);
+      return quiet(theme, "find", `${pattern} in ${path}`, context);
     },
 
     renderResult(result, { expanded }, theme) {
@@ -196,8 +197,8 @@ export default function (pi: ExtensionAPI) {
       return getBuiltInTools(ctx.cwd).ls.execute(toolCallId, params, signal, onUpdate);
     },
 
-    renderCall(args, theme) {
-      return quiet(theme, "ls", shortenPath(args.path, "."));
+    renderCall(args, theme, context) {
+      return quiet(theme, "ls", shortenPath(args.path, "."), context);
     },
 
     renderResult(result, { expanded }, theme) {
