@@ -14,6 +14,23 @@ export function padLeftAnsi(value: string, width: number): string {
   return " ".repeat(Math.max(0, width - visibleWidth(value))) + value;
 }
 
+export function wrapAnsi(value: string, width: number): string[] {
+  const words = value.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && visibleWidth(candidate) > width) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+
 export interface BoxOptions {
   title?: string;
   borderColor?: string;

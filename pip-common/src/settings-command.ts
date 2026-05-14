@@ -1,7 +1,7 @@
 import { PipCustomComponent } from "./custom-component.ts";
 import { truncateToWidth } from "./keys.ts";
 import { pipSettings, type SettingsRegistry, type SettingRow } from "./settings.ts";
-import { boxLines, padAnsi, themeFg } from "./tui.ts";
+import { boxLines, padAnsi, themeFg, wrapAnsi } from "./tui.ts";
 
 function valueColor(row: SettingRow, value: string, theme: any, registry: SettingsRegistry): string {
   const current = registry.get(row.path);
@@ -77,7 +77,15 @@ class PipSettingsComponent extends PipCustomComponent<void> {
       return boxLines(lines, bodyWidth, theme);
     }
 
-    const visibleRows = rows.slice(this.scroll, this.scroll + 18);
+    const selectedRow = rows[this.selected];
+    if (selectedRow?.definition.description) {
+      for (const line of wrapAnsi(selectedRow.definition.description, bodyWidth - 4)) {
+        lines.push(`  ${themeFg(theme, "dim", line)}`);
+      }
+      lines.push("");
+    }
+
+    const visibleRows = rows.slice(this.scroll, this.scroll + 16);
     let previousSection = "";
     for (const row of visibleRows) {
       if (row.section.id !== previousSection) {
@@ -97,7 +105,7 @@ class PipSettingsComponent extends PipCustomComponent<void> {
       lines.push(truncateToWidth(rendered, bodyWidth - 2));
     }
 
-    if (rows.length > 18) lines.push(themeFg(theme, "dim", `${this.selected + 1}/${rows.length}`));
+    if (rows.length > 16) lines.push(themeFg(theme, "dim", `${this.selected + 1}/${rows.length}`));
     return boxLines(lines, bodyWidth, theme);
   }
 }

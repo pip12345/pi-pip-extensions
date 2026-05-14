@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
-import { boxLines, hasTextContent, PipCustomComponent, setTextContent, stripAnsi, textFromContent as commonTextFromContent } from "pip-common";
+import { boxLines, hasTextContent, PipCustomComponent, pipSettings, registerSettingsSection, setTextContent, setting, stripAnsi, textFromContent as commonTextFromContent } from "pip-common";
 
 type ExtensionAPI = any;
 type Theme = any;
@@ -12,17 +12,22 @@ type Ctx = any;
 type Header = { type: "session"; [key: string]: any };
 type Entry = { type: string; id: string; parentId: string | null; timestamp: string; [key: string]: any };
 type FileEntry = Header | Entry;
+type SnapshotToolResults = "off" | "truncated" | "full";
+type SummarySnapshotPolicy = { summarySnapshots: boolean; snapshotToolResults: SnapshotToolResults; toolResultTruncation: number };
 type Clipboard =
   | { kind: "entries"; entries: Entry[]; label: string; structure?: "linear" | "preserve" }
-  | { kind: "compaction"; summary: string; sourceEntryIds: string[]; label: string; tokensBefore: number };
+  | { kind: "summary"; summary: string; sourceEntryIds: string[]; sourceEntries?: Entry[]; label: string; snapshotPolicy: SummarySnapshotPolicy };
 
-type ExitResult = { action: "quit" } | { action: "edit"; id: string } | { action: "compact"; id: string } | { action: "label"; id: string };
+type ExitResult = { action: "quit" } | { action: "edit"; id: string } | { action: "summarize"; id: string } | { action: "label"; id: string };
 type FilterMode = "default" | "show-tools" | "user-only" | "labeled-only" | "all";
 type TreeGutter = { position: number; show: boolean };
-type TreeRow = { entry: Entry; depth: number; isLast: boolean; gutters: TreeGutter[]; showConnector: boolean; isVirtualRootChild: boolean; foldable: boolean; folded: boolean; multipleRoots: boolean; activePath: boolean };
+type SummarySourceVirtualRow = { kind: "summary-source"; summaryEntryId: string; sourceEntryId: string; fromSnapshot: boolean; missing?: boolean };
+type TreeRow = { entry: Entry; depth: number; isLast: boolean; gutters: TreeGutter[]; showConnector: boolean; isVirtualRootChild: boolean; foldable: boolean; folded: boolean; multipleRoots: boolean; activePath: boolean; virtual?: SummarySourceVirtualRow };
 type DraftSnapshot = { entries: Entry[]; targetLeafId: string | null; clipboard: Clipboard | null; markId: string | null; dirty: boolean };
 
 const EXT = "pi-tree-edit";
+const SUMMARY_CUSTOM_TYPE = "pi-tree-edit.summary";
+const TREE_EDIT_SETTINGS_ID = "tree-edit";
 const HELP_ITEMS = [
   "j/k move", "Ctrl+←/→ fold",
   "/ search", "f filter",
@@ -31,7 +36,8 @@ const HELP_ITEMS = [
   "i include branches",
   "y copy",
   "c cut",
-  "C compact",
+  "S summarize",
+  "o open summary",
   "p paste after",
   "P paste as new branch",
   "d delete",
@@ -122,6 +128,100 @@ function isVisibleEntry(entry: Entry, mode: FilterMode, labels: Map<string, stri
 
 function compactLine(value: string): string {
   return stripAnsi(value).replace(/\s+/g, " ").trim();
+}
+
+function getSummarySettings(): SummarySnapshotPolicy {
+  return {
+    summarySnapshots: Boolean(pipSettings.get(`${TREE_EDIT_SETTINGS_ID}.summarySnapshots`)),
+    snapshotToolResults: pipSettings.get<SnapshotToolResults>(`${TREE_EDIT_SETTINGS_ID}.snapshotToolResults`),
+    toolResultTruncation: pipSettings.get<number>(`${TREE_EDIT_SETTINGS_ID}.toolResultTruncation`),
+  };
+}
+
+function isSummaryEntry(entry: Entry): boolean {
+  return entry.type === "custom_message" && entry.customType === SUMMARY_CUSTOM_TYPE && entry.details?.kind === "summary";
+}
+
+function isToolLikeEntry(entry: Entry): boolean {
+  const role = entry.type === "message" ? entry.message?.role : undefined;
+  return role === "toolResult" || role === "bashExecution";
+}
+
+function truncateStrings(value: any, limit: number): any {
+  if (typeof value === "string") return value.length > limit ? `${value.slice(0, limit)}\n...[truncated by ${EXT}: ${value.length - limit} chars omitted]` : value;
+  if (Array.isArray(value)) return value.map((item) => truncateStrings(item, limit));
+  if (value && typeof value === "object") {
+    const out: any = {};
+    for (const [key, child] of Object.entries(value)) out[key] = truncateStrings(child, limit);
+    return out;
+  }
+  return value;
+}
+
+function snapshotEntries(entries: Entry[], policy: SummarySnapshotPolicy): Entry[] | undefined {
+  if (!policy.summarySnapshots) return undefined;
+  const snapshots: Entry[] = [];
+  for (const entry of entries) {
+    if (isToolLikeEntry(entry) && policy.snapshotToolResults === "off") continue;
+    let snapshot = clone(entry);
+    if (isToolLikeEntry(entry) && policy.snapshotToolResults === "truncated") {
+      snapshot = truncateStrings(snapshot, Math.max(1, policy.toolResultTruncation));
+      snapshot.details = { ...(snapshot.details ?? {}), snapshotTruncatedBy: EXT };
+    }
+    snapshots.push(snapshot);
+  }
+  return snapshots;
+}
+
+function summaryDetails(entry: Entry): any | undefined {
+  return isSummaryEntry(entry) ? entry.details : undefined;
+}
+
+function summarySourceIds(entry: Entry): string[] {
+  const ids = summaryDetails(entry)?.sourceEntryIds;
+  return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+}
+
+function createSummaryEntry(clipboard: Extract<Clipboard, { kind: "summary" }>, id: string, parentId: string | null, timestamp: string): Entry {
+  return {
+    type: "custom_message",
+    id,
+    parentId,
+    timestamp,
+    customType: SUMMARY_CUSTOM_TYPE,
+    content: [{ type: "text", text: `Summary of selected tree range:\n\n${clipboard.summary}` }],
+    display: true,
+    details: {
+      from: EXT,
+      kind: "summary",
+      sourceEntryIds: clipboard.sourceEntryIds,
+      sourceEntries: clipboard.sourceEntries,
+      sourceLabel: clipboard.label,
+      snapshotPolicy: clipboard.snapshotPolicy,
+    },
+  };
+}
+
+function missingSourceEntry(summaryEntry: Entry, sourceEntryId: string): Entry {
+  return { type: "custom", id: `missing:${summaryEntry.id}:${sourceEntryId}`, parentId: summaryEntry.id, timestamp: summaryEntry.timestamp, customType: "missing-summary-source", data: { sourceEntryId } };
+}
+
+function resolveSummarySourceRows(summaryEntry: Entry, allEntries: Entry[]): Array<{ entry: Entry; fromSnapshot: boolean; missing: boolean; sourceEntryId: string }> {
+  const byId = entryMap(allEntries);
+  const snapshots = new Map<string, Entry>();
+  const rawSnapshots = summaryDetails(summaryEntry)?.sourceEntries;
+  if (Array.isArray(rawSnapshots)) for (const entry of rawSnapshots) if (entry?.id) snapshots.set(entry.id, entry);
+  return summarySourceIds(summaryEntry).map((sourceEntryId) => {
+    const live = byId.get(sourceEntryId);
+    if (live) return { entry: live, fromSnapshot: false, missing: false, sourceEntryId };
+    const snapshot = snapshots.get(sourceEntryId);
+    if (snapshot) return { entry: clone(snapshot), fromSnapshot: true, missing: false, sourceEntryId };
+    return { entry: missingSourceEntry(summaryEntry, sourceEntryId), fromSnapshot: false, missing: true, sourceEntryId };
+  });
+}
+
+function rowKey(row: TreeRow): string {
+  return row.virtual ? `virtual:${row.virtual.summaryEntryId}:${row.virtual.sourceEntryId}` : row.entry.id;
 }
 
 function estimateTokensForEntries(entries: Entry[]): number {
@@ -331,6 +431,32 @@ function visibleRows(entries: Entry[], mode: FilterMode, foldedIds: Set<string> 
   return out;
 }
 
+function expandSummaryRows(rows: TreeRow[], entries: Entry[], expandedSummaryIds: Set<string>): TreeRow[] {
+  const out: TreeRow[] = [];
+  for (const row of rows) {
+    out.push(row);
+    if (!isSummaryEntry(row.entry) || !expandedSummaryIds.has(row.entry.id)) continue;
+    const sources = resolveSummarySourceRows(row.entry, entries);
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+      out.push({
+        entry: source.entry,
+        depth: row.depth + 1,
+        isLast: i === sources.length - 1,
+        gutters: [...row.gutters],
+        showConnector: true,
+        isVirtualRootChild: false,
+        foldable: false,
+        folded: false,
+        multipleRoots: row.multipleRoots,
+        activePath: false,
+        virtual: { kind: "summary-source", summaryEntryId: row.entry.id, sourceEntryId: source.sourceEntryId, fromSnapshot: source.fromSnapshot, missing: source.missing },
+      });
+    }
+  }
+  return out;
+}
+
 function descendantsOf(entries: Entry[], id: string): Set<string> {
   const children = childrenMap(entries);
   const out = new Set<string>();
@@ -442,9 +568,9 @@ class DraftSession {
   viewSelectedId: string | null = null;
   flashEntryIds: string[] = [];
   flashNonce = 0;
-  flashKind: "copy" | "cut" | "paste" | "compact" | null = null;
+  flashKind: "copy" | "cut" | "paste" | "summary" | null = null;
   highlightEntryIds: string[] = [];
-  highlightKind: "copy" | "paste" | "compact" | null = null;
+  highlightKind: "copy" | "paste" | "summary" | null = null;
   lastOperation = "";
   private undoStack: DraftSnapshot[] = [];
   private redoStack: DraftSnapshot[] = [];
@@ -655,9 +781,9 @@ class DraftSession {
     let lastParent = parentId;
     const now = new Date().toISOString();
     const added: Entry[] = [];
-    if (this.clipboard.kind === "compaction") {
+    if (this.clipboard.kind === "summary") {
       const id = newId(existing);
-      added.push({ type: "compaction", id, parentId: lastParent, timestamp: now, summary: this.clipboard.summary, firstKeptEntryId: id, tokensBefore: this.clipboard.tokensBefore, details: { from: EXT, sourceEntryIds: this.clipboard.sourceEntryIds }, fromHook: true });
+      added.push(createSummaryEntry(this.clipboard, id, lastParent, now));
       lastParent = id;
     } else {
       const idMap = new Map<string, string>();
@@ -711,7 +837,7 @@ class DraftSession {
     this.flashEntryIds = addedIds;
     this.flashKind = "paste";
     this.flashNonce += 1;
-    if (this.clipboard) (this.clipboard as any).sourceEntryIds = [];
+    if (this.clipboard?.kind === "entries") (this.clipboard as any).sourceEntryIds = [];
     this.dirty = true;
     this.lastOperation = `pasted ${built.added.length} entr${built.added.length === 1 ? "y" : "ies"}`;
     this.message = `Pasted ${built.added.length} entr${built.added.length === 1 ? "y" : "ies"}${branch ? " as new branch" : ""}`;
@@ -766,11 +892,12 @@ class DraftSession {
     this.flashEntryIds = addedIds;
     this.flashKind = "paste";
     this.flashNonce += 1;
-    if (this.clipboard) (this.clipboard as any).sourceEntryIds = [];
+    if (this.clipboard?.kind === "entries") (this.clipboard as any).sourceEntryIds = [];
     this.cleanupLabels();
     this.lastOperation = `replaced ${range.length} with ${built.added.length}`;
     this.dirty = true;
-    this.message = `Replaced ${range.length} entr${range.length === 1 ? "y" : "ies"} with ${built.added.length}`;
+    const snapshotWarning = this.clipboard?.kind === "summary" && !this.clipboard.snapshotPolicy.summarySnapshots ? " (summary snapshots off; originals may not be recoverable)" : "";
+    this.message = `Replaced ${range.length} entr${range.length === 1 ? "y" : "ies"} with ${built.added.length}${snapshotWarning}`;
     return built.lastParent;
   }
 
@@ -829,14 +956,14 @@ class DraftSession {
     this.message = `Edited ${id}`;
   }
 
-  async compactToClipboard(selectedId: string, ctx: Ctx, foldedIds: Set<string> = new Set(), visibleBase?: Entry[]): Promise<void> {
+  async summarizeToClipboard(selectedId: string, ctx: Ctx, foldedIds: Set<string> = new Set(), visibleBase?: Entry[]): Promise<void> {
     const entries = this.selectedEntries(selectedId, foldedIds, visibleBase);
     if (!entries.length) {
-      this.message = "No range to compact";
+      this.message = "No range to summarize";
       return;
     }
     if (!ctx.model) {
-      this.message = "No active model for AI compaction";
+      this.message = "No active model for AI summarization";
       return;
     }
     const messages = messagesFromEntries(entries);
@@ -857,26 +984,28 @@ class DraftSession {
       auth.apiKey,
       auth.headers,
       ctx.signal,
-      "Summarize this selected conversation range for future context. Preserve decisions, constraints, user preferences, important facts, and unresolved tasks. Do not include raw transcript unless necessary.",
+      "Summarize the selected session entries so this summary can be injected into another branch as context. Preserve decisions, constraints, file changes, commands run, errors, unresolved tasks, user preferences, and final state.",
       undefined,
       "off"
     );
     generated = generated.trim();
-    const summary = await ctx.ui.editor("Review AI compaction summary", generated);
+    const summary = await ctx.ui.editor("Review branch/range summary", generated);
     if (!summary?.trim()) {
-      this.message = "Compaction cancelled";
+      this.message = "Summarization cancelled";
       return;
     }
     const sourceIds = entries.map((e) => e.id);
-    this.clipboard = { kind: "compaction", summary: summary.trim(), sourceEntryIds: sourceIds, label: `AI compaction of ${entries.length}`, tokensBefore: estimateTokensForEntries(entries) };
+    const snapshotPolicy = getSummarySettings();
+    const sourceEntries = snapshotEntries(entries, snapshotPolicy);
+    this.clipboard = { kind: "summary", summary: summary.trim(), sourceEntryIds: sourceIds, sourceEntries, label: `summary of ${entries.length}`, snapshotPolicy };
     this.flashEntryIds = sourceIds;
-    this.flashKind = "compact";
+    this.flashKind = "summary";
     this.flashNonce += 1;
     this.highlightEntryIds = sourceIds;
-    this.highlightKind = "compact";
-    this.lastOperation = `compacted ${entries.length} entr${entries.length === 1 ? "y" : "ies"} to clipboard`;
+    this.highlightKind = "summary";
+    this.lastOperation = `summarized ${entries.length} entr${entries.length === 1 ? "y" : "ies"} to clipboard`;
     this.viewSelectedId = selectedId;
-    this.message = `Copied ${this.clipboard.label}; press p to replace the active range, or v to cancel range`;
+    this.message = `Copied ${this.clipboard.label}; move to target and press p/P to insert it`;
   }
 }
 
@@ -890,6 +1019,7 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   private searchMode = false;
   private includeSubbranches = false;
   private foldedIds = new Set<string>();
+  private expandedSummaryIds = new Set<string>();
   private flashSeenNonce = 0;
   private flashOn = false;
   private flashTimer: ReturnType<typeof setInterval> | null = null;
@@ -940,25 +1070,23 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
 
   protected handleKey(key: string): void {
     const rows = this.visibleRows();
-    const selectedEntry = rows[this.selected]?.entry;
+    const selectedRow = rows[this.selected];
+    const selectedEntry = selectedRow?.entry;
     const selectedId = selectedEntry?.id;
+    const selectedRowKey = selectedRow ? rowKey(selectedRow) : undefined;
+    const isVirtual = Boolean(selectedRow?.virtual);
     let changed = false;
 
+    const virtualReadOnly = () => {
+      this.draft.message = "Virtual summary rows are read-only; use y to copy originals";
+      return true;
+    };
+
     if (this.searchMode) {
-      if (key === "escape") {
-        this.searchMode = false;
-      } else if (key === "return") {
-        this.searchMode = false;
-      } else if (key === "backspace" || key === "delete" || key === "ctrl+h") {
-        this.searchQuery = this.searchQuery.slice(0, -1);
-        this.clampSelection();
-      } else if (key === "space") {
-        this.searchQuery += " ";
-        this.clampSelection();
-      } else if (key.length === 1 && key.charCodeAt(0) >= 32) {
-        this.searchQuery += key;
-        this.clampSelection();
-      }
+      if (key === "escape" || key === "return") this.searchMode = false;
+      else if (key === "backspace" || key === "delete" || key === "ctrl+h") { this.searchQuery = this.searchQuery.slice(0, -1); this.clampSelection(); }
+      else if (key === "space") { this.searchQuery += " "; this.clampSelection(); }
+      else if (key.length === 1 && key.charCodeAt(0) >= 32) { this.searchQuery += key; this.clampSelection(); }
       this.requestRender();
       return;
     }
@@ -974,139 +1102,99 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       this.close({ action: "quit" });
       return;
     }
-    if (key === "u") {
-      this.draft.undo();
-      this.clampSelection();
-      changed = true;
-    } else if (key === "U") {
-      this.draft.redo();
-      this.clampSelection();
-      changed = true;
-    }
+    if (key === "u") { this.draft.undo(); this.clampSelection(); changed = true; }
+    else if (key === "U") { this.draft.redo(); this.clampSelection(); changed = true; }
     else if (key === "up" || key === "k") { this.move(-1); changed = true; }
     else if (key === "down" || key === "j") { this.move(1); changed = true; }
     else if (key === "pageup") { this.move(-10); changed = true; }
     else if (key === "pagedown") { this.move(10); changed = true; }
     else if (selectedId && key === "ctrl+left") {
-      const row = rows[this.selected];
-      if (row?.foldable) {
-        this.foldedIds.add(selectedId);
-        this.clampSelection();
-        changed = true;
-      }
+      if (!isVirtual && selectedRow?.foldable) { this.foldedIds.add(selectedId); this.clampSelection(); changed = true; }
     }
     else if (selectedId && key === "ctrl+right") {
-      if (this.foldedIds.delete(selectedId)) {
+      if (!isVirtual && this.foldedIds.delete(selectedId)) { this.clampSelection(); changed = true; }
+    }
+    else if (key === "/") { this.searchMode = true; this.draft.message = "Search: type to filter, Enter to keep, Esc to stop editing search"; changed = true; }
+    else if (key === "i") { this.includeSubbranches = !this.includeSubbranches; this.draft.message = this.includeSubbranches ? "Range operations include subbranches" : "Range operations use main path only"; changed = true; }
+    else if (key === "f") { this.filterMode = this.filterMode === "default" ? "show-tools" : this.filterMode === "show-tools" ? "user-only" : this.filterMode === "user-only" ? "labeled-only" : this.filterMode === "labeled-only" ? "all" : "default"; this.draft.message = `Filter: ${this.filterLabel(this.filterMode)}`; this.clampSelection(); changed = true; }
+    else if (selectedRow && key === "o") {
+      const summaryId = selectedRow.virtual?.summaryEntryId ?? (isSummaryEntry(selectedRow.entry) ? selectedRow.entry.id : undefined);
+      if (summaryId) {
+        if (this.expandedSummaryIds.has(summaryId)) this.expandedSummaryIds.delete(summaryId);
+        else this.expandedSummaryIds.add(summaryId);
+        this.draft.message = this.expandedSummaryIds.has(summaryId) ? "Summary opened" : "Summary closed";
         this.clampSelection();
-        changed = true;
-      }
-    }
-    else if (key === "/") {
-      this.searchMode = true;
-      this.draft.message = "Search: type to filter, Enter to keep, Esc to stop editing search";
+      } else this.draft.message = "Selected row is not a summary";
       changed = true;
     }
-    else if (key === "i") {
-      this.includeSubbranches = !this.includeSubbranches;
-      this.draft.message = this.includeSubbranches ? "Range operations include subbranches" : "Range operations use main path only";
+    else if (selectedRowKey && key === "v") {
+      if (this.draft.markId) { this.draft.markId = null; this.draft.message = "Range cancelled"; }
+      else { this.draft.markId = selectedRowKey; this.draft.message = `Range started at ${selectedId}; move cursor, then y to copy, c to cut, or S to summarize`; }
       changed = true;
-    }
-    else if (key === "f") {
-      this.filterMode = this.filterMode === "default" ? "show-tools" : this.filterMode === "show-tools" ? "user-only" : this.filterMode === "user-only" ? "labeled-only" : this.filterMode === "labeled-only" ? "all" : "default";
-      this.draft.message = `Filter: ${this.filterLabel(this.filterMode)}`;
-      this.clampSelection();
-      changed = true;
-    }
-    else if (selectedId && key === "v") {
-      if (this.draft.markId) {
-        this.draft.markId = null;
-        this.draft.message = "Range cancelled";
-      } else {
-        this.draft.markId = selectedId;
-        this.draft.message = `Range started at ${selectedId}; move cursor, then y to copy, c to cut, or C to compact`;
-      }
-      changed = true;
-    } else if (selectedId && key === "y") {
+    } else if (selectedRowKey && selectedId && key === "y") {
       this.draft.checkpoint();
-      this.draft.copyRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedId, false), this.includeSubbranches ? "preserve" : "linear");
+      this.draft.copyRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false), this.includeSubbranches ? "preserve" : "linear");
       changed = true;
     } else if (selectedId && key === "c") {
-      this.draft.checkpoint();
-      this.draft.cutRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedId, false), this.includeSubbranches ? "preserve" : "linear");
-      this.clampSelection();
-      changed = true;
+      if (isVirtual) changed = virtualReadOnly();
+      else { this.draft.checkpoint(); this.draft.cutRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false), this.includeSubbranches ? "preserve" : "linear"); this.clampSelection(); changed = true; }
     } else if (selectedId && key === "p") {
-      this.draft.checkpoint();
-      const pastedId = this.draft.markId ? this.draft.replaceRangeWithClipboard(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedId, false)) : this.draft.pasteAfter(selectedId, false);
-      this.selectId(pastedId);
-      changed = true;
+      if (isVirtual) { this.draft.message = "Select a real tree row to paste"; changed = true; }
+      else { this.draft.checkpoint(); const pastedId = this.draft.markId ? this.draft.replaceRangeWithClipboard(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)) : this.draft.pasteAfter(selectedId, false); this.selectId(pastedId); changed = true; }
     } else if (selectedId && key === "P") {
-      if (this.draft.markId) {
-        this.draft.message = "P is disabled while a range is active; use p to replace the range or v to cancel";
-      } else {
-        this.draft.checkpoint();
-        const pastedId = this.draft.pasteAfter(selectedId, true);
-        this.selectId(pastedId);
-      }
+      if (isVirtual) this.draft.message = "Select a real tree row to paste";
+      else if (this.draft.markId) this.draft.message = "P is disabled while a range is active; use p to replace the range or v to cancel";
+      else { this.draft.checkpoint(); const pastedId = this.draft.pasteAfter(selectedId, true); this.selectId(pastedId); }
       changed = true;
     } else if (selectedId && key === "d") {
-      this.draft.checkpoint();
-      this.draft.deleteRangeOrEntry(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedId, false));
-      this.clampSelection();
-      changed = true;
+      if (isVirtual) changed = virtualReadOnly();
+      else { this.draft.checkpoint(); this.draft.deleteRangeOrEntry(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)); this.clampSelection(); changed = true; }
     } else if (selectedId && key === "D") {
-      this.draft.checkpoint();
-      this.draft.deleteSubtree(selectedId);
-      this.clampSelection();
-      changed = true;
+      if (isVirtual) changed = virtualReadOnly();
+      else { this.draft.checkpoint(); this.draft.deleteSubtree(selectedId); this.clampSelection(); changed = true; }
     } else if (selectedId && key === "r") {
-      this.draft.checkpoint();
-      this.draft.redoFrom(selectedId);
-      this.selectId(selectedId);
-      changed = true;
+      if (isVirtual) changed = virtualReadOnly();
+      else { this.draft.checkpoint(); this.draft.redoFrom(selectedId); this.selectId(selectedId); changed = true; }
     } else if (selectedId && (key === "b" || key === "return")) {
-      this.draft.checkpoint();
-      this.draft.targetLeafId = selectedId;
-      this.draft.dirty = true;
-      this.draft.message = `Current location set to ${selectedId}`;
-      changed = true;
+      if (isVirtual) { this.draft.message = "Virtual summary rows cannot be the current location"; changed = true; }
+      else { this.draft.checkpoint(); this.draft.targetLeafId = selectedId; this.draft.dirty = true; this.draft.message = `Current location set to ${selectedId}`; changed = true; }
     } else if (selectedId && key === "e") {
-      this.draft.viewSelectedId = selectedId;
-      this.close({ action: "edit", id: selectedId });
-      return;
+      if (isVirtual) { this.draft.message = "Virtual summary rows are read-only"; changed = true; }
+      else { this.draft.viewSelectedId = selectedId; this.close({ action: "edit", id: selectedId }); return; }
     } else if (selectedId && key === "L") {
-      this.draft.viewSelectedId = selectedId;
-      this.close({ action: "label", id: selectedId });
-      return;
-    } else if (selectedId && key === "C") {
-      this.draft.viewSelectedId = selectedId;
-      (this.draft as any).__lastFoldedIds = new Set<string>();
-      (this.draft as any).__lastVisibleRangeEntries = this.operationRangeEntries(rows, selectedId, true).map(clone);
-      if (this.includeSubbranches) this.draft.message = "Compaction uses main path only; subbranches excluded";
-      this.close({ action: "compact", id: selectedId });
-      return;
+      if (isVirtual) { this.draft.message = "Virtual summary rows cannot be labeled"; changed = true; }
+      else { this.draft.viewSelectedId = selectedId; this.close({ action: "label", id: selectedId }); return; }
+    } else if (selectedId && key === "S") {
+      if (isVirtual) { this.draft.message = "Select real rows to summarize"; changed = true; }
+      else { this.draft.viewSelectedId = selectedId; (this.draft as any).__lastFoldedIds = new Set<string>(); (this.draft as any).__lastVisibleRangeEntries = this.operationRangeEntries(rows, selectedRowKey, true).map(clone); if (this.includeSubbranches) this.draft.message = "Summarization uses main path only; subbranches excluded"; this.close({ action: "summarize", id: selectedId }); return; }
     }
 
     if (changed) this.requestRender();
   }
 
   private visibleRows(): TreeRow[] {
-    return visibleRows(this.draft.entries, this.filterMode, this.foldedIds, this.searchQuery, this.draft.targetLeafId);
+    const base = visibleRows(this.draft.entries, this.filterMode, this.foldedIds, this.searchQuery, this.draft.targetLeafId);
+    return expandSummaryRows(base, this.draft.entries, this.expandedSummaryIds);
   }
 
-  private visibleRangeEntries(rows = this.visibleRows(), selectedId = rows[this.selected]?.entry.id): Entry[] {
-    if (!selectedId) return [];
-    if (!this.draft.markId) return rows.filter((row) => row.entry.id === selectedId).map((row) => row.entry);
-    const ia = rows.findIndex((row) => row.entry.id === this.draft.markId);
-    const ib = rows.findIndex((row) => row.entry.id === selectedId);
-    if (ia < 0 || ib < 0) return this.draft.range(this.draft.markId, selectedId);
+  private visibleRangeEntries(rows = this.visibleRows(), selectedKey = rows[this.selected] ? rowKey(rows[this.selected]) : undefined): Entry[] {
+    if (!selectedKey) return [];
+    const selectedRow = rows.find((row) => rowKey(row) === selectedKey);
+    if (!this.draft.markId) return selectedRow && !selectedRow.virtual?.missing ? [selectedRow.entry] : [];
+    const ia = rows.findIndex((row) => rowKey(row) === this.draft.markId);
+    const ib = rows.findIndex((row) => rowKey(row) === selectedKey);
+    if (ia < 0 || ib < 0) return selectedRow && !selectedRow.virtual ? this.draft.range(this.draft.markId, selectedRow.entry.id) : [];
     const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
-    return rows.slice(lo, hi + 1).map((row) => row.entry);
+    return rows.slice(lo, hi + 1).filter((row) => !row.virtual?.missing).map((row) => row.entry);
   }
 
-  private mainPathRangeEntries(rows = this.visibleRows(), selectedId = rows[this.selected]?.entry.id): Entry[] {
+  private mainPathRangeEntries(rows = this.visibleRows(), selectedKey = rows[this.selected] ? rowKey(rows[this.selected]) : undefined): Entry[] {
+    if (!selectedKey) return [];
+    const selectedRow = rows.find((row) => rowKey(row) === selectedKey);
+    if (selectedRow?.virtual) return this.visibleRangeEntries(rows, selectedKey);
+    const selectedId = selectedRow?.entry.id;
     if (!selectedId) return [];
-    if (!this.draft.markId) return rows.filter((row) => row.entry.id === selectedId).map((row) => row.entry);
+    if (!this.draft.markId) return [selectedRow.entry];
     const byId = entryMap(this.draft.entries);
     const pathToRoot = (id: string): string[] => {
       const path: string[] = [];
@@ -1124,13 +1212,13 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     let common = 0;
     while (common < markPath.length && common < selectedPath.length && markPath[common] === selectedPath[common]) common++;
     const mainIds = new Set([...markPath.slice(common - 1), ...selectedPath.slice(common - 1)]);
-    const visibleIds = new Set(this.visibleRangeEntries(rows, selectedId).map((entry) => entry.id));
+    const visibleIds = new Set(this.visibleRangeEntries(rows, selectedKey).map((entry) => entry.id));
     const out = rows.map((row) => row.entry).filter((entry) => visibleIds.has(entry.id) && mainIds.has(entry.id));
-    return out.length ? out : this.visibleRangeEntries(rows, selectedId);
+    return out.length ? out : this.visibleRangeEntries(rows, selectedKey);
   }
 
-  private operationRangeEntries(rows = this.visibleRows(), selectedId = rows[this.selected]?.entry.id, forceMainPath = false): Entry[] {
-    const base = forceMainPath || !this.includeSubbranches ? this.mainPathRangeEntries(rows, selectedId) : this.visibleRangeEntries(rows, selectedId);
+  private operationRangeEntries(rows = this.visibleRows(), selectedKey = rows[this.selected] ? rowKey(rows[this.selected]) : undefined, forceMainPath = false): Entry[] {
+    const base = forceMainPath || !this.includeSubbranches ? this.mainPathRangeEntries(rows, selectedKey) : this.visibleRangeEntries(rows, selectedKey);
     if (forceMainPath || !this.includeSubbranches) return base;
     const ids = new Set(base.map((entry) => entry.id));
     for (const entry of base) {
@@ -1209,10 +1297,15 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   }
 
 
-  private displayText(entry: Entry, selected: boolean): string {
+  private displayText(row: TreeRow, selected: boolean): string {
+    const entry = row.entry;
     const th = this.theme;
     const normalize = (s: string) => compactLine(s);
     let result = "";
+    if (row.virtual?.missing) {
+      result = th.fg("warning", `[missing source entry ${row.virtual.sourceEntryId}]`);
+      return selected ? th.bold(result) : result;
+    }
     if (entry.type === "message") {
       const msg = entry.message;
       if (msg?.role === "user") result = th.fg("accent", "user: ") + normalize(textFromContent(msg.content));
@@ -1222,8 +1315,14 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       } else result = th.fg("dim", `[${msg?.role || "message"}] ${normalize(entryText(entry))}`);
     } else if (entry.type === "branch_summary") result = th.fg("warning", "[branch summary]: ") + normalize(entry.summary || "");
     else if (entry.type === "compaction") result = th.fg("borderAccent", `[compaction: ${Math.round((entry.tokensBefore || 0) / 1000)}k tokens]`);
+    else if (isSummaryEntry(entry)) {
+      const count = summarySourceIds(entry).length;
+      const marker = this.expandedSummaryIds.has(entry.id) ? "▾" : "▸";
+      result = th.fg("warning", `${marker} [summary: ${count} entr${count === 1 ? "y" : "ies"}] `) + th.fg("warning", normalize(textFromContent(entry.content)).replace(/^Summary of selected tree range:\s*/i, ""));
+    }
     else if (entry.type === "custom_message") result = th.fg("customMessageLabel", `[${entry.customType}]: `) + normalize(textFromContent(entry.content));
     else result = th.fg("dim", `[${entryKind(entry)}] ${normalize(entryText(entry))}`);
+    if (row.virtual?.kind === "summary-source") result = th.fg("warning", stripAnsi(result));
     return selected ? th.bold(result) : result;
   }
 
@@ -1236,9 +1335,11 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     const rows = this.visibleRows();
     const allCount = this.draft.entries.length;
     const labels = buildLabels(this.draft.entries);
-    const selectedId = rows[this.selected]?.entry.id;
-    const visibleRange = this.draft.markId && selectedId ? this.visibleRangeEntries(rows, selectedId) : [];
-    const operationRange = this.draft.markId && selectedId ? this.operationRangeEntries(rows, selectedId, false) : [];
+    const selectedRow = rows[this.selected];
+    const selectedId = selectedRow?.entry.id;
+    const selectedKey = selectedRow ? rowKey(selectedRow) : undefined;
+    const visibleRange = this.draft.markId && selectedKey ? this.visibleRangeEntries(rows, selectedKey) : [];
+    const operationRange = this.draft.markId && selectedKey ? this.operationRangeEntries(rows, selectedKey, false) : [];
     const rangeIds = new Set(operationRange.map((e) => e.id));
     const hiddenFoldedCount = operationRange.length ? operationRange.filter((entry) => !visibleRange.some((visible) => visible.id === entry.id)).length : 0;
     const flashIds = new Set<string>(this.draft.flashEntryIds);
@@ -1261,23 +1362,24 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       const row = visible[i];
       const entry = row.entry;
       const selected = real === this.selected;
-      const inRange = rangeIds.has(entry.id);
-      const isMark = this.draft.markId === entry.id;
+      const rowId = rowKey(row);
+      const inRange = rangeIds.has(entry.id) || Boolean(this.draft.markId && visibleRange.some((visible) => visible.id === entry.id));
+      const isMark = this.draft.markId === rowId;
       const isTarget = this.draft.targetLeafId === entry.id;
       const isFlashing = this.flashOn && flashIds.has(entry.id);
       const isHighlighted = highlightIds.has(entry.id);
       const cursor = selected ? th.fg("accent", "› ") : "  ";
       const label = labels.get(entry.id);
       const labelText = label ? th.fg("warning", `[${label}] `) : "";
-      const prefix = th.fg("dim", this.treePrefix(row));
-      const pathMarker = isTarget ? th.fg("accent", "◆ ") : row.activePath ? th.fg("accent", "• ") : "";
-      let line = `${cursor}${prefix}${pathMarker}${labelText}${this.displayText(entry, selected)}`;
+      const prefix = th.fg(row.virtual ? "warning" : "dim", this.treePrefix(row));
+      const pathMarker = row.virtual ? th.fg("warning", "• ") : isTarget ? th.fg("accent", "◆ ") : row.activePath ? th.fg("accent", "• ") : "";
+      let line = `${cursor}${prefix}${pathMarker}${labelText}${this.displayText(row, selected)}`;
       if (selected) line = th.bg("selectedBg", line);
       else if (isFlashing && this.draft.flashKind === "cut") line = th.bg("toolErrorBg", line);
       else if (isFlashing) line = th.bg("toolPendingBg", line);
       else if ((inRange || isMark) && isHighlighted) line = th.bg("toolErrorBg", line);
       else if (isHighlighted && this.draft.highlightKind === "copy") line = th.bg("toolSuccessBg", line);
-      else if (isHighlighted && this.draft.highlightKind === "compact") line = th.bg("toolSuccessBg", line);
+      else if (isHighlighted && this.draft.highlightKind === "summary") line = th.bg("toolSuccessBg", line);
       else if (isHighlighted && this.draft.highlightKind === "paste") line = th.bg("toolPendingBg", line);
       else if (inRange || isMark) line = th.bg("customMessageBg", line);
       lines.push(truncateToWidth(line, bodyWidth));
@@ -1310,6 +1412,35 @@ async function saveDraft(sessionFile: string, draft: DraftSession, ctx: Ctx): Pr
 }
 
 export default function (pi: ExtensionAPI) {
+  registerSettingsSection({
+    id: TREE_EDIT_SETTINGS_ID,
+    title: "Tree Edit",
+    order: 40,
+    settings: {
+      summarySnapshots: setting.boolean({
+        label: "Summary snapshots",
+        default: true,
+        order: 1,
+        description: "Store original summarized entries inside summary details so expanded summary insets can still recover them after replacement/deletion.",
+      }),
+      snapshotToolResults: setting.enum({
+        label: "Snapshot tool results",
+        default: "truncated",
+        choices: ["off", "truncated", "full"] as const,
+        order: 2,
+        description: "Controls whether tool/bash results are preserved in summary snapshots: off skips them, truncated keeps shortened output, full stores exact outputs.",
+      }),
+      toolResultTruncation: setting.number({
+        label: "Tool result truncation",
+        default: 20000,
+        min: 1000,
+        step: 1000,
+        order: 3,
+        description: "Maximum characters kept per large tool-output text field when Snapshot tool results is set to truncated.",
+      }),
+    },
+  });
+
   pi.registerCommand("tree-edit", {
     description: "Open transactional session tree editor",
     handler: async (_args: string, ctx: Ctx) => {
@@ -1334,9 +1465,9 @@ export default function (pi: ExtensionAPI) {
           await draft.editEntry(result.id, ctx);
           continue;
         }
-        if (result?.action === "compact") {
+        if (result?.action === "summarize") {
           draft.checkpoint();
-          await draft.compactToClipboard(result.id, ctx, (draft as any).__lastFoldedIds ?? new Set(), (draft as any).__lastVisibleRangeEntries);
+          await draft.summarizeToClipboard(result.id, ctx, (draft as any).__lastFoldedIds ?? new Set(), (draft as any).__lastVisibleRangeEntries);
           delete (draft as any).__lastVisibleRangeEntries;
           continue;
         }
