@@ -198,6 +198,7 @@ function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBre
 export default function (pi: ExtensionAPI) {
   let tuiRef: { requestRender: () => void } | null = null;
   let originalSetWidget: any;
+  let originalSetWidgetMethod: any;
 
   let tokenAnimationTimer: ReturnType<typeof setInterval> | null = null;
   let tokenSettleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -216,6 +217,12 @@ export default function (pi: ExtensionAPI) {
 
   function requestTokenRender(): void {
     tuiRef?.requestRender?.();
+  }
+
+  function hideWorking(ctx: any): void {
+    if (!ctx?.hasUI) return;
+    ctx.ui.setWorkingVisible?.(false);
+    ctx.ui.setWorkingIndicator?.({ frames: [] });
   }
 
   function renderTokenBreakdown(tokens: TokenBreakdown | undefined, theme: any): string[] {
@@ -416,19 +423,44 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event: any, ctx: any) => {
     previousSettledTokens = getBranchTokens(ctx);
+    hideWorking(ctx);
 
     if (!ctx.hasUI) return;
+    originalSetWidgetMethod = ctx.ui.setWidget;
     originalSetWidget = ctx.ui.setWidget?.bind(ctx.ui);
     if (!originalSetWidget) return;
 
-    installTokenWidget(ctx);
+    let installingTokenWidget = false;
+    const installAtBottom = () => {
+      installingTokenWidget = true;
+      try {
+        installTokenWidget(ctx);
+      } finally {
+        installingTokenWidget = false;
+      }
+    };
+
+    ctx.ui.setWidget = (key: string, content: any, options?: any) => {
+      const result = originalSetWidget(key, content, options);
+      const placement = options?.placement ?? "aboveEditor";
+      if (!installingTokenWidget && key !== WIDGET_KEY && placement === "aboveEditor") {
+        // Reinsert after the widget that was just added so token counter stays
+        // closest to the editor/bottom of the above-editor widget stack.
+        installAtBottom();
+      }
+      return result;
+    };
+
+    installAtBottom();
   });
 
-  pi.on("agent_start", async () => {
+  pi.on("agent_start", async (_event: any, ctx: any) => {
+    hideWorking(ctx);
     startTokenAnimation();
   });
 
-  pi.on("turn_start", async () => {
+  pi.on("turn_start", async (_event: any, ctx: any) => {
+    hideWorking(ctx);
     startTokenAnimation();
   });
 
@@ -474,8 +506,12 @@ export default function (pi: ExtensionAPI) {
     if (originalSetWidget) {
       originalSetWidget(WIDGET_KEY, undefined);
     }
+    if (ctx?.ui && originalSetWidgetMethod && ctx.ui.setWidget !== originalSetWidgetMethod) {
+      ctx.ui.setWidget = originalSetWidgetMethod;
+    }
     disposeTokenAnimation();
     tuiRef = null;
     originalSetWidget = undefined;
+    originalSetWidgetMethod = undefined;
   });
 }
