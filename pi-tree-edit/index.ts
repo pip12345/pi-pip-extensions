@@ -16,9 +16,9 @@ type Clipboard =
   | { kind: "compaction"; summary: string; sourceEntryIds: string[]; label: string; tokensBefore: number };
 
 type ExitResult = { action: "quit" } | { action: "edit"; id: string } | { action: "compact"; id: string } | { action: "label"; id: string };
-type FilterMode = "default" | "no-tools" | "user-only" | "labeled-only" | "all";
+type FilterMode = "default" | "show-tools" | "user-only" | "labeled-only" | "all";
 type TreeGutter = { position: number; show: boolean };
-type TreeRow = { entry: Entry; depth: number; isLast: boolean; gutters: TreeGutter[]; showConnector: boolean; isVirtualRootChild: boolean; foldable: boolean; folded: boolean; multipleRoots: boolean };
+type TreeRow = { entry: Entry; depth: number; isLast: boolean; gutters: TreeGutter[]; showConnector: boolean; isVirtualRootChild: boolean; foldable: boolean; folded: boolean; multipleRoots: boolean; activePath: boolean };
 type DraftSnapshot = { entries: Entry[]; targetLeafId: string | null; clipboard: Clipboard | null; markId: string | null; dirty: boolean };
 
 const EXT = "pi-tree-edit";
@@ -150,8 +150,8 @@ function isVisibleEntry(entry: Entry, mode: FilterMode, labels: Map<string, stri
   }
 
   const isSettingsEntry = entry.type === "label" || entry.type === "custom" || entry.type === "model_change" || entry.type === "thinking_level_change" || entry.type === "session_info";
-  if (mode === "no-tools") return !isSettingsEntry && !(entry.type === "message" && entry.message?.role === "toolResult");
-  return !isSettingsEntry;
+  if (mode === "show-tools") return !isSettingsEntry;
+  return !isSettingsEntry && !(entry.type === "message" && entry.message?.role === "toolResult");
 }
 
 function compactLine(value: string): string {
@@ -238,23 +238,36 @@ function childrenMap(entries: Entry[]): Map<string | null, Entry[]> {
   return map;
 }
 
-function flattenEntries(entries: Entry[]): Array<{ entry: Entry }> {
+function activePathIds(entries: Entry[], leafId: string | null): Set<string> {
+  const byId = entryMap(entries);
+  const active = new Set<string>();
+  let cur = leafId ? byId.get(leafId) : undefined;
+  while (cur && !active.has(cur.id)) {
+    active.add(cur.id);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return active;
+}
+
+function flattenEntries(entries: Entry[], activeIds: Set<string> = new Set()): Array<{ entry: Entry }> {
   const children = childrenMap(entries);
   const out: Array<{ entry: Entry }> = [];
   const seen = new Set<string>();
+  const ordered = (items: Entry[]) => [...items].sort((a, b) => Number(activeIds.has(b.id)) - Number(activeIds.has(a.id)) || Date.parse(a.timestamp) - Date.parse(b.timestamp));
   const visit = (entry: Entry) => {
     if (seen.has(entry.id)) return;
     seen.add(entry.id);
     out.push({ entry });
-    for (const child of children.get(entry.id) ?? []) visit(child);
+    for (const child of ordered(children.get(entry.id) ?? [])) visit(child);
   };
-  for (const root of children.get(null) ?? []) visit(root);
+  for (const root of ordered(children.get(null) ?? [])) visit(root);
   for (const entry of entries) if (!seen.has(entry.id)) visit(entry);
   return out;
 }
 
-function visibleRows(entries: Entry[], mode: FilterMode, foldedIds: Set<string> = new Set(), searchQuery = ""): TreeRow[] {
-  const flat = flattenEntries(entries);
+function visibleRows(entries: Entry[], mode: FilterMode, foldedIds: Set<string> = new Set(), searchQuery = "", activeLeafId: string | null = null): TreeRow[] {
+  const activeIds = activePathIds(entries, activeLeafId);
+  const flat = flattenEntries(entries, activeIds);
   const byId = entryMap(entries);
   const labels = buildLabels(entries);
 
@@ -331,7 +344,7 @@ function visibleRows(entries: Entry[], mode: FilterMode, foldedIds: Set<string> 
     const siblings = preFoldMaps.children.get(parentId) ?? [];
     const foldable = preFoldChildren.length > 0 && (parentId === null || siblings.length > 1);
     const folded = foldedIds.has(id) && foldable;
-    out.push({ entry, depth: indent, isLast, gutters, showConnector, isVirtualRootChild, foldable, folded, multipleRoots });
+    out.push({ entry, depth: indent, isLast, gutters, showConnector, isVirtualRootChild, foldable, folded, multipleRoots, activePath: activeIds.has(entry.id) });
 
     const multipleChildren = children.length > 1;
     let childIndent: number;
@@ -752,12 +765,12 @@ class DraftSession {
   }
 
   pasteAfter(selectedId: string | null, branch: boolean): string | null {
-    const continuationChild = !branch && selectedId ? this.childOnCurrentPath(selectedId) : undefined;
+    const continuationChild = !branch && selectedId ? this.childOnContinuation(selectedId) : undefined;
     const built = this.buildPasteEntries(selectedId);
     if (!built) return null;
     if (continuationChild) continuationChild.parentId = built.lastParent;
     this.entries.push(...built.added);
-    this.targetLeafId = branch ? built.lastParent : (this.targetLeafId === continuationChild?.id ? this.targetLeafId : built.lastParent);
+    this.viewSelectedId = built.lastParent;
     const addedIds = built.added.map((e) => e.id);
     this.highlightEntryIds = addedIds;
     this.highlightKind = "paste";
@@ -769,6 +782,15 @@ class DraftSession {
     this.lastOperation = `pasted ${built.added.length} entr${built.added.length === 1 ? "y" : "ies"}`;
     this.message = `Pasted ${built.added.length} entr${built.added.length === 1 ? "y" : "ies"}${branch ? " as new branch" : ""}`;
     return built.lastParent;
+  }
+
+  private childOnContinuation(parentId: string): Entry | undefined {
+    const currentPathChild = this.childOnCurrentPath(parentId);
+    if (currentPathChild) return currentPathChild;
+    const children = this.entries
+      .filter((entry) => entry.parentId === parentId && entry.type !== "label")
+      .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+    return children.length === 1 ? children[0] : undefined;
   }
 
   private childOnCurrentPath(parentId: string): Entry | undefined {
@@ -803,7 +825,7 @@ class DraftSession {
     this.entries = this.entries.filter((entry) => !removed.has(entry.id) && !(entry.type === "label" && removed.has(entry.targetId)));
     this.entries.push(...built.added);
     this.markId = null;
-    this.targetLeafId = built.lastParent;
+    this.viewSelectedId = built.lastParent;
     const addedIds = built.added.map((e) => e.id);
     this.highlightEntryIds = addedIds;
     this.highlightKind = "paste";
@@ -932,7 +954,7 @@ class TreeEditComponent {
   private tui: any;
   private selected = 0;
   private scroll = 0;
-  private filterMode: FilterMode = "no-tools";
+  private filterMode: FilterMode = "default";
   private searchQuery = "";
   private searchMode = false;
   private includeSubbranches = false;
@@ -993,6 +1015,9 @@ class TreeEditComponent {
       } else if (key === "backspace" || key === "delete" || key === "ctrl+h") {
         this.searchQuery = this.searchQuery.slice(0, -1);
         this.clampSelection();
+      } else if (key === "space") {
+        this.searchQuery += " ";
+        this.clampSelection();
       } else if (key.length === 1 && key.charCodeAt(0) >= 32) {
         this.searchQuery += key;
         this.clampSelection();
@@ -1050,7 +1075,7 @@ class TreeEditComponent {
       changed = true;
     }
     else if (key === "f") {
-      this.filterMode = this.filterMode === "no-tools" ? "user-only" : this.filterMode === "user-only" ? "labeled-only" : this.filterMode === "labeled-only" ? "all" : this.filterMode === "all" ? "default" : "no-tools";
+      this.filterMode = this.filterMode === "default" ? "show-tools" : this.filterMode === "show-tools" ? "user-only" : this.filterMode === "user-only" ? "labeled-only" : this.filterMode === "labeled-only" ? "all" : "default";
       this.draft.message = `Filter: ${this.filterLabel(this.filterMode)}`;
       this.clampSelection();
       changed = true;
@@ -1075,17 +1100,16 @@ class TreeEditComponent {
       changed = true;
     } else if (selectedId && key === "p") {
       this.draft.checkpoint();
-      if (this.draft.markId) this.draft.replaceRangeWithClipboard(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedId, false));
-      else this.draft.pasteAfter(selectedId, false);
-      this.selectId(this.draft.targetLeafId);
+      const pastedId = this.draft.markId ? this.draft.replaceRangeWithClipboard(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedId, false)) : this.draft.pasteAfter(selectedId, false);
+      this.selectId(pastedId);
       changed = true;
     } else if (selectedId && key === "P") {
       if (this.draft.markId) {
         this.draft.message = "P is disabled while a range is active; use p to replace the range or v to cancel";
       } else {
         this.draft.checkpoint();
-        this.draft.pasteAfter(selectedId, true);
-        this.selectId(this.draft.targetLeafId);
+        const pastedId = this.draft.pasteAfter(selectedId, true);
+        this.selectId(pastedId);
       }
       changed = true;
     } else if (selectedId && key === "d") {
@@ -1130,7 +1154,7 @@ class TreeEditComponent {
   }
 
   private visibleRows(): TreeRow[] {
-    return visibleRows(this.draft.entries, this.filterMode, this.foldedIds, this.searchQuery);
+    return visibleRows(this.draft.entries, this.filterMode, this.foldedIds, this.searchQuery, this.draft.targetLeafId);
   }
 
   private visibleRangeEntries(rows = this.visibleRows(), selectedId = rows[this.selected]?.entry.id): Entry[] {
@@ -1209,10 +1233,14 @@ class TreeEditComponent {
     this.clampSelection();
   }
 
-  private pageSize(): number { return 32; }
+  private pageSize(): number {
+    const terminalHeight = this.tui?.terminal?.height ?? this.tui?.height ?? 40;
+    // overlay margin is 1 top/bottom, box border is 2 rows, plus header/help/status rows.
+    return Math.max(5, terminalHeight - 12);
+  }
 
   private filterLabel(mode: FilterMode): string {
-    return mode === "no-tools" ? "default" : mode;
+    return mode;
   }
 
   private treePrefix(row: TreeRow): string {
@@ -1301,11 +1329,12 @@ class TreeEditComponent {
       const isTarget = this.draft.targetLeafId === entry.id;
       const isFlashing = this.flashOn && flashIds.has(entry.id);
       const isHighlighted = highlightIds.has(entry.id);
-      const cursor = selected ? th.fg("accent", "› ") : isTarget ? th.fg("accent", "◆ ") : "  ";
+      const cursor = selected ? th.fg("accent", "› ") : "  ";
       const label = labels.get(entry.id);
       const labelText = label ? th.fg("warning", `[${label}] `) : "";
       const prefix = th.fg("dim", this.treePrefix(row));
-      let line = `${cursor}${prefix}${labelText}${this.displayText(entry, selected)}`;
+      const pathMarker = isTarget ? th.fg("accent", "◆ ") : row.activePath ? th.fg("accent", "• ") : "";
+      let line = `${cursor}${prefix}${pathMarker}${labelText}${this.displayText(entry, selected)}`;
       if (selected) line = th.bg("selectedBg", line);
       else if (isFlashing && this.draft.flashKind === "cut") line = th.bg("toolErrorBg", line);
       else if (isFlashing) line = th.bg("toolPendingBg", line);
@@ -1317,7 +1346,8 @@ class TreeEditComponent {
       lines.push(truncateToWidth(line, bodyWidth));
     }
     if (!rows.length) lines.push(th.fg("dim", "  No entries in current filter (press f)"));
-    lines.push("");
+    const minInnerHeight = Math.max(lines.length, this.pageSize() + 5);
+    while (lines.length < minInnerHeight) lines.push("");
     const highlightStatus = this.draft.highlightEntryIds.length ? `${this.draft.highlightKind ?? "highlight"}: ${this.draft.highlightEntryIds.length} · ` : "";
     lines.push(th.fg("dim", `(${rows.length ? this.selected + 1 : 0}/${rows.length}) [${this.filterLabel(this.filterMode)}] ${highlightStatus}${allCount !== rows.length ? `${allCount - rows.length} hidden · ` : ""}q/Esc prompts to save or discard`));
     return box(lines, bodyWidth, " tree-edit ", th);
@@ -1359,7 +1389,7 @@ export default function (pi: ExtensionAPI) {
       while (true) {
         const result = await ctx.ui.custom<ExitResult>((tui: any, theme: Theme, _kb: any, done: (result: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {
           overlay: true,
-          overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", minWidth: 90, margin: 0 },
+          overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", minWidth: 90, margin: 1 },
         });
 
         if (result?.action === "edit") {
