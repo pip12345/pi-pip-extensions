@@ -1,9 +1,9 @@
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
-import { decodeKittyPrintable, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
-import { hasTextContent, setTextContent, textFromContent as commonTextFromContent } from "pip-common";
+import { boxLines, hasTextContent, PipCustomComponent, setTextContent, stripAnsi, textFromContent as commonTextFromContent } from "pip-common";
 
 type ExtensionAPI = any;
 type Theme = any;
@@ -43,8 +43,6 @@ const HELP_ITEMS = [
   "U redo",
   "q quit",
 ];
-const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
-
 function isEntry(value: FileEntry): value is Entry {
   return value.type !== "session";
 }
@@ -123,7 +121,7 @@ function isVisibleEntry(entry: Entry, mode: FilterMode, labels: Map<string, stri
 }
 
 function compactLine(value: string): string {
-  return value.replace(ANSI_RE, "").replace(/\s+/g, " ").trim();
+  return stripAnsi(value).replace(/\s+/g, " ").trim();
 }
 
 function estimateTokensForEntries(entries: Entry[]): number {
@@ -411,27 +409,6 @@ function validateDraft(header: Header, entries: Entry[]): string[] {
   return errors;
 }
 
-function normalizeInputKey(data: string): string {
-  if (matchesKey(data, "escape") || data === "\u001b") return "escape";
-  if (matchesKey(data, "ctrl+c") || data === "\u0003") return "ctrl+c";
-  if (matchesKey(data, "up") || data === "\u001b[A") return "up";
-  if (matchesKey(data, "down") || data === "\u001b[B") return "down";
-  if (data === "\u001b[1;5D" || data === "\u001b[5D") return "ctrl+left";
-  if (data === "\u001b[1;5C" || data === "\u001b[5C") return "ctrl+right";
-  if (matchesKey(data, "pageUp") || data === "\u001b[5~") return "pageup";
-  if (matchesKey(data, "pageDown") || data === "\u001b[6~") return "pagedown";
-  if (matchesKey(data, "return") || data === "\r") return "return";
-  const parsed = parseKey(data);
-  if (parsed) {
-    if (parsed.startsWith("shift+") && parsed.length === "shift+q".length) return parsed.slice("shift+".length).toUpperCase();
-    return parsed.toLowerCase();
-  }
-  const printable = decodeKittyPrintable(data);
-  if (printable?.length === 1) return printable;
-  if (data.length === 1) return data;
-  return data;
-}
-
 function wrapHelp(items: string[], width: number, theme: Theme): string[] {
   const sep = theme.fg("dim", " · ");
   const lines: string[] = [];
@@ -450,19 +427,8 @@ function wrapHelp(items: string[], width: number, theme: Theme): string[] {
   return lines;
 }
 
-function padAnsi(s: string, width: number): string {
-  return s + " ".repeat(Math.max(0, width - visibleWidth(s)));
-}
-
 function box(lines: string[], width: number, title: string, theme: Theme): string[] {
-  const inner = Math.max(40, width - 2);
-  const t = truncateToWidth(` ${title} `, inner);
-  const left = "─".repeat(Math.floor(Math.max(0, inner - visibleWidth(t)) / 2));
-  const right = "─".repeat(Math.max(0, inner - visibleWidth(t) - left.length));
-  const out = [theme.fg("border", `╭${left}`) + theme.fg("accent", t) + theme.fg("border", `${right}╮`)];
-  for (const line of lines) out.push(theme.fg("border", "│") + padAnsi(truncateToWidth(line, inner, "…", true), inner) + theme.fg("border", "│"));
-  out.push(theme.fg("border", `╰${"─".repeat(inner)}╯`));
-  return out;
+  return boxLines(lines, Math.max(40, width), theme, { title });
 }
 
 class DraftSession {
@@ -914,12 +880,9 @@ class DraftSession {
   }
 }
 
-class TreeEditComponent {
+class TreeEditComponent extends PipCustomComponent<ExitResult> {
   private draft: DraftSession;
   private ctx: Ctx;
-  private theme: Theme;
-  private done: (result: ExitResult) => void;
-  private tui: any;
   private selected = 0;
   private scroll = 0;
   private filterMode: FilterMode = "default";
@@ -932,20 +895,16 @@ class TreeEditComponent {
   private flashTimer: ReturnType<typeof setInterval> | null = null;
   private highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(draft: DraftSession, ctx: Ctx, tui: any, theme: Theme, done: (result: ExitResult) => void) {
+  constructor(draft: DraftSession, ctx: Ctx, tui: any, theme: Theme, done: (result?: ExitResult) => void) {
+    super(tui, theme, done, { closeKeys: [] });
     this.draft = draft;
     this.ctx = ctx;
-    this.tui = tui;
-    this.theme = theme;
-    this.done = done;
     const rows = this.visibleRows();
     const wantedId = this.draft.viewSelectedId ?? this.draft.targetLeafId;
     const idx = rows.findIndex((r) => r.entry.id === wantedId);
     if (idx >= 0) this.selected = idx;
     this.clampSelection();
   }
-
-  invalidate(): void {}
 
   private ensureFlashAnimation(): void {
     if (this.flashSeenNonce === this.draft.flashNonce || !this.draft.flashEntryIds.length) return;
@@ -956,20 +915,30 @@ class TreeEditComponent {
     this.flashTimer = setInterval(() => {
       ticks += 1;
       this.flashOn = !this.flashOn;
-      this.tui?.requestRender?.();
+      this.requestRender();
       if (ticks >= 6) {
         if (this.flashTimer) clearInterval(this.flashTimer);
         this.flashTimer = null;
         this.flashOn = false;
-        this.tui?.requestRender?.();
+        this.requestRender();
       }
     }, 120);
   }
 
   private ensureHighlightTimer(): void {}
 
-  handleInput(data: string): void {
-    const key = normalizeInputKey(data);
+  dispose(): void {
+    if (this.flashTimer) {
+      clearInterval(this.flashTimer);
+      this.flashTimer = null;
+    }
+    if (this.highlightTimer) {
+      clearTimeout(this.highlightTimer);
+      this.highlightTimer = null;
+    }
+  }
+
+  protected handleKey(key: string): void {
     const rows = this.visibleRows();
     const selectedEntry = rows[this.selected]?.entry;
     const selectedId = selectedEntry?.id;
@@ -990,19 +959,19 @@ class TreeEditComponent {
         this.searchQuery += key;
         this.clampSelection();
       }
-      this.tui?.requestRender?.();
+      this.requestRender();
       return;
     }
 
     if (key === "escape" && this.draft.markId) {
       this.draft.markId = null;
       this.draft.message = "Range cancelled";
-      this.tui?.requestRender?.();
+      this.requestRender();
       return;
     }
 
-    if (key === "escape" || key === "ctrl+c" || key === "q") {
-      this.done({ action: "quit" });
+    if (key === "escape" || key === "ctrl+c" || key === "ctrl+d" || key === "q") {
+      this.close({ action: "quit" });
       return;
     }
     if (key === "u") {
@@ -1103,22 +1072,22 @@ class TreeEditComponent {
       changed = true;
     } else if (selectedId && key === "e") {
       this.draft.viewSelectedId = selectedId;
-      this.done({ action: "edit", id: selectedId });
+      this.close({ action: "edit", id: selectedId });
       return;
     } else if (selectedId && key === "L") {
       this.draft.viewSelectedId = selectedId;
-      this.done({ action: "label", id: selectedId });
+      this.close({ action: "label", id: selectedId });
       return;
     } else if (selectedId && key === "C") {
       this.draft.viewSelectedId = selectedId;
       (this.draft as any).__lastFoldedIds = new Set<string>();
       (this.draft as any).__lastVisibleRangeEntries = this.operationRangeEntries(rows, selectedId, true).map(clone);
       if (this.includeSubbranches) this.draft.message = "Compaction uses main path only; subbranches excluded";
-      this.done({ action: "compact", id: selectedId });
+      this.close({ action: "compact", id: selectedId });
       return;
     }
 
-    if (changed) this.tui?.requestRender?.();
+    if (changed) this.requestRender();
   }
 
   private visibleRows(): TreeRow[] {
@@ -1355,7 +1324,7 @@ export default function (pi: ExtensionAPI) {
       const draft = new DraftSession(parsed.header, parsed.entries, ctx.sessionManager.getLeafId?.() ?? null);
 
       while (true) {
-        const result = await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: (result: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {
+        const result = await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: (result?: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {
           overlay: true,
           overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", minWidth: 90, margin: 1 },
         });

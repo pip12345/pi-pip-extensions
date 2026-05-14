@@ -2,8 +2,19 @@ import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
-import { decodeKittyPrintable, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { addUsage as addTokens, emptyUsage as emptyTokens, normalizeUsage, textFromContent, type TokenUsage as Tokens } from "pip-common";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  addUsage as addTokens,
+  boxLines,
+  emptyUsage as emptyTokens,
+  normalizeUsage,
+  padAnsi,
+  padLeftAnsi,
+  PipCustomComponent,
+  printableInput,
+  textFromContent,
+  type TokenUsage as Tokens,
+} from "pip-common";
 
 type ExtensionAPI = any;
 type Theme = any;
@@ -84,14 +95,6 @@ function contextBar(percent: number | null, width: number, theme: Theme): string
   return bar(p, 100, width, theme, color);
 }
 
-function padAnsi(s: string, width: number): string {
-  return s + " ".repeat(Math.max(0, width - visibleWidth(s)));
-}
-
-function padLeftAnsi(s: string, width: number): string {
-  return " ".repeat(Math.max(0, width - visibleWidth(s))) + s;
-}
-
 function scrollIndicator(selected: number, total: number, width: number, theme: Theme): string {
   if (total <= 1) return theme.fg("dim", "scroll ") + theme.fg("success", "█".repeat(width));
   const pos = Math.round((selected / Math.max(1, total - 1)) * (width - 1));
@@ -111,48 +114,8 @@ function tokenDetailRow(label: string, tokens: Tokens, compact: boolean): string
   ].join("  ");
 }
 
-function normalizeInputKey(data: string): string {
-  if (matchesKey(data, "escape") || data === "\u001b") return "escape";
-  if (matchesKey(data, "ctrl+c") || data === "\u0003") return "ctrl+c";
-  if (matchesKey(data, "tab") || data === "\t") return "tab";
-  if (matchesKey(data, "up") || data === "\u001b[A") return "up";
-  if (matchesKey(data, "down") || data === "\u001b[B") return "down";
-  if (matchesKey(data, "pageUp") || data === "\u001b[5~") return "pageup";
-  if (matchesKey(data, "pageDown") || data === "\u001b[6~") return "pagedown";
-
-  const parsed = parseKey(data);
-  if (parsed) {
-    if (parsed.startsWith("shift+") && parsed.length === "shift+q".length) {
-      return parsed.slice("shift+".length).toLowerCase();
-    }
-    return parsed.toLowerCase();
-  }
-
-  const printable = decodeKittyPrintable(data);
-  if (printable?.length === 1) return printable.toLowerCase();
-  if (data.length === 1) return data.toLowerCase();
-  return data;
-}
-
-function printableInput(data: string): string | undefined {
-  const parsed = parseKey(data);
-  if (parsed?.length === 1) return parsed;
-  if (parsed?.startsWith("shift+") && parsed.length === "shift+q".length) return parsed.slice("shift+".length).toUpperCase();
-  const printable = decodeKittyPrintable(data);
-  if (printable?.length === 1) return printable;
-  if (data >= " " && data.length === 1) return data;
-  return undefined;
-}
-
 function box(lines: string[], width: number, title: string, theme: Theme): string[] {
-  const inner = Math.max(10, width - 2);
-  const t = truncateToWidth(` ${title} `, inner);
-  const left = "─".repeat(Math.floor(Math.max(0, inner - visibleWidth(t)) / 2));
-  const right = "─".repeat(Math.max(0, inner - visibleWidth(t) - left.length));
-  const out = [theme.fg("border", `╭${left}`) + theme.fg("accent", t) + theme.fg("border", `${right}╮`)];
-  for (const line of lines) out.push(theme.fg("border", "│") + padAnsi(truncateToWidth(line, inner, "…", true), inner) + theme.fg("border", "│"));
-  out.push(theme.fg("border", `╰${"─".repeat(inner)}╯`));
-  return out;
+  return boxLines(lines, width, theme, { title });
 }
 
 function buildSessionRows(ctx: any): SessionRow[] {
@@ -271,7 +234,7 @@ function groupGlobal(events: GlobalUsageEvent[], range: RangeKey, groupBy: Group
   return Array.from(map.values()).sort((a, b) => b.total - a.total);
 }
 
-class TokenInspector {
+class TokenInspector extends PipCustomComponent<void> {
   private page: Page = "session";
   private range: RangeKey = "7d";
   private groupBy: GroupBy = "model";
@@ -281,41 +244,29 @@ class TokenInspector {
   private search = "";
   private searching = false;
 
-  private tui: any;
   private ctx: any;
-  private theme: Theme;
-  private done: () => void;
 
   constructor(tui: any, ctx: any, theme: Theme, done: () => void) {
-    this.tui = tui;
+    super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d", "q"] });
     this.ctx = ctx;
-    this.theme = theme;
-    this.done = done;
   }
 
-  invalidate(): void {}
-
-  handleInput(data: string): void {
+  protected handleKey(key: string, raw: string): void {
     let changed = false;
 
     if (this.searching) {
-      if (matchesKey(data, "escape")) { this.searching = false; changed = true; }
-      else if (matchesKey(data, "return")) { this.searching = false; changed = true; }
-      else if (matchesKey(data, "backspace")) { this.search = this.search.slice(0, -1); changed = true; }
+      if (key === "escape") { this.searching = false; changed = true; }
+      else if (key === "return") { this.searching = false; changed = true; }
+      else if (key === "backspace" || key === "delete" || key === "ctrl+h") { this.search = this.search.slice(0, -1); changed = true; }
       else {
-        const printable = printableInput(data);
+        const printable = printableInput(raw);
         if (printable) { this.search += printable; changed = true; }
       }
-      if (changed) this.tui?.requestRender?.();
+      if (changed) this.requestRender();
       return;
     }
 
-    const key = normalizeInputKey(data);
-
-    if (key === "escape" || key === "ctrl+c" || key === "q") {
-      this.done();
-      return;
-    } else if (key === "tab") {
+    if (key === "tab") {
       this.page = this.page === "session" ? "global" : "session";
       this.selected = 0;
       this.scroll = 0;
@@ -351,7 +302,7 @@ class TokenInspector {
       changed = true;
     }
 
-    if (changed) this.tui?.requestRender?.();
+    if (changed) this.requestRender();
   }
 
   private rowCount(): number {
