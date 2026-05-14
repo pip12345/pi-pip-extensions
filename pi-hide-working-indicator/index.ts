@@ -8,9 +8,6 @@
 type ExtensionAPI = any;
 
 export default function (pi: ExtensionAPI) {
-  // Keep minimal-footer's token counter above the editor when this extension is enabled.
-  process.env.PI_MINIMAL_FOOTER_TOKEN_COUNTER_PLACEMENT = "aboveEditor";
-
   function hideWorking(ctx: any): void {
     if (!ctx?.hasUI) return;
     ctx.ui.setWorkingVisible(false);

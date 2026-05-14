@@ -182,7 +182,7 @@ function getBranchTokens(ctx: any): TokenBreakdown | undefined {
 }
 
 function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBreakdown): TokenBreakdown | undefined {
-  if (!previous) return undefined;
+  if (!previous) return next.total > 0 ? { ...next } : undefined;
 
   const input = Math.max(0, next.input - previous.input);
   const output = Math.max(0, next.output - previous.output);
@@ -197,19 +197,19 @@ function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBre
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: { requestRender: () => void } | null = null;
-  let reorderTimer: ReturnType<typeof setInterval> | null = null;
   let originalSetWidget: any;
 
   let tokenAnimationTimer: ReturnType<typeof setInterval> | null = null;
   let tokenSettleTimer: ReturnType<typeof setTimeout> | null = null;
-  let tokenStatsRevealTimer: ReturnType<typeof setTimeout> | null = null;
   let tokenDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+  let displayPhase: "idle" | "working" | "live" | "settling" = "idle";
   let isAssistantStreaming = false;
-  let tokenStatsHiddenUntil = 0;
+  let liveOutputVisibleUntil = 0;
   let tokenDeltaVisibleUntil = 0;
   let previousSettledTokens: TokenBreakdown | undefined;
   let pendingSettledTokens: TokenBreakdown | undefined;
   let latestTokenDelta: TokenBreakdown | undefined;
+  let tokenRunId = 0;
   let streamFrame = 0;
   let streamLiveOutputTokens = 0;
   let streamEstimatedOutputTokens = 0;
@@ -219,7 +219,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function renderTokenBreakdown(tokens: TokenBreakdown | undefined, theme: any): string[] {
-    if (!tokens || Date.now() < tokenStatsHiddenUntil) return [];
+    if (!tokens || displayPhase !== "idle") return [];
 
     const dim = (s: string) => theme.fg("dim", s);
     const accent = (s: string) => theme.fg("accent", s);
@@ -243,16 +243,18 @@ export default function (pi: ExtensionAPI) {
   }
 
   function renderTokenBurn(theme: any): string[] {
-    if (!isAssistantStreaming) return [];
+    if (displayPhase === "idle") return [];
 
-    const spinner = TOKEN_SPINNER[streamFrame % TOKEN_SPINNER.length];
     const liveDelta = streamLiveOutputTokens > 0 ? streamLiveOutputTokens : streamEstimatedOutputTokens;
-    const count = liveDelta > 0 ? ` +${formatTokenCount(liveDelta)}` : "";
+    const showingLiveCounter = liveDelta > 0 && (displayPhase === "live" || displayPhase === "settling");
+    const spinner = TOKEN_SPINNER[streamFrame % TOKEN_SPINNER.length];
     const label = theme.fg("dim", "tok");
     const icon = theme.fg("accent", spinner);
-    const amount = theme.fg(streamLiveOutputTokens > 0 ? "accent" : "dim", count);
 
-    return [`${label} ${icon}${amount} ${theme.fg("dim", "out")}`, `${label} ${icon}${amount}`, `${label} ${icon}`];
+    if (!showingLiveCounter) return [`${label} ${icon}`];
+
+    const amount = theme.fg(streamLiveOutputTokens > 0 ? "accent" : "dim", `+${formatTokenCount(liveDelta)}`);
+    return [`${label} ${icon} ${amount} ${theme.fg("dim", "out")}`, `${label} ${icon} ${amount}`, `${label} ${amount}`, amount];
   }
 
   function installTokenWidget(ctx: any): void {
@@ -278,72 +280,62 @@ export default function (pi: ExtensionAPI) {
     );
   }
 
+  function ensureAnimationTimer(): void {
+    if (tokenAnimationTimer) return;
+    tokenAnimationTimer = setInterval(() => {
+      streamFrame += 1;
+      if (displayPhase === "idle") {
+        clearInterval(tokenAnimationTimer!);
+        tokenAnimationTimer = null;
+      }
+      requestTokenRender();
+    }, 140);
+  }
+
   function startTokenAnimation(): void {
     if (tokenSettleTimer) {
       clearTimeout(tokenSettleTimer);
       tokenSettleTimer = null;
     }
-    if (tokenStatsRevealTimer) {
-      clearTimeout(tokenStatsRevealTimer);
-      tokenStatsRevealTimer = null;
-    }
     if (tokenDeltaTimer) {
       clearTimeout(tokenDeltaTimer);
       tokenDeltaTimer = null;
     }
-    tokenStatsHiddenUntil = 0;
+    tokenRunId += 1;
+    liveOutputVisibleUntil = 0;
     tokenDeltaVisibleUntil = 0;
     latestTokenDelta = undefined;
+    displayPhase = "working";
     isAssistantStreaming = true;
     streamFrame = 0;
     streamLiveOutputTokens = 0;
     streamEstimatedOutputTokens = 0;
 
-    if (!tokenAnimationTimer) {
-      tokenAnimationTimer = setInterval(() => {
-        streamFrame += 1;
-        requestTokenRender();
-      }, 140);
-    }
+    ensureAnimationTimer();
 
     requestTokenRender();
   }
 
-  function stopTokenAnimation(settleMs = 1500): void {
+  function stopTokenAnimation(): void {
     if (!isAssistantStreaming && !tokenAnimationTimer) return;
 
-    tokenStatsHiddenUntil = Date.now() + settleMs + 450;
-    if (tokenSettleTimer) clearTimeout(tokenSettleTimer);
-    if (tokenStatsRevealTimer) clearTimeout(tokenStatsRevealTimer);
-    tokenStatsRevealTimer = setTimeout(() => {
-      tokenStatsHiddenUntil = 0;
-      tokenStatsRevealTimer = null;
-      requestTokenRender();
-    }, settleMs + 450);
-    tokenSettleTimer = setTimeout(() => {
-      isAssistantStreaming = false;
-      streamLiveOutputTokens = 0;
-      streamEstimatedOutputTokens = 0;
-      if (tokenAnimationTimer) {
-        clearInterval(tokenAnimationTimer);
-        tokenAnimationTimer = null;
-      }
-      tokenSettleTimer = null;
-      requestTokenRender();
-    }, settleMs);
+    isAssistantStreaming = false;
+    if (streamLiveOutputTokens <= 0 && streamEstimatedOutputTokens <= 0) liveOutputVisibleUntil = 0;
+
+
+    requestTokenRender();
   }
 
   function disposeTokenAnimation(): void {
     if (tokenSettleTimer) clearTimeout(tokenSettleTimer);
-    if (tokenStatsRevealTimer) clearTimeout(tokenStatsRevealTimer);
     if (tokenDeltaTimer) clearTimeout(tokenDeltaTimer);
     if (tokenAnimationTimer) clearInterval(tokenAnimationTimer);
     tokenSettleTimer = null;
-    tokenStatsRevealTimer = null;
     tokenDeltaTimer = null;
     tokenAnimationTimer = null;
+    displayPhase = "idle";
     isAssistantStreaming = false;
-    tokenStatsHiddenUntil = 0;
+    liveOutputVisibleUntil = 0;
     tokenDeltaVisibleUntil = 0;
     pendingSettledTokens = undefined;
     latestTokenDelta = undefined;
@@ -355,18 +347,46 @@ export default function (pi: ExtensionAPI) {
     const assistantEvent = event?.assistantMessageEvent;
     if (!assistantEvent) return;
 
+    let sawOutput = false;
     const live = normalizeUsage(assistantEvent.partial?.usage)?.output;
-    if (typeof live === "number" && live > 0) streamLiveOutputTokens = Math.max(streamLiveOutputTokens, live);
-
-    if ((assistantEvent.type === "text_delta" || assistantEvent.type === "thinking_delta") && assistantEvent.delta) {
-      streamEstimatedOutputTokens += Math.max(1, Math.ceil(String(assistantEvent.delta).length / 4));
+    if (typeof live === "number" && live > 0) {
+      streamLiveOutputTokens = Math.max(streamLiveOutputTokens, live);
+      sawOutput = true;
     }
 
+    if (assistantEvent.type === "text_delta" && assistantEvent.delta) {
+      streamEstimatedOutputTokens += Math.max(1, Math.ceil(String(assistantEvent.delta).length / 4));
+      sawOutput = true;
+    }
+
+    if (sawOutput) {
+      displayPhase = "live";
+      liveOutputVisibleUntil = Date.now() + 2000;
+      ensureAnimationTimer();
+    }
+    requestTokenRender();
+  }
+
+  function scheduleSettleTokenBreakdown(tokens: TokenBreakdown | undefined): void {
+    const runId = tokenRunId;
+    const revealInMs = Math.max(0, liveOutputVisibleUntil - Date.now());
+    displayPhase = "settling";
+    if (tokenSettleTimer) clearTimeout(tokenSettleTimer);
+    tokenSettleTimer = setTimeout(() => {
+      if (runId !== tokenRunId) return;
+      liveOutputVisibleUntil = 0;
+      tokenSettleTimer = null;
+      settleTokenBreakdown(tokens);
+    }, revealInMs);
     requestTokenRender();
   }
 
   function settleTokenBreakdown(tokens: TokenBreakdown | undefined): void {
-    if (!tokens) return;
+    displayPhase = "idle";
+    if (!tokens) {
+      requestTokenRender();
+      return;
+    }
 
     latestTokenDelta = diffTokenBreakdown(previousSettledTokens, tokens);
     previousSettledTokens = tokens;
@@ -383,12 +403,15 @@ export default function (pi: ExtensionAPI) {
     }
 
     tokenDeltaVisibleUntil = Date.now() + 5000;
+    const runId = tokenRunId;
     tokenDeltaTimer = setTimeout(() => {
+      if (runId !== tokenRunId) return;
       latestTokenDelta = undefined;
       tokenDeltaVisibleUntil = 0;
       tokenDeltaTimer = null;
       requestTokenRender();
     }, Math.max(0, tokenDeltaVisibleUntil - Date.now()));
+    requestTokenRender();
   }
 
   pi.on("session_start", async (_event: any, ctx: any) => {
@@ -398,25 +421,15 @@ export default function (pi: ExtensionAPI) {
     originalSetWidget = ctx.ui.setWidget?.bind(ctx.ui);
     if (!originalSetWidget) return;
 
-    let installing = false;
-    const install = () => {
-      installing = true;
-      try {
-        installTokenWidget(ctx);
-      } finally {
-        installing = false;
-      }
-    };
+    installTokenWidget(ctx);
+  });
 
-    ctx.ui.setWidget = (key: string, content: any, options?: any) => {
-      const result = originalSetWidget(key, content, options);
-      const placement = options?.placement ?? "aboveEditor";
-      if (!installing && key !== WIDGET_KEY && placement === "aboveEditor") install();
-      return result;
-    };
+  pi.on("agent_start", async () => {
+    startTokenAnimation();
+  });
 
-    install();
-    reorderTimer = setInterval(install, 5000);
+  pi.on("turn_start", async () => {
+    startTokenAnimation();
   });
 
   pi.on("message_start", async (event: any) => {
@@ -424,18 +437,25 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("message_update", async (event: any) => {
-    if (event.message?.role === "assistant") updateTokenBurnFromEvent(event);
+    if (event.message?.role !== "user" || event.assistantMessageEvent) updateTokenBurnFromEvent(event);
   });
 
   pi.on("message_end", async (event: any, ctx: any) => {
-    if (event.message?.role !== "assistant") return;
+    if (event.message?.role === "user") return;
+
+    const messageTokens = normalizeUsage(event.message?.usage);
+    if (messageTokens?.output && streamLiveOutputTokens <= 0 && streamEstimatedOutputTokens <= 0) {
+      streamLiveOutputTokens = messageTokens.output;
+      liveOutputVisibleUntil = Date.now() + 2000;
+      ensureAnimationTimer();
+    }
 
     stopTokenAnimation();
     const branchTokens = getBranchTokens(ctx);
-    const messageTokens = normalizeUsage(event.message?.usage);
     pendingSettledTokens = branchTokens ?? (messageTokens && previousSettledTokens ? { ...previousSettledTokens } : pendingSettledTokens);
     if (!branchTokens && messageTokens && pendingSettledTokens) addTokenBreakdown(pendingSettledTokens, messageTokens);
     else if (!branchTokens && messageTokens) pendingSettledTokens = messageTokens;
+    scheduleSettleTokenBreakdown(branchTokens ?? pendingSettledTokens);
   });
 
   pi.on("turn_end", async () => {
@@ -444,19 +464,14 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_end", async (_event: any, ctx: any) => {
     stopTokenAnimation();
-    const tokens = getBranchTokens(ctx) ?? pendingSettledTokens;
+    const branchTokens = getBranchTokens(ctx);
+    const tokens = pendingSettledTokens && (!branchTokens || pendingSettledTokens.total >= branchTokens.total) ? pendingSettledTokens : branchTokens;
     pendingSettledTokens = undefined;
-    const revealInMs = Math.max(0, tokenStatsHiddenUntil - Date.now());
-    setTimeout(() => settleTokenBreakdown(tokens), revealInMs);
+    scheduleSettleTokenBreakdown(tokens);
   });
 
   pi.on("session_end", async (_event: any, ctx: any) => {
-    if (reorderTimer) {
-      clearInterval(reorderTimer);
-      reorderTimer = null;
-    }
     if (originalSetWidget) {
-      if (ctx?.ui?.setWidget && ctx.ui.setWidget !== originalSetWidget) ctx.ui.setWidget = originalSetWidget;
       originalSetWidget(WIDGET_KEY, undefined);
     }
     disposeTokenAnimation();
