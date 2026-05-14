@@ -4,9 +4,10 @@
  * Extracted from pi-minimal-footer-pip into a standalone above-editor widget.
  */
 
+import { formatTokenCount, normalizeUsage, truncateToWidth, visibleWidth } from "pip-common";
+
 type ExtensionAPI = any;
 
-const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const TOKEN_SPINNER = ["◐", "◓", "◑", "◒"];
 const WIDGET_KEY = "pi-token-counter";
 
@@ -17,60 +18,6 @@ interface TokenBreakdown {
   cacheWrite: number;
   cache: number;
   total: number;
-}
-
-function charWidth(char: string): number {
-  const code = char.codePointAt(0) ?? 0;
-  if (code === 0) return 0;
-  if (code < 32 || (code >= 0x7f && code < 0xa0)) return 0;
-  if (
-    code >= 0x1100 &&
-    (code <= 0x115f ||
-      code === 0x2329 ||
-      code === 0x232a ||
-      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
-      (code >= 0xac00 && code <= 0xd7a3) ||
-      (code >= 0xf900 && code <= 0xfaff) ||
-      (code >= 0xfe10 && code <= 0xfe19) ||
-      (code >= 0xfe30 && code <= 0xfe6f) ||
-      (code >= 0xff00 && code <= 0xff60) ||
-      (code >= 0xffe0 && code <= 0xffe6))
-  ) {
-    return 2;
-  }
-  return 1;
-}
-
-function visibleWidth(value: string): number {
-  return Array.from(value.replace(ANSI_RE, "")).reduce((width, char) => width + charWidth(char), 0);
-}
-
-function truncateToWidth(value: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-
-  let width = 0;
-  let result = "";
-  let index = 0;
-  const ansiAtIndex = new RegExp(ANSI_RE.source, "y");
-
-  while (index < value.length) {
-    ansiAtIndex.lastIndex = index;
-    const ansi = ansiAtIndex.exec(value);
-    if (ansi) {
-      result += ansi[0];
-      index = ansiAtIndex.lastIndex;
-      continue;
-    }
-
-    const char = Array.from(value.slice(index))[0];
-    const nextWidth = width + charWidth(char);
-    if (nextWidth > maxWidth) break;
-    result += char;
-    width = nextWidth;
-    index += char.length;
-  }
-
-  return result;
 }
 
 function buildSessionContext(entries: any[], leafId: unknown): { messages: any[]; thinkingLevel?: string } {
@@ -97,61 +44,12 @@ function buildSessionContext(entries: any[], leafId: unknown): { messages: any[]
   return { messages, thinkingLevel };
 }
 
-function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    const m = tokens / 1_000_000;
-    return m % 1 === 0 ? `${m}M` : `${m.toFixed(1).replace(/\.0$/, "")}M`;
-  }
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
-  return `${tokens}`;
-}
-
 function fitSegment(width: number, variants: string[]): string {
   const safeWidth = Math.max(1, width);
   for (const variant of variants) {
     if (visibleWidth(variant) <= safeWidth) return variant;
   }
   return truncateToWidth(variants[variants.length - 1] || "", safeWidth);
-}
-
-function usageNumber(usage: any, keys: string[]): number {
-  for (const key of keys) {
-    const value = key.includes(".")
-      ? key.split(".").reduce((obj: any, part: string) => obj?.[part], usage)
-      : usage?.[key];
-    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
-  }
-  return 0;
-}
-
-function normalizeUsage(usage: any): TokenBreakdown | undefined {
-  if (!usage) return undefined;
-
-  const input = usageNumber(usage, ["input", "inputTokens", "promptTokens", "prompt_tokens"]);
-  const output = usageNumber(usage, ["output", "outputTokens", "completionTokens", "completion_tokens"]);
-  const cacheRead = usageNumber(usage, [
-    "cacheRead",
-    "cache_read",
-    "cachedTokens",
-    "cached_tokens",
-    "cacheReadInputTokens",
-    "cache_read_input_tokens",
-    "prompt_tokens_details.cached_tokens",
-  ]);
-  const cacheWrite = usageNumber(usage, [
-    "cacheWrite",
-    "cache_write",
-    "cacheCreationInputTokens",
-    "cache_creation_input_tokens",
-    "cacheWriteInputTokens",
-    "cache_write_input_tokens",
-  ]);
-  const componentTotal = input + output + cacheRead + cacheWrite;
-  const nativeTotal = usageNumber(usage, ["totalTokens", "total", "total_tokens"]);
-  const total = nativeTotal || componentTotal;
-
-  if (total <= 0 && componentTotal <= 0) return undefined;
-  return { input, output, cacheRead, cacheWrite, cache: cacheRead + cacheWrite, total };
 }
 
 function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): void {

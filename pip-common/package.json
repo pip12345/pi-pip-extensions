@@ -10,6 +10,7 @@
     ".": "./index.ts",
     "./testing": "./testing.ts"
   },
+  "pi": { "extensions": ["./index.ts"] },
   "files": ["index.ts", "testing.ts", "src"],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

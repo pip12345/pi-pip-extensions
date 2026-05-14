@@ -15,6 +15,28 @@ describe("settings registry", () => {
     expect(registry.all()).toEqual({ plan: { enabled: false, mode: "auto" } });
   });
 
+  it("registers titled sections and cycles choice values", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({
+      id: "plan-mode",
+      title: "Plan Mode",
+      settings: {
+        enabled: setting.boolean({ label: "Enabled", default: true }),
+        behavior: setting.enum({ label: "Default behavior", default: "ask", choices: ["ask", "always", "never"] as const }),
+      },
+    });
+
+    expect(registry.sections()[0].title).toBe("Plan Mode");
+    expect(registry.valueLabel("plan-mode.enabled")).toBe("on");
+    registry.cycle("plan-mode.enabled");
+    expect(registry.get("plan-mode.enabled")).toBe(false);
+    expect(registry.valueLabel("plan-mode.enabled")).toBe("off");
+    registry.cycle("plan-mode.behavior");
+    expect(registry.get("plan-mode.behavior")).toBe("always");
+    registry.reset("plan-mode.behavior");
+    expect(registry.get("plan-mode.behavior")).toBe("ask");
+  });
+
   it("rejects unknown or invalid settings", () => {
     const registry = createSettingsRegistry();
     registry.register("x", { count: setting.number(1) });

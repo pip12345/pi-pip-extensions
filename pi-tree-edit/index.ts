@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { decodeKittyPrintable, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
+import { hasTextContent, setTextContent, textFromContent as commonTextFromContent } from "pip-common";
 
 type ExtensionAPI = any;
 type Theme = any;
@@ -80,36 +81,7 @@ function newId(existing: Set<string>): string {
 }
 
 function textFromContent(content: any): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.filter((b) => b?.type === "text").map((b) => b.text || "").join("\n");
-}
-
-function setTextContent(message: any, text: string): boolean {
-  if (!message) return false;
-  if (typeof message.content === "string") {
-    message.content = text;
-    return true;
-  }
-  if (Array.isArray(message.content)) {
-    let replaced = false;
-    const next: any[] = [];
-    for (const block of message.content) {
-      if (block?.type === "text") {
-        if (!replaced) {
-          next.push({ ...block, text });
-          replaced = true;
-        }
-      } else {
-        next.push(block);
-      }
-    }
-    if (!replaced) next.unshift({ type: "text", text });
-    message.content = next;
-    return true;
-  }
-  message.content = text;
-  return true;
+  return commonTextFromContent(content, "\n");
 }
 
 function entryText(entry: Entry): string {
@@ -132,10 +104,6 @@ function entryText(entry: Entry): string {
 function entryKind(entry: Entry): string {
   if (entry.type === "message") return entry.message?.role || "message";
   return entry.type;
-}
-
-function hasTextContent(content: any): boolean {
-  return textFromContent(content).trim().length > 0;
 }
 
 function isVisibleEntry(entry: Entry, mode: FilterMode, labels: Map<string, string>): boolean {

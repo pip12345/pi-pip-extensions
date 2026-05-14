@@ -1,3 +1,5 @@
+import { decodeKittyPrintable, matchesKey, parseKey } from "@earendil-works/pi-tui";
+
 export const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
 export function stripAnsi(value: string): string {
@@ -56,14 +58,40 @@ export function truncateToWidth(value: string, maxWidth: number): string {
   return result;
 }
 
-export function normalizeBasicInputKey(data: string): string {
-  if (data === "\u001b") return "escape";
-  if (data === "\u0003") return "ctrl+c";
-  if (data === "\t") return "tab";
-  if (data === "\u001b[A") return "up";
-  if (data === "\u001b[B") return "down";
-  if (data === "\u001b[5~") return "pageup";
-  if (data === "\u001b[6~") return "pagedown";
-  if (data.length === 1) return data.toLowerCase();
+export function normalizeInputKey(data: string): string {
+  if (matchesKey(data, "escape") || data === "\u001b") return "escape";
+  if (matchesKey(data, "ctrl+c") || data === "\u0003") return "ctrl+c";
+  if (matchesKey(data, "ctrl+d") || data === "\u0004") return "ctrl+d";
+  if (matchesKey(data, "tab") || data === "\t") return "tab";
+  if (matchesKey(data, "up") || data === "\u001b[A") return "up";
+  if (matchesKey(data, "down") || data === "\u001b[B") return "down";
+  if (matchesKey(data, "right") || data === "\u001b[C") return "right";
+  if (matchesKey(data, "left") || data === "\u001b[D") return "left";
+  if (data === "\u001b[1;5D" || data === "\u001b[5D") return "ctrl+left";
+  if (data === "\u001b[1;5C" || data === "\u001b[5C") return "ctrl+right";
+  if (matchesKey(data, "pageUp") || data === "\u001b[5~") return "pageup";
+  if (matchesKey(data, "pageDown") || data === "\u001b[6~") return "pagedown";
+  if (matchesKey(data, "return") || data === "\r" || data === "\n") return "return";
+  if (matchesKey(data, "backspace")) return "backspace";
+
+  const parsed = parseKey(data);
+  if (parsed) {
+    if (parsed.startsWith("shift+") && parsed.length === "shift+q".length) return parsed.slice("shift+".length).toUpperCase();
+    return parsed.toLowerCase();
+  }
+
+  const printable = decodeKittyPrintable(data);
+  if (printable?.length === 1) return printable;
+  if (data.length === 1) return data;
   return data;
+}
+
+export function printableInput(data: string): string | undefined {
+  const parsed = parseKey(data);
+  if (parsed?.length === 1) return parsed;
+  if (parsed?.startsWith("shift+") && parsed.length === "shift+q".length) return parsed.slice("shift+".length).toUpperCase();
+  const printable = decodeKittyPrintable(data);
+  if (printable?.length === 1) return printable;
+  if (data >= " " && data.length === 1) return data;
+  return undefined;
 }

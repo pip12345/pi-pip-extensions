@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { decodeKittyPrintable, matchesKey, parseKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { addUsage as addTokens, emptyUsage as emptyTokens, normalizeUsage, textFromContent, type TokenUsage as Tokens } from "pip-common";
 
 type ExtensionAPI = any;
 type Theme = any;
@@ -10,16 +11,6 @@ type Theme = any;
 type RangeKey = "today" | "7d" | "30d" | "all";
 type Page = "session" | "global";
 type GroupBy = "model" | "provider" | "day";
-
-interface Tokens {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cache: number;
-  total: number;
-  cost: number;
-}
 
 interface SessionRow extends Tokens {
   index: number;
@@ -52,27 +43,6 @@ interface GlobalRow extends Tokens {
 const GLOBAL_USAGE_PATH = join(homedir(), ".pi", "agent", "token-usage.jsonl");
 const RANGE_LABELS: Record<RangeKey, string> = { today: "today", "7d": "last 7d", "30d": "last 30d", all: "all time" };
 
-function numberFrom(obj: any, keys: string[]): number {
-  for (const key of keys) {
-    const value = key.includes(".") ? key.split(".").reduce((o, p) => o?.[p], obj) : obj?.[key];
-    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
-  }
-  return 0;
-}
-
-function normalizeUsage(usage: any): Tokens | undefined {
-  if (!usage) return undefined;
-  const input = numberFrom(usage, ["input", "inputTokens", "promptTokens", "prompt_tokens"]);
-  const output = numberFrom(usage, ["output", "outputTokens", "completionTokens", "completion_tokens"]);
-  const cacheRead = numberFrom(usage, ["cacheRead", "cachedTokens", "cached_tokens", "cache_read_input_tokens", "prompt_tokens_details.cached_tokens"]);
-  const cacheWrite = numberFrom(usage, ["cacheWrite", "cache_creation_input_tokens", "cache_write_input_tokens"]);
-  const componentTotal = input + output + cacheRead + cacheWrite;
-  const total = numberFrom(usage, ["totalTokens", "total", "total_tokens"]) || componentTotal;
-  const cost = numberFrom(usage, ["cost.total", "cost"]);
-  if (total <= 0 && componentTotal <= 0) return undefined;
-  return { input, output, cacheRead, cacheWrite, cache: cacheRead + cacheWrite, total, cost };
-}
-
 function fmt(n: number, compact = true): string {
   if (!compact) return Math.round(n).toLocaleString();
   if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
@@ -83,12 +53,6 @@ function fmt(n: number, compact = true): string {
 function money(n: number): string {
   if (!n) return "-";
   return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
-}
-
-function textFromContent(content: any): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.filter((b) => b?.type === "text").map((b) => b.text || "").join(" ");
 }
 
 function hashId(parts: unknown[]): string {
@@ -126,20 +90,6 @@ function padAnsi(s: string, width: number): string {
 
 function padLeftAnsi(s: string, width: number): string {
   return " ".repeat(Math.max(0, width - visibleWidth(s))) + s;
-}
-
-function addTokens(target: Tokens, next: Tokens): void {
-  target.input += next.input;
-  target.output += next.output;
-  target.cacheRead += next.cacheRead;
-  target.cacheWrite += next.cacheWrite;
-  target.cache += next.cache;
-  target.total += next.total;
-  target.cost += next.cost;
-}
-
-function emptyTokens(): Tokens {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
 }
 
 function scrollIndicator(selected: number, total: number, width: number, theme: Theme): string {

@@ -9,6 +9,9 @@
   "dependencies": {
     "pip-common": "file:../pip-common"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "*"
+  },
   "pi": { "extensions": ["./index.ts"] },
   "files": ["index.ts"]
 }

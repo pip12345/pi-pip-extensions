@@ -4,13 +4,39 @@ Local pi extension packages plus shared utilities.
 
 ## Packages
 
-- `pip-common` - shared utilities and unit-test helpers for the extensions
+- `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers for the extensions
 - `pi-quiet-tools` - compact rendering for built-in read/grep/find/ls tools
 - `pi-stats` - interactive token/session/global usage inspector
 - `pi-token-counter` - live token counter widget
 - `pi-tree-edit` - interactive session tree editor
 
 Each extension is intended to work independently, but may depend on `pip-common`.
+
+## `/pip-settings`
+
+`pip-common` registers a shared `/pip-settings` command. Plugins can register settings under their own header with `registerSettingsSection()`:
+
+```ts
+import { registerSettingsSection, setting } from "pip-common";
+
+registerSettingsSection({
+  id: "plan-mode",
+  title: "Plan Mode",
+  order: 10,
+  settings: {
+    enabled: setting.boolean({ label: "Enabled", default: true, order: 1 }),
+    behavior: setting.enum({
+      label: "Default behavior",
+      default: "ask",
+      choices: ["ask", "always", "never"] as const,
+      order: 2,
+    }),
+  },
+});
+```
+
+The settings UI is inline: `enter`/right arrow advance values, left arrow goes backward, and booleans are just `on`/`off` choices.
+Values persist to `~/.pi/agent/pip-settings.json`.
 
 ## Setup
 
