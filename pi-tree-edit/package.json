@@ -6,7 +6,9 @@
   "keywords": ["pi-package", "pi-extension", "tree", "session", "branch", "editor"],
   "license": "MIT",
   "engines": { "node": ">=18.0.0" },
-  "dependencies": {},
+  "dependencies": {
+    "pip-common": "file:../pip-common"
+  },
   "pi": { "extensions": ["./index.ts"] },
   "files": ["index.ts", "README.md"]
 }

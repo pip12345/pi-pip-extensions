@@ -1,0 +1,19 @@
+{
+  "name": "pip-common",
+  "version": "0.1.0",
+  "description": "Shared utilities for pi extension packages",
+  "type": "module",
+  "license": "MIT",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./testing": "./testing.ts"
+  },
+  "files": ["index.ts", "testing.ts", "src"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

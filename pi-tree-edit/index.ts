@@ -1387,7 +1387,7 @@ export default function (pi: ExtensionAPI) {
       const draft = new DraftSession(parsed.header, parsed.entries, ctx.sessionManager.getLeafId?.() ?? null);
 
       while (true) {
-        const result = await ctx.ui.custom<ExitResult>((tui: any, theme: Theme, _kb: any, done: (result: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {
+        const result = await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: (result: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {
           overlay: true,
           overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", minWidth: 90, margin: 1 },
         });

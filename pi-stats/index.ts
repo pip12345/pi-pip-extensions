@@ -549,7 +549,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("stats", {
     description: "Open token usage inspector (session and global pages)",
     handler: async (_args: string, ctx: any) => {
-      await ctx.ui.custom<void>((tui: any, theme: Theme, _kb: any, done: () => void) => new TokenInspector(tui, ctx, theme, done), {
+      await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: () => void) => new TokenInspector(tui, ctx, theme, done), {
         overlay: true,
         overlayOptions: { anchor: "center", width: "92%", maxHeight: "85%", minWidth: 90 },
       });
