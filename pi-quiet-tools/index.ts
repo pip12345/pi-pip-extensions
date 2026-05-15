@@ -1,12 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  ToolExecutionComponent,
   createFindTool,
   createGrepTool,
   createLsTool,
   createReadTool,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Text, type Component } from "@earendil-works/pi-tui";
+import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { listPipToolRegistrations, onPipToolRegistrationChange, pipSettings, registerPipToolFinalizer, registerSettingsSection, setting, themeFg } from "pip-common";
 
@@ -18,8 +17,6 @@ const BUILTIN_QUIET_TOOLS = [
   { name: "find", label: "Find" },
   { name: "ls", label: "Ls" },
 ] as const;
-const PATCH_KEY = Symbol.for("pi-quiet-tools.tight-tool-render-patch");
-
 type BuiltIns = ReturnType<typeof createBuiltInTools>;
 const toolCache = new Map<string, BuiltIns>();
 
@@ -150,58 +147,10 @@ function renderErrorIfCollapsed(result: any, theme: any): Component {
   return EMPTY_COMPONENT;
 }
 
-function isKnownQuietTool(toolName: string): boolean {
-  if ((BUILTIN_QUIET_TOOLS as readonly any[]).some((tool) => tool.name === toolName)) return true;
-  return listPipToolRegistrations().some((registration) => registration.tool.name === toolName && registration.metadata?.quietCapable && registration.metadata.compact);
-}
-
-function isCollapsedQuietTool(component: any): boolean {
-  const isToolComponent = component instanceof ToolExecutionComponent || component?.constructor?.name === "ToolExecutionComponent";
-  return isToolComponent && isKnownQuietTool(component.toolName) && isQuietEnabled(component.toolName) && !component.expanded;
-}
-
-function patchToolRowSpacing(): void {
-  const containerProto = Container.prototype as any;
-  const globalState = globalThis as any;
-  const state = globalState[PATCH_KEY] ?? {};
-
-  if (state.containerRenderOriginal) containerProto.render = state.containerRenderOriginal;
-
-  const containerRenderOriginal = containerProto.render;
-  globalState[PATCH_KEY] = { containerRenderOriginal };
-
-  containerProto.render = function quietToolsContainerRender(width: number): string[] {
-    const children = this.children;
-    if (!Array.isArray(children)) return containerRenderOriginal.call(this, width);
-
-    const lines: string[] = [];
-    let previousCollapsedQuietTool = false;
-
-    for (const child of children) {
-      let childLines = child.render(width) as string[];
-      const currentCollapsedQuietTool = isCollapsedQuietTool(child);
-
-      if (currentCollapsedQuietTool) {
-        if (previousCollapsedQuietTool) {
-          while (childLines[0] === "") childLines = childLines.slice(1);
-        } else if (childLines[0] !== "") {
-          childLines = ["", ...childLines];
-        }
-      }
-
-      lines.push(...childLines);
-      previousCollapsedQuietTool = currentCollapsedQuietTool;
-    }
-
-    return lines;
-  };
-}
-
 export default function (pi: ExtensionAPI) {
   registerQuietSettings();
   onPipToolRegistrationChange(registerQuietSettings);
   registerQuietPipFinalizer();
-  patchToolRowSpacing();
   pi.registerTool({
     name: "read",
     label: "read",
