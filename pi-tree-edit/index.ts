@@ -1388,7 +1388,8 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     const minInnerHeight = Math.max(lines.length, this.pageSize() + 5);
     while (lines.length < minInnerHeight) lines.push("");
     const highlightStatus = this.draft.highlightEntryIds.length ? `${this.draft.highlightKind ?? "highlight"}: ${this.draft.highlightEntryIds.length} · ` : "";
-    lines.push(th.fg("dim", `(${rows.length ? this.selected + 1 : 0}/${rows.length}) [${this.filterLabel(this.filterMode)}] ${highlightStatus}${allCount !== rows.length ? `${allCount - rows.length} hidden · ` : ""}q/Esc prompts to save or discard`));
+    const exitHint = this.draft.dirty ? "q/Esc prompts to save or discard" : "q/Esc quits";
+    lines.push(th.fg("dim", `(${rows.length ? this.selected + 1 : 0}/${rows.length}) [${this.filterLabel(this.filterMode)}] ${highlightStatus}${allCount !== rows.length ? `${allCount - rows.length} hidden · ` : ""}${exitHint}`));
     return box(lines, bodyWidth, " tree-edit ", th);
   }
 }
@@ -1477,10 +1478,11 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
 
-        const choices = draft.dirty ? ["Quit without saving", "Save and quit", "Cancel"] : ["Quit", "Cancel"];
-        const choice = await ctx.ui.select(draft.dirty ? "Save tree-edit changes?" : "Quit tree-edit?", choices);
+        if (!draft.dirty) return;
+
+        const choice = await ctx.ui.select("Save tree-edit changes?", ["Quit without saving", "Save and quit", "Cancel"]);
         if (choice === "Cancel" || !choice) continue;
-        if (choice === "Quit" || choice === "Quit without saving") return;
+        if (choice === "Quit without saving") return;
         if (choice === "Save and quit") {
           await saveDraft(sessionFile, draft, ctx);
           return;

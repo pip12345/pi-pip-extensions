@@ -170,7 +170,7 @@ export function renderCompactTodos(state: TodoState, width: number, theme: any =
   const { items, hiddenAbove, hiddenBelow } = chooseVisibleTodos(todos, rows, showCompleted);
   if (!items.length) return [];
   const displayRows: Array<TodoItem | { overflow: string }> = [...items];
-  const overflowParts = [hiddenAbove > 0 ? `${hiddenAbove} above` : "", hiddenBelow > 0 ? `${hiddenBelow} below` : ""].filter(Boolean);
+  const overflowParts = [hiddenBelow > 0 ? `${hiddenBelow} below` : ""].filter(Boolean);
   if (overflowParts.length && displayRows.length < rows) displayRows.push({ overflow: overflowParts.join(" · ") });
   else if (overflowParts.length && displayRows.length === rows) displayRows[displayRows.length - 1] = { overflow: overflowParts.join(" · ") };
   if (!displayRows.length) return [];
