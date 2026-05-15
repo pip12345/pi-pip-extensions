@@ -56,7 +56,7 @@ export function createMockSessionManager(entries: any[] = [], leafId?: string) {
 
 export function createMockCtx(options: any = {}) {
   const entries = options.entries ?? [];
-  return {
+  const ctx: any = {
     cwd: options.cwd ?? process.cwd(),
     hasUI: options.hasUI ?? true,
     model: options.model,
@@ -66,6 +66,7 @@ export function createMockCtx(options: any = {}) {
       notifications: [] as any[],
       statuses: new Map<string, string>(),
       widgets: new Map<string, any>(),
+      editorText: "",
       notify(message: string, level = "info") {
         this.notifications.push({ message, level });
       },
@@ -79,14 +80,26 @@ export function createMockCtx(options: any = {}) {
       setWidget(key: string, value: any) {
         this.widgets.set(key, value);
       },
+      setEditorText(value: string) {
+        this.editorText = value;
+      },
     },
     isIdle: () => options.idle ?? true,
     abort: () => undefined,
     hasPendingMessages: () => false,
     shutdown: () => undefined,
+    reload: async () => {
+      options.reloaded = true;
+    },
+    switchSession: async (sessionPath: string, switchOptions: any = {}) => {
+      options.switchedSession = sessionPath;
+      await switchOptions.withSession?.(options.replacementCtx ?? ctx);
+      return { cancelled: false };
+    },
     getContextUsage: () => options.contextUsage,
     getSystemPrompt: () => options.systemPrompt ?? "",
   };
+  return ctx;
 }
 
 export async function emitEvent(pi: MockPi, eventName: string, event: any = {}, ctx: any = createMockCtx()) {

@@ -83,7 +83,7 @@ registerSettingsSection({
     showContext: setting.boolean({ label: "Context bar", default: true, order: 3 }),
     showModel: setting.boolean({ label: "Model", default: true, order: 4 }),
     showTokenCounter: setting.boolean({ label: "Above-editor token counter", default: true, order: 5 }),
-    cacheIcon: setting.enum({ label: "Cache icon", default: "↻", choices: ["↻", "c"] as const, order: 6 }),
+    cacheIcon: setting.enum({ label: "Cache icon", default: "↻", choices: ["↻", "c", "▣", "◫", "□"] as const, order: 6 }),
     showPluginLines: setting.boolean({ label: "Plugin lines", default: true, order: 7 }),
     showGit: setting.boolean({ label: "Git", default: false, order: 8 }),
     showCwd: setting.enum({ label: "CWD", default: "project", choices: ["off", "project", "path"] as const, order: 9 }),
@@ -543,14 +543,23 @@ export default function (pi: ExtensionAPI) {
     tuiRef?.requestRender?.();
   }
 
-  function hideWorking(ctx: any): void {
-    if (!ctx?.hasUI) return;
-    ctx.ui.setWorkingVisible?.(false);
-    ctx.ui.setWorkingIndicator?.({ frames: [] });
+  function tokenCounterEnabled(): boolean {
+    return pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCounter`);
   }
 
-  function cacheIcon(): "↻" | "c" {
-    return pipSettings.get<"↻" | "c">(`${FOOTER_SETTINGS_ID}.cacheIcon`);
+  function syncWorkingIndicator(ctx: any): void {
+    if (!ctx?.hasUI) return;
+    if (tokenCounterEnabled()) {
+      ctx.ui.setWorkingVisible?.(false);
+      ctx.ui.setWorkingIndicator?.({ frames: [] });
+      return;
+    }
+    ctx.ui.setWorkingVisible?.(true);
+    ctx.ui.setWorkingIndicator?.();
+  }
+
+  function cacheIcon(): "↻" | "c" | "▣" | "◫" | "□" {
+    return pipSettings.get<"↻" | "c" | "▣" | "◫" | "□">(`${FOOTER_SETTINGS_ID}.cacheIcon`);
   }
 
   function tokenValuesChanged(previous: TokenBreakdown | undefined, next: TokenBreakdown | undefined): boolean {
@@ -646,7 +655,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function installTokenWidget(ctx: any): void {
-    if (!originalSetWidget || !pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCounter`)) return;
+    if (!originalSetWidget || !tokenCounterEnabled()) return;
     originalSetWidget(WIDGET_KEY, undefined);
     originalSetWidget(
       WIDGET_KEY,
@@ -874,7 +883,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event: any, ctx: any) => {
     previousSettledTokens = getBranchTokens(ctx);
     gitState = readGitState(ctx.cwd);
-    hideWorking(ctx);
+    syncWorkingIndicator(ctx);
 
     if (ctx.hasUI) {
       originalSetWidgetMethod = ctx.ui.setWidget;
@@ -906,17 +915,17 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_start", async (_event: any, ctx: any) => {
-    hideWorking(ctx);
-    startTokenAnimation();
+    syncWorkingIndicator(ctx);
+    if (tokenCounterEnabled()) startTokenAnimation();
   });
 
   pi.on("turn_start", async (_event: any, ctx: any) => {
-    hideWorking(ctx);
-    startTokenAnimation();
+    syncWorkingIndicator(ctx);
+    if (tokenCounterEnabled()) startTokenAnimation();
   });
 
   pi.on("message_start", async (event: any) => {
-    if (event.message?.role === "assistant") startTokenAnimation();
+    if (event.message?.role === "assistant" && tokenCounterEnabled()) startTokenAnimation();
   });
 
   pi.on("message_update", async (event: any) => {
@@ -953,6 +962,8 @@ export default function (pi: ExtensionAPI) {
 
   const shutdown = async (_event: any, ctx: any) => {
     ctx?.ui?.setFooter?.(undefined);
+    ctx?.ui?.setWorkingVisible?.(true);
+    ctx?.ui?.setWorkingIndicator?.();
     if (originalSetWidget) originalSetWidget(WIDGET_KEY, undefined);
     if (ctx?.ui && originalSetWidgetMethod && ctx.ui.setWidget !== originalSetWidgetMethod) ctx.ui.setWidget = originalSetWidgetMethod;
     disposeTokenAnimation();

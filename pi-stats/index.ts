@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
@@ -13,6 +12,7 @@ import {
   PipCustomComponent,
   printableInput,
   textFromContent,
+  pipPath,
   type TokenUsage as Tokens,
 } from "pip-common";
 
@@ -51,7 +51,7 @@ interface GlobalRow extends Tokens {
   lastTs: number;
 }
 
-const GLOBAL_USAGE_PATH = join(homedir(), ".pi", "agent", "token-usage.jsonl");
+const GLOBAL_USAGE_PATH = pipPath("token-usage.jsonl");
 const RANGE_LABELS: Record<RangeKey, string> = { today: "today", "7d": "last 7d", "30d": "last 30d", all: "all time" };
 
 function fmt(n: number, compact = true): string {

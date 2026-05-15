@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { dirname } from "node:path";
+import { pipPath } from "./paths.ts";
 
 export type SettingType = "boolean" | "string" | "number" | "enum";
 
@@ -41,7 +41,7 @@ export interface SettingRow {
 
 export type SettingsDefinition = Record<string, SettingDefinition>;
 
-export const DEFAULT_SETTINGS_PATH = join(homedir(), ".pi", "agent", "pip-settings.json");
+export const DEFAULT_SETTINGS_PATH = pipPath("pip-settings.json");
 
 function baseValidate(definition: SettingDefinition, value: unknown): boolean {
   if (definition.validate) return definition.validate(value);

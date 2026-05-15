@@ -21,7 +21,7 @@ Configure in `/pip-settings` under **Pip Footer**:
 - Context bar
 - Model
 - Above-editor token counter
-- Cache icon: `↻` or `c`
+- Cache icon: `↻`, `c`, `▣`, `◫`, or `□`
 - Plugin lines
 - Git
 - CWD: `off`, `project`, `path`

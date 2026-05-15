@@ -37,6 +37,9 @@ describe("pi-pip-footer", () => {
     expect(__test.renderTokenMetric("↓", 273_000, false, theme)).toBe("↓:273k");
     expect(__test.renderTokenMetric("↑", 49_000, false, theme)).toBe("↑:49k");
     expect(__test.renderTokenMetric("↻", 14_300_000, false, theme)).toBe("↻:14.3M");
+    expect(__test.renderTokenMetric("▣", 14_300_000, false, theme)).toBe("▣:14.3M");
+    expect(__test.renderTokenMetric("◫", 14_300_000, false, theme)).toBe("◫:14.3M");
+    expect(__test.renderTokenMetric("□", 14_300_000, false, theme)).toBe("□:14.3M");
   });
 
   it("interpolates token values for count-up animation", () => {
