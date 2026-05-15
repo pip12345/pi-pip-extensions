@@ -100,16 +100,18 @@ describe("pi-undo-redo", () => {
     expect(__test.redoStack()).toHaveLength(0);
   });
 
-  it("preserves original file order when redo restores a non-file-tail branch", async () => {
+  it("keeps the intended active leaf last for non-file-tail branch undo/redo", async () => {
     const entries = [user("u1", null, "one"), assistant("a1", "u1"), user("u2", "a1", "two"), assistant("a2", "u2"), user("sibling", "a1", "sibling")];
     const path = tempSession(entries);
+    writeFileSync(path, serializeSessionFile({ header: { type: "session", leafId: "a2" }, entries }));
     const pi = createMockPi();
     undoRedo(pi as any);
     const currentBranch = entries.slice(0, 4);
-    const ctx = ctxFor(path, currentBranch);
-    await runCommand(pi, "undo", "", ctx);
+    await runCommand(pi, "undo", "", ctxFor(path, currentBranch));
+    expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1", "sibling", "a1"]);
+
     await runCommand(pi, "redo", "", ctxFor(path, parseSessionFile(path).entries));
-    expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1", "a1", "u2", "a2", "sibling"]);
+    expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1", "a1", "u2", "sibling", "a2"]);
   });
 
   it("refuses undo when the session file header leaf disagrees with ctx", async () => {

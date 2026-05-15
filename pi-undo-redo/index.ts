@@ -234,17 +234,29 @@ async function replaceCurrentSession(ctx: Ctx, sessionFile: string, withSession?
   await withSession?.(ctx);
 }
 
+function makeEffectiveLeafLast(records: SessionRecord[], leafId: string | null): SessionRecord[] {
+  if (!leafId) return records;
+  const leafIndex = records.findIndex((record) => isSessionEntry(record) && record.id === leafId);
+  if (leafIndex < 0 || leafIndex === records.length - 1) return records;
+  const next = [...records];
+  const [leaf] = next.splice(leafIndex, 1);
+  next.push(leaf);
+  return next;
+}
+
 function removeTail(file: ParsedSessionFile, tail: SessionEntry[], previousLeafId: string | null): SessionRecord[] {
   const tailIds = new Set(tail.map((entry) => entry.id));
   const header = clone(file.header);
   updateHeaderLeaf(header, previousLeafId);
-  return file.raw
+  const records = file.raw
     .map((record) => (record.type === "session" ? header : record))
     .filter((record) => !(isSessionEntry(record) && tailIds.has(record.id)));
+  return makeEffectiveLeafLast(records, previousLeafId);
 }
 
 function restoreTail(_file: ParsedSessionFile, slot: RedoSlot): SessionRecord[] {
-  return clone(slot.beforeUndoRecords);
+  const records = clone(slot.beforeUndoRecords);
+  return makeEffectiveLeafLast(records, slot.restoredLeafId);
 }
 
 async function undo(ctx: Ctx) {
