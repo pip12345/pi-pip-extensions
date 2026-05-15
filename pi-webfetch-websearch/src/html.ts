@@ -6,7 +6,7 @@ const BLOCK_TAGS = new Set([
   "address", "article", "aside", "blockquote", "body", "br", "dd", "details", "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
 ]);
 
-export type HtmlExtractMode = "auto" | "article" | "docs" | "nav" | "all";
+export type HtmlExtractMode = "auto" | "nav" | "all";
 
 export interface HtmlConversionResult {
   text: string;
@@ -88,13 +88,13 @@ function extractNavHtml(html: string): string {
 
 function collectCandidates(html: string, mode: HtmlExtractMode): Candidate[] {
   const out: Candidate[] = [];
-  const tags = mode === "docs" ? ["main", "article", "section", "div", "body"] : ["article", "main", "section", "div", "body"];
+  const tags = ["article", "main", "section", "div", "body"];
   for (const tag of tags) {
     for (const candidate of tagContents(html, tag)) {
       const textScore = visibleTextScore(candidate.html);
       if (textScore < 40 && tag !== "body") continue;
       const linkPenalty = linkDensity(candidate.html) * 300;
-      const attrBoost = attributeBoost(candidate.attrs, mode);
+      const attrBoost = attributeBoost(candidate.attrs);
       const tagBoost = tag === "article" ? 700 : tag === "main" ? 600 : tag === "section" ? 120 : tag === "body" ? -250 : 0;
       const headingBoost = /<\s*h1\b/i.test(candidate.html) ? 180 : /<\s*h[2-3]\b/i.test(candidate.html) ? 80 : 0;
       const chromePenalty = /\b(nav|menu|sidebar|footer|header|breadcrumb|pagination)\b/i.test(candidate.attrs) ? 500 : 0;
@@ -104,12 +104,10 @@ function collectCandidates(html: string, mode: HtmlExtractMode): Candidate[] {
   return out;
 }
 
-function attributeBoost(attrs: string, mode: HtmlExtractMode): number {
+function attributeBoost(attrs: string): number {
   const value = attrs.toLowerCase();
   let boost = 0;
-  if (/\b(markdown-body|readme|article|post|entry-content|content|main|prose)\b/.test(value)) boost += 900;
-  if (mode === "docs" && /\b(doc|docs|documentation|api|reference|content|main)\b/.test(value)) boost += 800;
-  if (mode === "article" && /\b(article|post|story|entry|content|prose)\b/.test(value)) boost += 800;
+  if (/\b(markdown-body|readme|article|post|entry-content|content|main|prose|doc|docs|documentation|api|reference)\b/.test(value)) boost += 900;
   if (/\b(nav|menu|sidebar|footer|header|breadcrumb|toc)\b/.test(value)) boost -= 900;
   return boost;
 }

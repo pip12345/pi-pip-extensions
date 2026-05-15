@@ -14,7 +14,7 @@ webfetch({ url, format?, timeout?, maxChars?, extract? })
 websearch({ query, numResults?, provider?, livecrawl?, type?, contextMaxCharacters?, timeout? })
 ```
 
-`webfetch.extract` can be `auto`, `article`, `docs`, `nav`, or `all`. Auto favors content; nav intentionally returns navigation/menu links; all keeps broad body content. GitHub repo/blob URLs are handled in `src/sites/github.ts` and rewritten to raw README/file content when useful.
+`webfetch.extract` can be `auto`, `nav`, or `all`. Auto favors content; nav intentionally returns navigation/menu links; all keeps broad body content. GitHub repo/blob URLs are handled in `src/sites/github.ts` and rewritten to raw README/file content when useful.
 
 `websearch.provider` can be `auto`, `parallel`, or `exa`. Auto tries Parallel first, then Exa.
 Optional env vars:
