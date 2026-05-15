@@ -8,6 +8,7 @@ Local pi extension packages plus shared utilities.
 - `pi-quiet-tools` - compact rendering for built-in read/grep/find/ls tools
 - `pi-stats` - interactive token/session/global usage inspector
 - `pi-pip-footer` - pip footer with live token counter, context gauge, model status, and quota usage
+- `pi-prompt-profiles` - selectable markdown system prompt overlays
 - `pi-tree-edit` - interactive session tree editor
 
 Each extension is intended to work independently, but may depend on `pip-common`.
@@ -132,6 +133,12 @@ extensions-pip/
   pi-pip-footer/
     index.ts
     index.test.ts
+    package.json
+
+  pi-prompt-profiles/
+    index.ts
+    index.test.ts
+    prompts/
     package.json
 
   pi-tree-edit/

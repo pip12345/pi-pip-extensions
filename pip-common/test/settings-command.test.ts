@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import pipCommon from "../index.ts";
 import { createMockPi } from "../src/testing.ts";
-import { createPipSettingsComponent } from "../src/settings-command.ts";
+import { createPipSettingsComponent, registerPipSettingsCommand } from "../src/settings-command.ts";
 import { createSettingsRegistry, setting } from "../src/settings.ts";
 
 describe("pip settings command", () => {
@@ -11,7 +11,7 @@ describe("pip settings command", () => {
     expect(pi.commands.has("pip-settings")).toBe(true);
   });
 
-  it("cycles boolean and enum values inline", () => {
+  it("stages boolean and enum values until close", () => {
     const registry = createSettingsRegistry({}, { persistPath: false });
     registry.registerSection({
       id: "plan-mode",
@@ -24,20 +24,25 @@ describe("pip settings command", () => {
 
     const tui = { renders: 0, requestRender() { this.renders++; } };
     const theme = { fg: (_name: string, text: string) => text };
-    const component = createPipSettingsComponent(tui, theme, () => undefined, registry) as any;
+    let result: any;
+    const component = createPipSettingsComponent(tui, theme, (value) => { result = value; }, registry) as any;
 
     expect(component.render(80).join("\n")).toContain("Enabled:");
     expect(registry.get("plan-mode.enabled")).toBe(true);
 
     component.handleInput("\r");
-    expect(registry.get("plan-mode.enabled")).toBe(false);
+    expect(registry.get("plan-mode.enabled")).toBe(true);
+    expect(component.render(80).join("\n")).toContain("unsaved");
 
     component.handleInput("\u001b[B");
     component.handleInput("\u001b[C");
-    expect(registry.get("plan-mode.behavior")).toBe("always");
-
     component.handleInput("\u001b[D");
-    expect(registry.get("plan-mode.behavior")).toBe("ask");
+    component.handleInput("q");
+
+    expect(result.dirty).toBe(true);
+    expect(result.values["plan-mode"].enabled).toBe(false);
+    expect(result.values["plan-mode"].behavior).toBe("ask");
+    expect(registry.get("plan-mode.enabled")).toBe(true);
   });
 
   it("always closes on raw escape, ctrl-c, and ctrl-d", () => {
@@ -49,5 +54,63 @@ describe("pip settings command", () => {
       component.handleInput(key);
       expect(closed).toBe(true);
     }
+  });
+
+  it("confirms saving staged changes from the command", async () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+    const pi = createMockPi();
+    registerPipSettingsCommand(pi as any, registry);
+
+    const ctx: any = {
+      ui: {
+        custom: async (factory: any) => {
+          let result: any;
+          const component = factory({ requestRender() {} }, { fg: (_name: string, text: string) => text }, undefined, (value: any) => { result = value; }) as any;
+          component.handleInput("\r");
+          component.handleInput("q");
+          return result;
+        },
+        select: async (_title: string, choices: string[]) => {
+          expect(choices[0]).toBe("No, discard changes");
+          return "Yes, save changes";
+        },
+        notifications: [] as any[],
+        notify(message: string, level: string) { this.notifications.push({ message, level }); },
+      },
+    };
+
+    await pi.commands.get("pip-settings").handler("", ctx);
+    expect(registry.get("x.enabled")).toBe(false);
+    expect(ctx.ui.notifications.at(-1).message).toContain("Saved");
+  });
+
+  it("discards staged changes when save is rejected", async () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+    const pi = createMockPi();
+    registerPipSettingsCommand(pi as any, registry);
+
+    const ctx: any = {
+      ui: {
+        custom: async (factory: any) => {
+          let result: any;
+          const component = factory({ requestRender() {} }, { fg: (_name: string, text: string) => text }, undefined, (value: any) => { result = value; }) as any;
+          component.handleInput("\r");
+          component.handleInput("q");
+          return result;
+        },
+        select: async (_title: string, choices: string[]) => {
+          expect(choices[0]).toBe("No, discard changes");
+          return choices[0];
+        },
+        notifications: [] as any[],
+        notify(message: string, level: string) { this.notifications.push({ message, level }); },
+      },
+    };
+
+    await pi.commands.get("pip-settings").handler("", ctx);
+    expect(registry.get("x.enabled")).toBe(true);
+    expect(ctx.ui.notifications.at(-1).message).toContain("Discarded");
   });
 });
