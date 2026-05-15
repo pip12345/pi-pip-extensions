@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { boxLines, PipCustomComponent, pipSettings, registerSettingsSection, setting, themeFg, truncateToWidth } from "pip-common";
+import { boxLines, PipCustomComponent, pipSettings, registerPipTool, registerSettingsSection, setting, themeFg, truncateToWidth } from "pip-common";
 
 export type TodoStatus = "pending" | "active" | "done";
 
@@ -320,6 +320,36 @@ const TodoUpdateParams = Type.Object({
   ),
 });
 
+function textResult(result: any): string {
+  const block = result?.content?.find?.((item: any) => item?.type === "text");
+  return block?.type === "text" ? block.text ?? "" : "";
+}
+
+function normalTodoWriteCall(args: any, theme: any): Text {
+  return new Text(themeFg(theme, "toolTitle", `todo_write`) + themeFg(theme, "muted", ` ${(args.todos ?? []).length} todos`), 0, 0);
+}
+
+function normalTodoUpdateCall(args: any, theme: any): Text {
+  return new Text(themeFg(theme, "toolTitle", `todo_update`) + themeFg(theme, "muted", ` ${(args.updates ?? []).length} updates`), 0, 0);
+}
+
+function normalTodoReadCall(theme: any): Text {
+  return new Text(themeFg(theme, "toolTitle", "todo_read"), 0, 0);
+}
+
+function normalTodoSuccessResult(result: any, theme: any): Text {
+  return new Text(themeFg(theme, "success", "✓ ") + themeFg(theme, "muted", textResult(result) || "todos updated"), 0, 0);
+}
+
+function normalTodoUpdateResult(result: any, theme: any): Text {
+  const errors = result?.details?.errors?.length;
+  return new Text(themeFg(theme, errors ? "warning" : "success", errors ? "⚠ " : "✓ ") + themeFg(theme, "muted", textResult(result) || "todos updated"), 0, 0);
+}
+
+function normalTodoReadResult(state: TodoState, theme: any): Text {
+  return new Text(themeFg(theme, "muted", stateSummary(state.todos)), 0, 0);
+}
+
 export default function todoExtension(pi: ExtensionAPI) {
   let state = emptyState();
   let currentCtx: any;
@@ -363,7 +393,8 @@ export default function todoExtension(pi: ExtensionAPI) {
   pi.on("session_tree", async (_event: any, ctx: any) => reconstruct(ctx));
   pi.on("session_shutdown", async (_event: any, ctx: any) => ctx?.ui?.setWidget?.(WIDGET_KEY, undefined));
 
-  pi.registerTool({
+  registerPipTool(pi, {
+    tool: {
     name: "todo_write",
     label: "Todo Write",
     description: "Batch create, replace, or clear the session todo list.",
@@ -381,14 +412,26 @@ export default function todoExtension(pi: ExtensionAPI) {
       return { content: [{ type: "text", text: `Set ${stateSummary(state.todos)}` }], details: cloneState(state) };
     },
     renderCall(args: any, theme: any) {
-      return new Text(themeFg(theme, "toolTitle", `todo_write`) + themeFg(theme, "muted", ` ${(args.todos ?? []).length} todos`), 0, 0);
+      return normalTodoWriteCall(args, theme);
     },
     renderResult(result: any, _options: any, theme: any) {
-      return new Text(themeFg(theme, "success", "✓ ") + themeFg(theme, "muted", result?.content?.[0]?.text ?? "todos updated"), 0, 0);
+      return normalTodoSuccessResult(result, theme);
+    },
+    },
+    metadata: {
+      pluginId: "todo",
+      label: "Todo write",
+      quietCapable: true,
+      compact: {
+        call: (args) => `${args?.todos?.length ?? 0} todos`,
+        expandedResult: (result) => compactList(result?.details?.todos ?? []),
+        hideSuccessfulResult: true,
+      },
     },
   });
 
-  pi.registerTool({
+  registerPipTool(pi, {
+    tool: {
     name: "todo_update",
     label: "Todo Update",
     description: "Batch update existing session todos by id or text match.",
@@ -401,15 +444,27 @@ export default function todoExtension(pi: ExtensionAPI) {
       return { content: [{ type: "text", text: `Updated ${result.updated} todo${result.updated === 1 ? "" : "s"}${suffix}` }], details: { ...cloneState(result.changed ? state : result.state), errors: result.errors, updated: result.updated } };
     },
     renderCall(args: any, theme: any) {
-      return new Text(themeFg(theme, "toolTitle", `todo_update`) + themeFg(theme, "muted", ` ${(args.updates ?? []).length} updates`), 0, 0);
+      return normalTodoUpdateCall(args, theme);
     },
     renderResult(result: any, _options: any, theme: any) {
-      const errors = result?.details?.errors?.length;
-      return new Text(themeFg(theme, errors ? "warning" : "success", errors ? "⚠ " : "✓ ") + themeFg(theme, "muted", result?.content?.[0]?.text ?? "todos updated"), 0, 0);
+      return normalTodoUpdateResult(result, theme);
+    },
+    },
+    metadata: {
+      pluginId: "todo",
+      label: "Todo update",
+      quietCapable: true,
+      compact: {
+        call: (args) => `${args?.updates?.length ?? 0} updates`,
+        result: (result) => (result?.details?.errors?.length ? textResult(result) : undefined),
+        expandedResult: (result) => compactList(result?.details?.todos ?? []),
+        hideSuccessfulResult: true,
+      },
     },
   });
 
-  pi.registerTool({
+  registerPipTool(pi, {
+    tool: {
     name: "todo_read",
     label: "Todo Read",
     description: "Read the current session todo list.",
@@ -419,10 +474,20 @@ export default function todoExtension(pi: ExtensionAPI) {
       return { content: [{ type: "text", text: compactList(state.todos) }], details: cloneState(state) };
     },
     renderCall(_args: any, theme: any) {
-      return new Text(themeFg(theme, "toolTitle", "todo_read"), 0, 0);
+      return normalTodoReadCall(theme);
     },
     renderResult(_result: any, _options: any, theme: any) {
-      return new Text(themeFg(theme, "muted", stateSummary(state.todos)), 0, 0);
+      return normalTodoReadResult(state, theme);
+    },
+    },
+    metadata: {
+      pluginId: "todo",
+      label: "Todo read",
+      quietCapable: true,
+      compact: {
+        expandedResult: (result) => compactList(result?.details?.todos ?? []),
+        hideSuccessfulResult: true,
+      },
     },
   });
 

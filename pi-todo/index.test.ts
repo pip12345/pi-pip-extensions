@@ -1,16 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import todoExtension, { __test, renderCompactTodos, stateFromBranch } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { pipSettings, stripAnsi } from "pip-common";
+import { flushPipTools, pipSettings, resetPipToolsForTests, stripAnsi } from "pip-common";
 
 const theme = {
   fg: (_name: string, text: string) => text,
 };
 
+beforeEach(() => resetPipToolsForTests());
+
 describe("pi-todo", () => {
   it("registers settings, tools, and command", () => {
     const pi = createMockPi();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
 
     expect(getRegisteredTool(pi, "todo_write")).toBeTruthy();
     expect(getRegisteredTool(pi, "todo_update")).toBeTruthy();
@@ -26,6 +29,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
 
     const write = getRegisteredTool(pi, "todo_write");
     const result = await write.execute("call", { todos: [{ text: "One", status: "active" }, { text: "Two", status: "active" }, { text: "Three" }] }, undefined, undefined, ctx);
@@ -40,6 +44,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
     await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "First" }, { text: "Second" }, { text: "Third" }] }, undefined, undefined, ctx);
 
     const update = getRegisteredTool(pi, "todo_update");
@@ -58,6 +63,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
     await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Only" }] }, undefined, undefined, ctx);
     const before = pi.entries.length;
 
@@ -75,6 +81,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
     await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Read me", status: "active" }] }, undefined, undefined, ctx);
 
     const result = await getRegisteredTool(pi, "todo_read").execute("call", {}, undefined, undefined, ctx);
@@ -89,6 +96,7 @@ describe("pi-todo", () => {
     ];
     const ctx = createMockCtx({ sessionManager: { getBranch: () => branch } });
     todoExtension(pi as any);
+    flushPipTools(pi as any);
 
     await emitEvent(pi, "session_start", {}, ctx);
     const result = await getRegisteredTool(pi, "todo_read").execute("call", {}, undefined, undefined, ctx);
@@ -152,6 +160,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
     const update = getRegisteredTool(pi, "todo_update");
     const result = await update.execute("call", { updates: [{ id: 123, status: "done" }] }, undefined, undefined, ctx);
 
@@ -163,6 +172,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
 
     await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Visible" }] }, undefined, undefined, ctx);
     expect(ctx.ui.widgets.has(__test.WIDGET_KEY)).toBe(true);
@@ -175,6 +185,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
     await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Visible" }] }, undefined, undefined, ctx);
     const before = pi.entries.length;
 
@@ -189,6 +200,7 @@ describe("pi-todo", () => {
     const pi = createMockPi();
     const ctx = createMockCtx();
     todoExtension(pi as any);
+    flushPipTools(pi as any);
     await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Visible", status: "active" }] }, undefined, undefined, ctx);
 
     let component: any;
