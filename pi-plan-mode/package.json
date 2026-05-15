@@ -1,0 +1,17 @@
+{
+  "name": "pi-plan-mode",
+  "version": "0.1.0",
+  "description": "Minimal read-only plan mode for pi",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "plan", "read-only"],
+  "license": "MIT",
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "pip-common": "file:../pip-common"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": { "extensions": ["./index.ts"] },
+  "files": ["index.ts", "README.md"]
+}

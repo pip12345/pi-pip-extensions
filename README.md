@@ -12,6 +12,7 @@ Local pi extension packages plus shared utilities.
 - `pi-tree-edit` - interactive session tree editor
 - `pi-undo-redo` - destructive tail-only undo/redo for recent prompts
 - `pi-todo` - minimal session-scoped todo tools, compact widget, and `/todo`
+- `pi-plan-mode` - minimal read-only planning mode with explicit tool blocking
 - `pi-webfetch-websearch` - dependency-free cleaned web fetching and no-key web search with bounded output
 
 Each extension is intended to work independently, but may depend on `pip-common`.
@@ -155,6 +156,11 @@ extensions-pip/
     package.json
 
   pi-todo/
+    index.ts
+    index.test.ts
+    package.json
+
+  pi-plan-mode/
     index.ts
     index.test.ts
     package.json

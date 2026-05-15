@@ -58,10 +58,21 @@ describe("pi-pip-footer", () => {
     expect(__test.renderToolsExpandedWarning({ ui: { getToolsExpanded: () => false } }, theme)).toBe("");
   });
 
-  it("right-aligns add-ons without shifting left content", () => {
+  it("renders extension statuses for custom-footer mode", () => {
+    const statuses = new Map([
+      ["z", "later"],
+      ["plan-mode", "plan"],
+      ["bad", "hello\nworld"],
+    ]);
+    expect(__test.renderExtensionStatuses({ getExtensionStatuses: () => statuses })).toBe("hello world plan later");
+    expect(__test.renderExtensionStatuses({ getExtensionStatuses: () => new Map() })).toBe("");
+  });
+
+  it("right-aligns add-ons without shifting left content and keeps edge padding", () => {
     const line = __test.joinRight("workspace > model > ctx", "tools expanded", 50);
     expect(line.startsWith("workspace > model > ctx")).toBe(true);
     expect(line.endsWith("tools expanded")).toBe(true);
+    expect(line.length).toBe(49);
     expect(__test.joinRight("workspace > model > ctx", "tools expanded", 22)).toBe("workspace > model > ctx");
   });
 

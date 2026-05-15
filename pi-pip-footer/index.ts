@@ -18,6 +18,7 @@ import {
   registerSettingsSection,
   renderRegisteredFooterItems,
   setting,
+  stripAnsi,
   truncateToWidth,
   visibleWidth,
   type QuotaProviderSetting,
@@ -143,11 +144,12 @@ function joinRight(left: string, right: string | undefined, width: number): stri
   const leftWidth = visibleWidth(left);
   if (leftWidth >= width) return left;
   const minGap = 2;
-  const availableRight = width - leftWidth - minGap;
+  const rightMargin = 1;
+  const availableRight = width - leftWidth - minGap - rightMargin;
   if (availableRight <= 0) return left;
   const fittedRight = truncateToWidth(right, availableRight);
   if (!fittedRight.trim()) return left;
-  const gap = Math.max(minGap, width - leftWidth - visibleWidth(fittedRight));
+  const gap = Math.max(minGap, width - rightMargin - leftWidth - visibleWidth(fittedRight));
   return `${left}${" ".repeat(gap)}${fittedRight}`;
 }
 
@@ -254,6 +256,16 @@ function renderModelLine(ctx: any, theme: any): string {
 
 function renderToolsExpandedWarning(ctx: any, theme: any): string {
   return ctx.ui?.getToolsExpanded?.() ? theme.fg("warning", "tools expanded") : "";
+}
+
+function renderExtensionStatuses(footerData: any): string {
+  const statuses = footerData?.getExtensionStatuses?.();
+  if (!statuses?.size) return "";
+  return [...statuses.entries()]
+    .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    .map(([, text]) => stripAnsi(String(text ?? "")).replace(/[\r\n\t\x00-\x1f\x7f]/g, " ").trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 function parseGitStatus(output: string): GitState {
@@ -521,6 +533,7 @@ export default function (pi: ExtensionAPI) {
           if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showPluginLines`)) {
             const rightLines = [
               renderToolsExpandedWarning(ctx, theme),
+              renderExtensionStatuses(footerData),
               ...renderRegisteredFooterItems({ width, theme, ctx, region: "right" }),
             ].filter(Boolean).slice(0, 2);
             for (let i = 0; i < Math.min(2, lines.length); i++) lines[i] = joinRight(lines[i], rightLines[i], width);
@@ -807,6 +820,7 @@ export const __test = {
   renderBar,
   interpolateTokenBreakdown,
   renderTokenMetric,
+  renderExtensionStatuses,
   renderToolsExpandedWarning,
   renderUsageLine,
   renderUsageWindow,
