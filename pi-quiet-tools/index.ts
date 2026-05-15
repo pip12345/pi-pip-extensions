@@ -156,7 +156,8 @@ function isKnownQuietTool(toolName: string): boolean {
 }
 
 function isCollapsedQuietTool(component: any): boolean {
-  return typeof component?.toolName === "string" && isKnownQuietTool(component.toolName) && isQuietEnabled(component.toolName) && !component.expanded;
+  const isToolComponent = component instanceof ToolExecutionComponent || component?.constructor?.name === "ToolExecutionComponent";
+  return isToolComponent && isKnownQuietTool(component.toolName) && isQuietEnabled(component.toolName) && !component.expanded;
 }
 
 function patchToolRowSpacing(): void {
@@ -164,19 +165,10 @@ function patchToolRowSpacing(): void {
   const globalState = globalThis as any;
   const state = globalState[PATCH_KEY] ?? {};
 
-  const toolProto = ToolExecutionComponent.prototype as any;
   if (state.containerRenderOriginal) containerProto.render = state.containerRenderOriginal;
-  if (state.toolRenderOriginal) toolProto.render = state.toolRenderOriginal;
 
   const containerRenderOriginal = containerProto.render;
-  const toolRenderOriginal = toolProto.render;
-  globalState[PATCH_KEY] = { containerRenderOriginal, toolRenderOriginal };
-
-  toolProto.render = function quietToolExecutionRender(width: number): string[] {
-    let rendered = toolRenderOriginal.call(this, width) as string[];
-    if (isCollapsedQuietTool(this)) while (rendered[0] === "") rendered = rendered.slice(1);
-    return rendered;
-  };
+  globalState[PATCH_KEY] = { containerRenderOriginal };
 
   containerProto.render = function quietToolsContainerRender(width: number): string[] {
     const children = this.children;
@@ -185,18 +177,12 @@ function patchToolRowSpacing(): void {
     const lines: string[] = [];
     let previousCollapsedQuietTool = false;
 
-    for (let index = 0; index < children.length; index++) {
-      const child = children[index];
+    for (const child of children) {
       let childLines = child.render(width) as string[];
       const currentCollapsedQuietTool = isCollapsedQuietTool(child);
-      const nextCollapsedQuietTool = isCollapsedQuietTool(children[index + 1]);
-      const blankOnly = childLines.length > 0 && childLines.every((line) => line === "");
-
-      if (!currentCollapsedQuietTool && blankOnly && previousCollapsedQuietTool && nextCollapsedQuietTool) continue;
 
       if (currentCollapsedQuietTool) {
         if (previousCollapsedQuietTool) {
-          while (lines.at(-1) === "") lines.pop();
           while (childLines[0] === "") childLines = childLines.slice(1);
         } else if (childLines[0] !== "") {
           childLines = ["", ...childLines];
@@ -204,7 +190,7 @@ function patchToolRowSpacing(): void {
       }
 
       lines.push(...childLines);
-      if (!blankOnly) previousCollapsedQuietTool = currentCollapsedQuietTool;
+      previousCollapsedQuietTool = currentCollapsedQuietTool;
     }
 
     return lines;

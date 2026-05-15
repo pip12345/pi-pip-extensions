@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { Container } from "@earendil-works/pi-tui";
 import quietTools from "./index.ts";
 import todo from "../pi-todo/index.ts";
 import { flushPipTools, pipSettings, resetPipToolsForTests } from "pip-common";
@@ -40,25 +39,6 @@ describe("pi-quiet-tools", () => {
     const grep = getRegisteredTool(pi, "grep");
     expect(grep.renderResult({ content: [{ type: "text", text: "ok" }] }, { expanded: false }, theme).render(80)).toEqual([]);
     expect(grep.renderResult({ content: [{ type: "text", text: "Error: nope\nmore" }] }, { expanded: false }, theme).render(80).join("\n")).toContain("Error: nope");
-  });
-
-  it("removes blank lines between consecutive collapsed quiet tools", () => {
-    const pi = createMockPi();
-    quietTools(pi as any);
-
-    const container = new Container();
-    class ToolExecutionComponent {
-      toolName = "grep";
-      expanded = false;
-      constructor(private readonly label: string) {}
-      render() { return ["", this.label, ""]; }
-      invalidate() {}
-    }
-    container.addChild(new ToolExecutionComponent("one") as any);
-    container.addChild({ render: () => [""], invalidate() {} } as any);
-    container.addChild(new ToolExecutionComponent("two") as any);
-
-    expect(container.render(80)).toEqual(["", "one", "two", ""]);
   });
 
   it("quiet-renders todo tools when both plugins are loaded", () => {
