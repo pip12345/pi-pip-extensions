@@ -45,6 +45,30 @@ describe("pip settings command", () => {
     expect(registry.get("plan-mode.enabled")).toBe(true);
   });
 
+  it("keeps settings rows stable when selected description appears or disappears", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({
+      id: "x",
+      title: "X",
+      settings: {
+        described: setting.boolean({ label: "Described", default: true, order: 1, description: "Helpful text that should not move the menu rows around." }),
+        plain: setting.boolean({ label: "Plain", default: true, order: 2 }),
+      },
+    });
+    const component = createPipSettingsComponent({ requestRender() {} }, { fg: (_name: string, text: string) => text }, () => undefined, registry) as any;
+
+    const before = component.render(80).map((line: string) => line.replace("›", " "));
+    component.handleInput("\u001b[B");
+    const after = component.render(80).map((line: string) => line.replace("›", " "));
+
+    const describedRowBefore = before.findIndex((line: string) => line.includes("Described:"));
+    const describedRowAfter = after.findIndex((line: string) => line.includes("Described:"));
+    const plainRowBefore = before.findIndex((line: string) => line.includes("Plain:"));
+    const plainRowAfter = after.findIndex((line: string) => line.includes("Plain:"));
+    expect(describedRowBefore).toBe(describedRowAfter);
+    expect(plainRowBefore).toBe(plainRowAfter);
+  });
+
   it("always closes on raw escape, ctrl-c, and ctrl-d", () => {
     for (const key of ["\u001b", "\u0003", "\u0004"]) {
       const registry = createSettingsRegistry({}, { persistPath: false });

@@ -47,9 +47,9 @@ registerSettingsSection({
   description: "Select one markdown file from pi-prompt-profiles/prompts and apply it to the system prompt.",
   order: 30,
   settings: {
-    enabled: setting.boolean({ label: "Enabled", default: true, order: 1 }),
-    profile: setting.enum({ label: "Profile", default: DEFAULT_PROFILE, choices: profileChoices, order: 2 }),
-    mode: setting.enum({ label: "Mode", default: "append", choices: ["append", "prepend", "replace"] as const, order: 3 }),
+    enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Include the selected markdown file as a system prompt overlay." }),
+    profile: setting.enum({ label: "Profile", default: DEFAULT_PROFILE, choices: profileChoices, order: 2, description: "Markdown file from pi-prompt-profiles/prompts to use as the active profile." }),
+    mode: setting.enum({ label: "Mode", default: "append", choices: ["append", "prepend", "replace"] as const, order: 3, description: "Append to, prepend to, or replace the normal system prompt." }),
   },
 });
 

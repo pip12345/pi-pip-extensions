@@ -10,6 +10,8 @@ Local pi extension packages plus shared utilities.
 - `pi-pip-footer` - pip footer with live token counter, context gauge, model status, and quota usage
 - `pi-prompt-profiles` - selectable markdown system prompt overlays
 - `pi-tree-edit` - interactive session tree editor
+- `pi-undo-redo` - destructive tail-only undo/redo for recent prompts
+- `pi-todo` - minimal session-scoped todo tools, compact widget, and `/todo`
 
 Each extension is intended to work independently, but may depend on `pip-common`.
 
@@ -142,6 +144,16 @@ extensions-pip/
     package.json
 
   pi-tree-edit/
+    index.ts
+    index.test.ts
+    package.json
+
+  pi-undo-redo/
+    index.ts
+    index.test.ts
+    package.json
+
+  pi-todo/
     index.ts
     index.test.ts
     package.json

@@ -30,8 +30,27 @@ function applySettingsValues(registry: SettingsRegistry, values: Record<string, 
   }
 }
 
+const VISIBLE_SETTING_ROWS = 10;
+
+type SettingsDisplayRow = { kind: "section"; section: ReturnType<SettingsRegistry["sections"]>[number] } | { kind: "setting"; row: SettingRow };
+
+function buildDisplayRows(registry: SettingsRegistry): SettingsDisplayRow[] {
+  const out: SettingsDisplayRow[] = [];
+  for (const section of registry.sections()) {
+    out.push({ kind: "section", section });
+    const settings = registry.rows().filter((row) => row.section.id === section.id);
+    for (const row of settings) out.push({ kind: "setting", row });
+  }
+  return out;
+}
+
+function firstSettingIndex(rows: SettingsDisplayRow[]): number {
+  const index = rows.findIndex((row) => row.kind === "setting");
+  return Math.max(0, index);
+}
+
 class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
-  private selected = 0;
+  private selected = 1;
   private scroll = 0;
   private readonly originalValues: Record<string, Record<string, unknown>>;
 
@@ -46,7 +65,9 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   }
 
   protected handleKey(key: string): void {
-    const rows = this.registry.rows();
+    const displayRows = buildDisplayRows(this.registry);
+    const selectedItem = displayRows[this.selected];
+    const selectedRow = selectedItem?.kind === "setting" ? selectedItem.row : undefined;
     let changed = false;
 
     if (key === "up" || key === "k") {
@@ -56,15 +77,12 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
       this.move(1);
       changed = true;
     } else if (key === "right" || key === "l" || key === "return") {
-      const row = rows[this.selected];
-      if (row) changed = this.edit(row, 1);
+      if (selectedRow) changed = this.edit(selectedRow, 1);
     } else if (key === "left" || key === "h") {
-      const row = rows[this.selected];
-      if (row) changed = this.edit(row, -1);
+      if (selectedRow) changed = this.edit(selectedRow, -1);
     } else if (key === "r") {
-      const row = rows[this.selected];
-      if (row) {
-        this.registry.reset(row.path);
+      if (selectedRow) {
+        this.registry.reset(selectedRow.path);
         changed = true;
       }
     }
@@ -84,16 +102,17 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   }
 
   private move(delta: number): void {
-    const count = this.registry.rows().length;
+    const count = buildDisplayRows(this.registry).length;
     this.selected = Math.max(0, Math.min(Math.max(0, count - 1), this.selected + delta));
-    const pageSize = 18;
     if (this.selected < this.scroll) this.scroll = this.selected;
-    if (this.selected >= this.scroll + pageSize) this.scroll = this.selected - pageSize + 1;
+    if (this.selected >= this.scroll + VISIBLE_SETTING_ROWS) this.scroll = this.selected - VISIBLE_SETTING_ROWS + 1;
   }
 
   render(width: number): string[] {
     const bodyWidth = Math.max(50, Math.min(width - 4, 100));
     const rows = this.registry.rows();
+    const displayRows = buildDisplayRows(this.registry);
+    if (this.selected >= displayRows.length) this.selected = firstSettingIndex(displayRows);
     const theme = this.theme;
     const lines: string[] = [];
 
@@ -106,27 +125,25 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
       return boxLines(lines, bodyWidth, theme);
     }
 
-    const selectedRow = rows[this.selected];
-    if (selectedRow?.definition.description) {
-      for (const line of wrapAnsi(selectedRow.definition.description, bodyWidth - 4)) {
-        lines.push(`  ${themeFg(theme, "dim", line)}`);
-      }
-      lines.push("");
+    const selectedItem = displayRows[this.selected];
+    const selectedDescription = selectedItem?.kind === "setting" ? selectedItem.row.definition.description : selectedItem?.section.description;
+    const descriptionLines = selectedDescription ? wrapAnsi(selectedDescription, bodyWidth - 4).slice(0, 2) : [];
+    for (let i = 0; i < 2; i++) {
+      lines.push(descriptionLines[i] ? `  ${themeFg(theme, "dim", descriptionLines[i])}` : "");
     }
+    lines.push("");
 
-    const visibleRows = rows.slice(this.scroll, this.scroll + 16);
-    let previousSection = "";
-    for (const row of visibleRows) {
-      if (row.section.id !== previousSection) {
-        if (previousSection) lines.push("");
-        lines.push(themeFg(theme, "accent", row.section.title));
-        if (row.section.description) lines.push(`  ${themeFg(theme, "dim", truncateToWidth(row.section.description, bodyWidth - 4))}`);
-        previousSection = row.section.id;
-      }
-
-      const realIndex = rows.indexOf(row);
+    const visibleRows = displayRows.slice(this.scroll, this.scroll + VISIBLE_SETTING_ROWS);
+    for (const [offset, item] of visibleRows.entries()) {
+      const realIndex = this.scroll + offset;
       const selected = realIndex === this.selected;
       const marker = selected ? themeFg(theme, "accent", "›") : " ";
+      if (item.kind === "section") {
+        lines.push(truncateToWidth(`${marker} ${themeFg(theme, "accent", item.section.title)}`, bodyWidth - 2));
+        continue;
+      }
+
+      const row = item.row;
       const label = this.registry.settingLabel(row);
       const value = this.registry.valueLabel(row.path);
       const left = `  ${marker} ${padAnsi(label + ":", 28)}`;
@@ -134,7 +151,7 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
       lines.push(truncateToWidth(rendered, bodyWidth - 2));
     }
 
-    if (rows.length > 16) lines.push(themeFg(theme, "dim", `${this.selected + 1}/${rows.length}`));
+    if (displayRows.length > VISIBLE_SETTING_ROWS) lines.push(themeFg(theme, "dim", `${this.selected + 1}/${displayRows.length}`));
     return boxLines(lines, bodyWidth, theme);
   }
 }

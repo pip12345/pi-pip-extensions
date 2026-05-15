@@ -322,11 +322,12 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
   registerSettingsSection({
     id: SETTINGS_SECTION,
     title: "Undo / Redo",
+    description: "Tail-only /undo and /redo with safety backups.",
     order: 60,
     settings: {
-      enabled: setting.boolean({ default: true, label: "Enabled", order: 1 }),
-      keepBackups: setting.enum({ default: "25", choices: ["10", "25", "50", "100"], label: "Keep backups", order: 2 }),
-      backupMaxAgeDays: setting.enum({ default: "7", choices: ["1", "7", "30", "never"], label: "Backup max age", order: 3 }),
+      enabled: setting.boolean({ default: true, label: "Enabled", order: 1, description: "Enable /undo and /redo for the current branch tip." }),
+      keepBackups: setting.enum({ default: "25", choices: ["10", "25", "50", "100"], label: "Keep backups", order: 2, description: "Maximum number of undo/redo backup files to keep." }),
+      backupMaxAgeDays: setting.enum({ default: "7", choices: ["1", "7", "30", "never"], label: "Backup max age", order: 3, description: "Delete older backup files after this many days, or never by age." }),
     },
   });
 
