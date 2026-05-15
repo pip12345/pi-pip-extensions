@@ -33,9 +33,33 @@ describe("pi-pip-footer", () => {
     expect(lines.join("\n")).toContain("5h");
   });
 
+  it("renders token metrics with arrow/cache icons", () => {
+    expect(__test.renderTokenMetric("↓", 273_000, false, theme)).toBe("↓:273k");
+    expect(__test.renderTokenMetric("↑", 49_000, false, theme)).toBe("↑:49k");
+    expect(__test.renderTokenMetric("↻", 14_300_000, false, theme)).toBe("↻:14.3M");
+  });
+
+  it("interpolates token values for count-up animation", () => {
+    const mid = __test.interpolateTokenBreakdown(
+      { input: 55, output: 10, cacheRead: 0, cacheWrite: 0, cache: 100, total: 165 },
+      { input: 59, output: 14, cacheRead: 0, cacheWrite: 0, cache: 200, total: 273 },
+      0.5
+    );
+    expect(mid.input).toBe(57);
+    expect(mid.output).toBe(12);
+    expect(mid.cache).toBe(150);
+  });
+
   it("renders a tools-expanded warning", () => {
     expect(__test.renderToolsExpandedWarning({ ui: { getToolsExpanded: () => true } }, theme)).toBe("tools expanded");
     expect(__test.renderToolsExpandedWarning({ ui: { getToolsExpanded: () => false } }, theme)).toBe("");
+  });
+
+  it("right-aligns add-ons without shifting left content", () => {
+    const line = __test.joinRight("workspace > model > ctx", "tools expanded", 50);
+    expect(line.startsWith("workspace > model > ctx")).toBe(true);
+    expect(line.endsWith("tools expanded")).toBe(true);
+    expect(__test.joinRight("workspace > model > ctx", "tools expanded", 22)).toBe("workspace > model > ctx");
   });
 
   it("parses git status", () => {

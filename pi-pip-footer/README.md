@@ -5,7 +5,7 @@ Pip footer for pi. This is the renamed successor to `pi-token-counter`: it keeps
 ## Shows
 
 - live token burn while the assistant streams, above the input box
-- settled input/output/cache token totals with short-lived deltas, above the input box
+- settled token totals as `↓` input, `↑` output, and `↻`/`c` cache with short-lived deltas, above the input box
 - context usage bar in the lower footer, e.g. `ctx ━━━━━━━── 220k/272k`
 - model and thinking level
 - Codex, Anthropic/Claude, or Copilot quota windows with reset times
@@ -21,6 +21,7 @@ Configure in `/pip-settings` under **Pip Footer**:
 - Context bar
 - Model
 - Above-editor token counter
+- Cache icon: `↻` or `c`
 - Plugin lines
 - Git
 - CWD: `off`, `project`, `path`
