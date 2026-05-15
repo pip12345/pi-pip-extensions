@@ -7,7 +7,12 @@
  */
 
 import {
+  clampPercent,
+  detectQuotaProvider,
+  fetchQuotaForProvider,
+  formatResetTime,
   formatTokenCount,
+  getWindowLabel,
   normalizeUsage,
   pipSettings,
   registerSettingsSection,
@@ -15,15 +20,15 @@ import {
   setting,
   truncateToWidth,
   visibleWidth,
+  type QuotaProviderSetting,
+  type QuotaSnapshot as UsageSnapshot,
+  type QuotaWindow as RateWindow,
 } from "pip-common";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 type ExtensionAPI = any;
-
-type QuotaProvider = "auto" | "codex" | "anthropic" | "copilot" | "off";
 
 const TOKEN_SPINNER = ["◐", "◓", "◑", "◒"];
 const TOKEN_HIGHLIGHT_MS = 1600;
@@ -43,19 +48,6 @@ interface TokenBreakdown {
   cacheWrite: number;
   cache: number;
   total: number;
-}
-
-interface RateWindow {
-  label: string;
-  usedPercent: number;
-  resetsIn?: string;
-}
-
-interface UsageSnapshot {
-  provider: string;
-  windows: RateWindow[];
-  error?: string;
-  fetchedAt: number;
 }
 
 interface GitState {
@@ -197,184 +189,6 @@ function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBre
 
   if (input + output + cache + total <= 0) return undefined;
   return { input, output, cacheRead, cacheWrite, cache, total };
-}
-
-function clampPercent(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.min(100, n));
-}
-
-function normalizePercent(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return clampPercent(n <= 1 ? n * 100 : n);
-}
-
-function formatResetTime(date: Date): string | undefined {
-  const ms = date.getTime() - Date.now();
-  if (!Number.isFinite(ms)) return undefined;
-  if (ms <= 0) return "now";
-  const minutes = Math.ceil(ms / 60_000);
-  const days = Math.floor(minutes / (60 * 24));
-  const hours = Math.floor((minutes - days * 60 * 24) / 60);
-  const mins = minutes % 60;
-  if (days > 0) return `${days}d${hours ? `${hours}h` : ""}`;
-  if (hours > 0) return `${hours}h${mins ? `${mins}m` : ""}`;
-  return `${mins}m`;
-}
-
-function getWindowLabel(durationMs: number | undefined, fallback: string): string {
-  if (!durationMs) return fallback;
-  const hours = Math.round(durationMs / 3_600_000);
-  if (hours > 0 && hours < 24) return `${hours}h`;
-  const days = Math.round(durationMs / 86_400_000);
-  if (days >= 6 && days <= 8) return "Week";
-  return fallback;
-}
-
-function loadAuthJson(): Record<string, any> {
-  const authPath = join(homedir(), ".pi", "agent", "auth.json");
-  try {
-    if (existsSync(authPath)) return JSON.parse(readFileSync(authPath, "utf8"));
-  } catch {}
-  return {};
-}
-
-function resolveAuthValue(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.startsWith("!")) {
-    try {
-      return execSync(trimmed.slice(1), { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000 }).trim() || undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  if (/^[A-Z][A-Z0-9_]*$/.test(trimmed) && process.env[trimmed]) return process.env[trimmed];
-  return trimmed;
-}
-
-function getClaudeToken(): string | undefined {
-  const auth = loadAuthJson();
-  if (auth.anthropic?.access) return auth.anthropic.access;
-  if (auth.anthropic?.key) return resolveAuthValue(auth.anthropic.key);
-  return process.env.ANTHROPIC_API_KEY;
-}
-
-function getCopilotToken(): string | undefined {
-  const auth = loadAuthJson();
-  return auth["github-copilot"]?.refresh ?? auth["github-copilot"]?.access ?? process.env.GITHUB_COPILOT_TOKEN;
-}
-
-function getCodexToken(): { token: string; accountId?: string } | undefined {
-  const auth = loadAuthJson();
-  if (auth["openai-codex"]?.access) return { token: auth["openai-codex"].access, accountId: auth["openai-codex"]?.accountId };
-  if (process.env.OPENAI_API_KEY) return { token: process.env.OPENAI_API_KEY };
-
-  const codexPath = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json");
-  try {
-    if (existsSync(codexPath)) {
-      const data = JSON.parse(readFileSync(codexPath, "utf8"));
-      if (data.OPENAI_API_KEY) return { token: data.OPENAI_API_KEY };
-      if (data.tokens?.access_token) return { token: data.tokens.access_token, accountId: data.tokens.account_id };
-    }
-  } catch {}
-  return undefined;
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 5000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function fetchClaudeUsage(): Promise<UsageSnapshot> {
-  const token = getClaudeToken();
-  if (!token) return { provider: "Claude", windows: [], error: "no-auth", fetchedAt: Date.now() };
-  try {
-    const res = await fetchWithTimeout("https://api.anthropic.com/api/oauth/usage", {
-      headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
-    });
-    if (!res.ok) return { provider: "Claude", windows: [], error: `HTTP ${res.status}`, fetchedAt: Date.now() };
-    const data = (await res.json()) as any;
-    const windows: RateWindow[] = [];
-    if (data.five_hour?.utilization !== undefined) windows.push({ label: "5h", usedPercent: normalizePercent(data.five_hour.utilization), resetsIn: data.five_hour.resets_at ? formatResetTime(new Date(data.five_hour.resets_at)) : undefined });
-    if (data.seven_day?.utilization !== undefined) windows.push({ label: "Week", usedPercent: normalizePercent(data.seven_day.utilization), resetsIn: data.seven_day.resets_at ? formatResetTime(new Date(data.seven_day.resets_at)) : undefined });
-    return { provider: "Claude", windows, fetchedAt: Date.now() };
-  } catch (error) {
-    return { provider: "Claude", windows: [], error: String(error), fetchedAt: Date.now() };
-  }
-}
-
-async function fetchCopilotUsage(): Promise<UsageSnapshot> {
-  const token = getCopilotToken();
-  if (!token) return { provider: "Copilot", windows: [], error: "no-auth", fetchedAt: Date.now() };
-  try {
-    const res = await fetchWithTimeout("https://api.github.com/copilot_internal/user", {
-      headers: {
-        "Editor-Version": "vscode/1.96.2",
-        "User-Agent": "GitHubCopilotChat/0.26.7",
-        "X-Github-Api-Version": "2025-04-01",
-        Accept: "application/json",
-        Authorization: `token ${token}`,
-      },
-    });
-    if (!res.ok) return { provider: "Copilot", windows: [], error: `HTTP ${res.status}`, fetchedAt: Date.now() };
-    const data = (await res.json()) as any;
-    const resetDate = data.quota_reset_date_utc ? new Date(data.quota_reset_date_utc) : undefined;
-    const resetsIn = resetDate ? formatResetTime(resetDate) : undefined;
-    const windows: RateWindow[] = [];
-    if (data.quota_snapshots?.premium_interactions) windows.push({ label: "Premium", usedPercent: clampPercent(100 - (data.quota_snapshots.premium_interactions.percent_remaining || 0)), resetsIn });
-    if (data.quota_snapshots?.chat && !data.quota_snapshots.chat.unlimited) windows.push({ label: "Chat", usedPercent: clampPercent(100 - (data.quota_snapshots.chat.percent_remaining || 0)), resetsIn });
-    return { provider: "Copilot", windows, fetchedAt: Date.now() };
-  } catch (error) {
-    return { provider: "Copilot", windows: [], error: String(error), fetchedAt: Date.now() };
-  }
-}
-
-async function fetchCodexUsage(): Promise<UsageSnapshot> {
-  const creds = getCodexToken();
-  if (!creds) return { provider: "Codex", windows: [], error: "no-auth", fetchedAt: Date.now() };
-  try {
-    const headers: Record<string, string> = { Authorization: `Bearer ${creds.token}`, "User-Agent": "pi-agent", Accept: "application/json" };
-    if (creds.accountId) headers["ChatGPT-Account-Id"] = creds.accountId;
-    const res = await fetchWithTimeout("https://chatgpt.com/backend-api/wham/usage", { method: "GET", headers });
-    if (!res.ok) return { provider: "Codex", windows: [], error: `HTTP ${res.status}`, fetchedAt: Date.now() };
-    const data = (await res.json()) as any;
-    const windows: RateWindow[] = [];
-    if (data.rate_limit?.primary_window) {
-      const w = data.rate_limit.primary_window;
-      windows.push({ label: getWindowLabel(typeof w.limit_window_seconds === "number" ? w.limit_window_seconds * 1000 : undefined, "5h"), usedPercent: clampPercent(w.used_percent || 0), resetsIn: w.reset_at ? formatResetTime(new Date(w.reset_at * 1000)) : undefined });
-    }
-    if (data.rate_limit?.secondary_window) {
-      const w = data.rate_limit.secondary_window;
-      windows.push({ label: getWindowLabel(typeof w.limit_window_seconds === "number" ? w.limit_window_seconds * 1000 : undefined, "Week"), usedPercent: clampPercent(w.used_percent || 0), resetsIn: w.reset_at ? formatResetTime(new Date(w.reset_at * 1000)) : undefined });
-    }
-    return { provider: "Codex", windows, fetchedAt: Date.now() };
-  } catch (error) {
-    return { provider: "Codex", windows: [], error: String(error), fetchedAt: Date.now() };
-  }
-}
-
-function detectProvider(modelProvider: string | undefined, configured: QuotaProvider): "codex" | "anthropic" | "copilot" | null {
-  if (configured !== "auto") return configured === "off" ? null : configured;
-  const provider = String(modelProvider ?? "").toLowerCase();
-  if (provider.includes("codex") || provider === "openai" || provider === "openai-completions") return "codex";
-  if (provider.includes("anthropic") || provider.includes("claude")) return "anthropic";
-  if (provider.includes("copilot") || provider.includes("github")) return "copilot";
-  return null;
-}
-
-async function fetchUsageForProvider(provider: "codex" | "anthropic" | "copilot"): Promise<UsageSnapshot> {
-  if (provider === "codex") return fetchCodexUsage();
-  if (provider === "anthropic") return fetchClaudeUsage();
-  return fetchCopilotUsage();
 }
 
 function renderBar(usedPercent: number, width: number, theme: any, kind: "quota" | "ctx" = "quota"): string {
@@ -720,8 +534,8 @@ export default function (pi: ExtensionAPI) {
   }
 
   function refreshUsageForModel(ctx: any): void {
-    const configured = pipSettings.get<QuotaProvider>(`${FOOTER_SETTINGS_ID}.quotaProvider`);
-    const provider = detectProvider(ctx.model?.provider, configured);
+    const configured = pipSettings.get<QuotaProviderSetting>(`${FOOTER_SETTINGS_ID}.quotaProvider`);
+    const provider = detectQuotaProvider(ctx.model?.provider, configured);
     activeProvider = provider;
     if (!provider) {
       latestUsage = null;
@@ -730,7 +544,7 @@ export default function (pi: ExtensionAPI) {
     }
     const cached = usageCache.get(provider);
     if (cached?.windows.length) latestUsage = cached;
-    fetchUsageForProvider(provider)
+    fetchQuotaForProvider(provider)
       .then((snapshot) => {
         if (activeProvider !== provider) return;
         if (snapshot.windows.length || !cached?.windows.length) latestUsage = snapshot;
@@ -983,7 +797,7 @@ export default function (pi: ExtensionAPI) {
 
 export const __test = {
   clampPercent,
-  detectProvider,
+  detectProvider: detectQuotaProvider,
   formatResetTime,
   getContextInfo,
   getWindowLabel,

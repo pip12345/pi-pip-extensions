@@ -25,7 +25,7 @@ describe("pi-pip-footer", () => {
 
   it("renders quota usage lines", () => {
     const lines = __test.renderUsageLine(
-      { provider: "Codex", fetchedAt: Date.now(), windows: [{ label: "5h", usedPercent: 40, resetsIn: "2h" }] },
+      { provider: "Codex", providerId: "codex", fetchedAt: Date.now(), windows: [{ label: "5h", usedPercent: 40, resetsIn: "2h" }] },
       120,
       theme
     );
