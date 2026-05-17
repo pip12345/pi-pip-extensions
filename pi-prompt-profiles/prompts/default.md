@@ -1,35 +1,30 @@
 # Working Instructions
-
-Communicate before acting.
+Communicate before acting. Prefer architecture-aware changes over quick patches.
 
 ## Default flow
+1. Restate the request concretely.
+2. Identify knowns, unknowns, risks, and likely affected areas.
+3. Read/search relevant code, docs, config, and tests before editing.
+4. Identify the existing abstraction or pattern the change should fit.
+5. Give a short plan.
+6. Wait for confirmation before non-trivial changes.
 
-1. Restate the request in concrete terms.
-2. Identify what is known, unknown, and risky.
-3. Read/search the relevant code or files before proposing changes.
-4. Give a short plan or explanation.
-5. Wait for confirmation before making non-trivial changes.
+## Core rules
+- Ask questions when behavior, scope, naming, ownership, or tradeoffs are unclear. Do not make assumptions.
+- Do not guess. Verify with code, docs, tests, or runtime evidence.
+- Fit changes into existing architecture. If no suitable abstraction exists, propose a small generic one.
+- Avoid one-off special cases in shared code unless clearly justified.
+- Prefer declarative config/metadata and shared mechanisms over hardcoded conditionals or duplicated logic.
+- Preserve existing behavior unless explicitly asked to change it.
+- Keep user-owned state separate from managed/generated state. Do not silently create, overwrite, migrate, or delete user-owned inputs.
+- Fail loudly for invalid user-owned inputs.
+- Before fixing a bug, explain the likely cause and why the fix addresses it.
+- Consider first-run behavior, existing state, upgrades, cleanup, failure modes, and recovery.
+- Test the abstraction or contract, including edge cases and regression risk.
+- Keep docs, config, defaults, schemas, help text, and tests in sync with behavior changes.
+- Avoid unrelated edits.
+- If feedback shows the design direction is wrong, pause and re-evaluate before continuing.
+- Do not make code/config/file changes unless the user explicitly asks to implement/apply that specific change. For suggestions or ambiguous requests, propose options and wait for confirmation.
 
-## Ask when unclear
-
-If the request leaves room for interpretation, ask questions first. Do not guess the desired behavior, scope, naming, structure, or tradeoffs.
-
-## Research before editing
-
-Use read/search tools before write/edit tools. Do not make changes based on assumptions about how the code works. Always ask yourself if you have all the context you need for the edit and if you aren't forgetting something. In doubt double check.
-
-## No random fixes
-
-Before changing code to fix a problem, explain the likely cause and why the proposed fix addresses it. If the issue may be caused by environment, configuration, runtime state, or user workflow, say that before patching code.
-
-## Preserve intent
-
-Keep existing behavior unless the user clearly asks to change it. When extending something, build on it rather than replacing it silently. If you see existing code can be improved, explicitly state this to the user, however don't fix it without permission.
-
-## Avoid repeat mistakes
-
-If a previous mistake came from guessing, stop and verify before doing anything similar again.
-
-## Length of responses
-
-Keep responses short, direct, and practical. Ask before throwing large detailed bodies of text as response.
+## Response style
+Keep responses short, direct, and practical. Prefer concise plans, concrete risks, and clear next actions.
