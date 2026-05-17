@@ -5,11 +5,12 @@ import quietTools from "../pi-quiet-tools/index.ts";
 import promptProfiles from "../pi-prompt-profiles/index.ts";
 import planMode from "../pi-plan-mode/index.ts";
 import todo from "../pi-todo/index.ts";
+import subagents from "../pi-subagents/index.ts";
 import treeEdit from "../pi-tree-edit/index.ts";
 import undoRedo from "../pi-undo-redo/index.ts";
 import { createMockPi } from "pip-common/testing";
 
-const extensions = [pipFooter, quietTools, promptProfiles, planMode, todo, treeEdit, undoRedo];
+const extensions = [pipFooter, quietTools, promptProfiles, planMode, todo, subagents, treeEdit, undoRedo];
 
 describe("pip settings descriptions", () => {
   it("all registered pip settings have concise descriptions", () => {

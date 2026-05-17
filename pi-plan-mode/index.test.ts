@@ -116,7 +116,12 @@ describe("pi-plan-mode", () => {
     expect(isReadOnlyBash("npm info vitest")).toBe(true);
     expect(isReadOnlyBash("rm -rf dist")).toBe(false);
     expect(isReadOnlyBash("cat a > b")).toBe(false);
+    expect(isReadOnlyBash("cat file | sh")).toBe(false);
+    expect(isReadOnlyBash("echo x | tee file")).toBe(false);
     expect(isReadOnlyBash("ls && rm x")).toBe(false);
+    expect(isReadOnlyBash("npm audit fix")).toBe(false);
+    expect(isReadOnlyBash("git branch -D foo")).toBe(false);
+    expect(isReadOnlyBash("git branch --show-current")).toBe(true);
   });
 
   it("blocks bash according to settings", async () => {

@@ -67,6 +67,8 @@ export function normalizeInputKey(data: string): string {
   if (matchesKey(data, "down") || data === "\u001b[B") return "down";
   if (matchesKey(data, "right") || data === "\u001b[C") return "right";
   if (matchesKey(data, "left") || data === "\u001b[D") return "left";
+  if (matchesKey(data, "home") || data === "\u001b[H" || data === "\u001b[1~") return "home";
+  if (matchesKey(data, "end") || data === "\u001b[F" || data === "\u001b[4~") return "end";
   if (data === "\u001b[1;5D" || data === "\u001b[5D") return "ctrl+left";
   if (data === "\u001b[1;5C" || data === "\u001b[5C") return "ctrl+right";
   if (matchesKey(data, "pageUp") || data === "\u001b[5~") return "pageup";

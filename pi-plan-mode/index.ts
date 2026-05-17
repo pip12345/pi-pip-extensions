@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { pipSettings, registerSettingsSection, setting, themeFg, truncateToWidth } from "pip-common";
+import { pipSettings, registerSettingsSection, setPipReadOnlyState, setting, themeFg, truncateToWidth } from "pip-common";
 
 type BashPolicy = "readonly" | "block";
 type UnknownToolsPolicy = "allow" | "block";
@@ -16,39 +16,11 @@ const WIDGET_KEY = "pi-plan-mode";
 const ALLOWED_TOOLS = new Set(["read", "grep", "find", "ls", "webfetch", "websearch", "todo_read"]);
 const BLOCKED_TOOLS = new Set(["edit", "write", "todo_write", "todo_update"]);
 
-const UNSAFE_SHELL = /(;|&&|\|\||`|\$\(|\n|>{1,2})/;
-const READONLY_BASH_PATTERNS: RegExp[] = [
-  /^\s*cat\b/,
-  /^\s*ls\b/,
-  /^\s*grep\b/,
-  /^\s*find\b/,
-  /^\s*rg\b/,
-  /^\s*fd\b/,
-  /^\s*head\b/,
-  /^\s*tail\b/,
-  /^\s*wc\b/,
-  /^\s*pwd\b/,
-  /^\s*echo\b/,
-  /^\s*printf\b/,
-  /^\s*file\b/,
-  /^\s*stat\b/,
-  /^\s*du\b/,
-  /^\s*df\b/,
-  /^\s*which\b/,
-  /^\s*type\b/,
-  /^\s*env\b/,
-  /^\s*printenv\b/,
-  /^\s*uname\b/,
-  /^\s*whoami\b/,
-  /^\s*date\b/,
-  /^\s*git\s+(status|log|diff|show|branch)\b/,
-  /^\s*npm\s+(list|ls|view|info|outdated|audit)\b/,
-  /^\s*pnpm\s+(list|view|info|outdated|audit)\b/,
-  /^\s*yarn\s+(list|info|why|audit)\b/,
-  /^\s*node\s+--version\b/,
-  /^\s*python\s+--version\b/,
-  /^\s*python3\s+--version\b/,
-];
+const UNSAFE_SHELL = /(;|&|\||`|\$\(|\n|<|>{1,2})/;
+const READONLY_COMMANDS = new Set(["cat", "ls", "grep", "find", "rg", "fd", "head", "tail", "wc", "pwd", "echo", "printf", "file", "stat", "du", "df", "which", "type", "env", "printenv", "uname", "whoami", "date"]);
+const READONLY_GIT = new Set(["status", "log", "diff", "show"]);
+const READONLY_GIT_BRANCH_FLAGS = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--show-current", "--contains", "--merged", "--no-merged", "--list"]);
+const READONLY_PACKAGE = new Set(["list", "ls", "view", "info", "outdated"]);
 
 registerSettingsSection({
   id: SETTINGS_ID,
@@ -97,11 +69,32 @@ function indicatorEnabled(): boolean {
   return settingValue("indicator", true);
 }
 
+function packageManagerReadOnly(tokens: string[]): boolean {
+  const sub = tokens[1];
+  if (READONLY_PACKAGE.has(sub)) return true;
+  if (sub !== "audit") return false;
+  return tokens.slice(2).every((token) => token.startsWith("-") && token !== "fix");
+}
+
+function gitReadOnly(tokens: string[]): boolean {
+  const sub = tokens[1];
+  if (READONLY_GIT.has(sub)) return true;
+  if (sub !== "branch") return false;
+  const args = tokens.slice(2);
+  return args.every((arg) => READONLY_GIT_BRANCH_FLAGS.has(arg));
+}
+
 export function isReadOnlyBash(command: string): boolean {
   const normalized = String(command ?? "").trim().replace(/\\\n\s*/g, " ");
   if (!normalized) return false;
   if (UNSAFE_SHELL.test(normalized)) return false;
-  return READONLY_BASH_PATTERNS.some((pattern) => pattern.test(normalized));
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const cmd = tokens[0];
+  if (READONLY_COMMANDS.has(cmd)) return true;
+  if (cmd === "git") return gitReadOnly(tokens);
+  if (cmd === "npm" || cmd === "pnpm" || cmd === "yarn") return packageManagerReadOnly(tokens);
+  if ((cmd === "node" || cmd === "python" || cmd === "python3") && tokens[1] === "--version" && tokens.length === 2) return true;
+  return false;
 }
 
 export function stateFromBranch(entries: any[]): PlanModeState {
@@ -143,6 +136,7 @@ export default function planModeExtension(pi: ExtensionAPI) {
 
   function updateIndicator(ctx = currentCtx): void {
     currentCtx = ctx;
+    setPipReadOnlyState(SETTINGS_ID, effectiveActive());
     if (!ctx?.ui?.setWidget) return;
     if (effectiveActive() && indicatorEnabled()) {
       ctx.ui.setWidget(WIDGET_KEY, (tui: any, theme: any) => ({
@@ -205,6 +199,7 @@ export default function planModeExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async (_event: any, ctx: any) => {
+    setPipReadOnlyState(SETTINGS_ID, false);
     ctx?.ui?.setWidget?.(WIDGET_KEY, undefined);
   });
 

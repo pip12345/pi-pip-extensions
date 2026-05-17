@@ -2,11 +2,13 @@ export interface MockPi {
   tools: Map<string, any>;
   commands: Map<string, any>;
   handlers: Map<string, any[]>;
+  shortcuts: Map<string, any>;
   messages: any[];
   userMessages: any[];
   entries: any[];
   registerTool(tool: any): void;
   registerCommand(name: string, command: any): void;
+  registerShortcut(shortcut: string, shortcutDef: any): void;
   on(event: string, handler: any): void;
   sendMessage(message: any, options?: any): void;
   sendUserMessage(message: any, options?: any): void;
@@ -18,6 +20,7 @@ export function createMockPi(): MockPi {
     tools: new Map(),
     commands: new Map(),
     handlers: new Map(),
+    shortcuts: new Map(),
     messages: [],
     userMessages: [],
     entries: [],
@@ -26,6 +29,9 @@ export function createMockPi(): MockPi {
     },
     registerCommand(name: string, command: any) {
       this.commands.set(name, command);
+    },
+    registerShortcut(shortcut: string, shortcutDef: any) {
+      this.shortcuts.set(shortcut, shortcutDef);
     },
     on(event: string, handler: any) {
       const handlers = this.handlers.get(event) ?? [];
@@ -120,4 +126,8 @@ export function getRegisteredCommand(pi: MockPi, name: string) {
 
 export function getRegisteredTool(pi: MockPi, name: string) {
   return pi.tools.get(name);
+}
+
+export function getRegisteredShortcut(pi: MockPi, shortcut: string) {
+  return pi.shortcuts.get(shortcut);
 }
