@@ -41,7 +41,7 @@ registerSettingsSection({
 ```
 
 The settings UI is inline: `enter`/right arrow advance values, left arrow goes backward, and booleans are just `on`/`off` choices.
-Values persist to `~/.pi/agent/pip-settings.json`.
+Values persist to `~/.pi/agent/pip/pip-settings.json`.
 
 ## Setup
 
