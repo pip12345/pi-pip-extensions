@@ -10,6 +10,7 @@ export function snapshotRun(run: SubagentRun): SubagentSnapshot {
     parentSessionKey: run.parentSessionKey,
     parentSessionFile: run.parentSessionFile,
     keep: run.keep,
+    anchorEntryId: run.anchorEntryId,
     background: run.background,
     detached: run.detached,
     status: run.status,

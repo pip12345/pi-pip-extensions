@@ -20,6 +20,16 @@ function parentFile(ctx: any): string | undefined {
   return ctx?.sessionManager?.getSessionFile?.();
 }
 
+function parentBranchIds(ctx: any): string[] | undefined {
+  const branch = ctx?.sessionManager?.getBranch?.();
+  if (Array.isArray(branch)) return branch.map((entry: any) => entry?.id).filter((id: any): id is string => typeof id === "string");
+  return undefined;
+}
+
+function parentAnchorEntryId(ctx: any): string | undefined {
+  return ctx?.sessionManager?.getLeafId?.() ?? ctx?.sessionManager?.getLeafEntry?.()?.id;
+}
+
 function currentModelString(ctx: any): string | undefined {
   const provider = ctx?.model?.provider;
   const id = ctx?.model?.id;
@@ -88,7 +98,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     const runner = options.runner ?? new RealRunner();
     const manager = options.manager ?? getManager({ runner, inject: (_key, message) => pi.sendUserMessage(message, { deliverAs: "followUp" }) });
 
-    const activate = (ctx: any) => manager.setActiveParent(parentKey(ctx));
+    const activate = (ctx: any) => manager.setActiveParent(parentKey(ctx), parentFile(ctx), parentBranchIds(ctx));
 
     pi.on("session_start", async (_event: any, ctx: any) => activate(ctx));
     pi.on("session_tree", async (_event: any, ctx: any) => activate(ctx));
@@ -101,7 +111,8 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerShortcut?.(Key.ctrlShift("b"), {
       description: "Move foreground subagents to background",
       handler: async (ctx: any) => {
-        const detached = manager.detachAll();
+        activate(ctx);
+        const detached = manager.detachAll(parentKey(ctx));
         ctx.ui?.notify?.(detached.length ? `Moved ${detached.length} subagent${detached.length === 1 ? "" : "s"} to background.` : "No foreground subagents running.", "info");
       },
     });
@@ -114,7 +125,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           "Launch and manage quiet subagent task runs with isolated context. The caller must include all context the subagent needs in prompt.",
           "Use action:'agents' to list agent files and creation paths; action:'get_agent' to inspect a default/schema example.",
           "Agent files live in ~/.pi/agent/agents/*.md, .pi/agents/*.md, or legacy .agents/*.md. Omitted model uses the parent/current model; omitted tools means all tools.",
-          "Ephemeral subagents cannot be continued after completion. Use keep:true for reusable runs; /pip-settings can enable Always keep.",
+          "Ephemeral completed subagents cannot be continued, but interrupted ephemerals can. Use keep:true for reusable persisted runs scoped to the parent branch anchor; /pip-settings can enable Always keep.",
           "Use background:true for long tasks. action:'background' moves foreground subagents to background. Nested subagents are disabled. Use /subagent view for live inspection/steering."
         ].join(" "),
         parameters: SubagentParams,
@@ -134,55 +145,55 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             }
             if (action === "list" || (!action && !params.agent && !params.id && !params.prompt)) return textResult(listRuns(manager, key));
             if (action === "status" || action === "read") {
-              const run = manager.resolve(params.id);
+              const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id ?? "<missing id>"}`);
               if (params.wait && run.status === "running") await waitRun(run, params.timeoutMs ?? 60_000);
               const snapshot = manager.snapshot(run);
               return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
             }
             if (action === "background") {
-              const runs = params.id ? [manager.resolve(params.id)].filter((run): run is SubagentRun => Boolean(run)) : manager.detachAll();
+              const runs = params.id ? [manager.resolve(params.id, key)].filter((run): run is SubagentRun => Boolean(run)) : manager.detachAll(key);
               if (params.id && !runs.length) throw new Error(`Subagent not found: ${params.id}`);
               for (const run of runs) manager.detach(run);
               return textResult(runs.length ? `Moved ${runs.length} subagent${runs.length === 1 ? "" : "s"} to background.` : "No foreground subagents running.");
             }
             if (action === "cancel") {
-              const run = manager.resolve(params.id);
+              const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               await manager.cancel(run);
               const snapshot = manager.snapshot(run);
               return textResult(formatRunStatus(snapshot), { run: snapshot });
             }
             if (action === "keep") {
-              const run = manager.resolve(params.id);
+              const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               manager.keep(run);
               return textResult(`Kept subagent ${run.id}.`, { run: manager.snapshot(run) });
             }
             if (action === "forget") {
-              const run = manager.resolve(params.id);
+              const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               manager.forget(run);
-              return textResult(`Forgot subagent ${run.id}.`);
+              return textResult(`Forgot subagent ${run.id}; it is ephemeral now.`);
             }
             if (action === "steer") {
-              const run = manager.resolve(params.id);
+              const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               if (!params.message) throw new Error("steer requires message.");
               await manager.steer(run, params.message);
               return textResult(`Steered subagent ${run.id}.`, { run: manager.snapshot(run) });
             }
             if (params.id && params.prompt) {
-              const run = manager.resolve(params.id);
+              const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
-              await manager.continueRun(run, params.prompt);
+              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent));
               const snapshot = manager.snapshot(run);
               return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
             }
             if (!params.agent || !params.prompt) throw new Error("Launch requires agent and prompt, or use an action.");
             const agent = findAgent(cwd, params.agent);
             const keep = params.keep ?? settingValue("alwaysKeep", false);
-            const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), name: params.name, keep, background: params.background === true, model: agent.model ? undefined : currentModelString(ctx), signal, onUpdate });
+            const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: agent.model ? undefined : currentModelString(ctx), signal, onUpdate });
             if (run.background) return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nBackground subagent running. Use subagent({action:"status", id:"${run.id}"}) to poll.`, { run: manager.snapshot(run) });
             const outcome = await waitRun(run);
             if (outcome === "detached") return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nMoved to background. Use subagent({action:"status", id:"${run.id}"}) to poll.`, { run: manager.snapshot(run) });
@@ -208,9 +219,9 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             const selected = await ctx.ui?.select?.("Subagents", entries);
             if (!selected) return;
             const selectedId = String(selected).split(/\s+/, 1)[0];
-            const selectedRun = manager.resolve(selectedId);
+            const selectedRun = manager.resolve(selectedId, parentKey(ctx));
             if (!selectedRun) throw new Error(`Subagent not found: ${selectedId}`);
-            const actions = ["view", "read", "steer", "background", "cancel", selectedRun.keep ? "forget" : "keep"];
+            const actions = ["view", "background", "cancel", selectedRun.keep ? "forget" : "keep"];
             const action = await ctx.ui?.select?.(`Subagent ${selectedRun.id}`, actions);
             if (!action) return;
             if (action === "view") await showSubagentView(ctx, manager, selectedRun);
@@ -223,7 +234,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             } else if (action === "background") { manager.detach(selectedRun); ctx.ui?.notify?.(`Moved ${selectedRun.id} to background.`, "info"); }
             else if (action === "cancel") { await manager.cancel(selectedRun); ctx.ui?.notify?.(`Cancelled ${selectedRun.id}.`, "info"); }
             else if (action === "keep") { manager.keep(selectedRun); ctx.ui?.notify?.(`Kept ${selectedRun.id}.`, "info"); }
-            else if (action === "forget") { manager.forget(selectedRun); ctx.ui?.notify?.(`Forgot ${selectedRun.id}.`, "info"); }
+            else if (action === "forget") { manager.forget(selectedRun); ctx.ui?.notify?.(`Forgot ${selectedRun.id}; it is ephemeral now.`, "info"); }
             return;
           }
           if (cmd === "agents") {
@@ -237,15 +248,15 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           }
           if (cmd === "background") {
             if (ref) {
-              const run = manager.resolve(ref);
+              const run = manager.resolve(ref, parentKey(ctx));
               if (!run) throw new Error(`Subagent not found: ${ref}`);
               manager.detach(run);
-            } else manager.detachAll();
+            } else manager.detachAll(parentKey(ctx));
             ctx.ui?.notify?.("Moved foreground subagent(s) to background.", "info");
             return;
           }
           if (!ref && !["list"].includes(cmd)) throw new Error(`/${cmd} requires subagent id or name.`);
-          const run = manager.resolve(ref);
+          const run = manager.resolve(ref, parentKey(ctx));
           if (cmd === "list") return ctx.ui?.notify?.(listRuns(manager, parentKey(ctx)), "info");
           if (!run) throw new Error(`Subagent not found: ${ref}`);
           if (cmd === "view") await showSubagentView(ctx, manager, run);
@@ -256,7 +267,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
           } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }
-          else if (cmd === "forget") { manager.forget(run); ctx.ui?.notify?.(`Forgot ${run.id}.`, "info"); }
+          else if (cmd === "forget") { manager.forget(run); ctx.ui?.notify?.(`Forgot ${run.id}; it is ephemeral now.`, "info"); }
           else if (cmd === "cancel") { await manager.cancel(run); ctx.ui?.notify?.(`Cancelled ${run.id}.`, "info"); }
           else throw new Error(`Unknown /subagent command: ${cmd}`);
         } catch (error) {

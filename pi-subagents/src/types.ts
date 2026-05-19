@@ -23,7 +23,7 @@ export interface AgentDiscoveryResult {
   diagnostics: AgentDiagnostic[];
 }
 
-export type RunStatus = "running" | "completed" | "error" | "cancelled";
+export type RunStatus = "running" | "completed" | "error" | "cancelled" | "interrupted";
 
 export type SubagentEvent =
   | { type: "steer"; text: string; at: number }
@@ -40,6 +40,7 @@ export interface SubagentSnapshot {
   parentSessionKey: string;
   parentSessionFile?: string;
   keep: boolean;
+  anchorEntryId?: string;
   background: boolean;
   detached: boolean;
   status: RunStatus;
@@ -61,6 +62,7 @@ export interface SubagentRun {
   parentSessionKey: string;
   parentSessionFile?: string;
   keep: boolean;
+  anchorEntryId?: string;
   background: boolean;
   detached: boolean;
   status: RunStatus;
@@ -83,6 +85,7 @@ export interface SubagentRun {
   resolveDetach?: () => void;
   forwarding?: boolean;
   removeParentAbort?: () => void;
+  persist?: () => void;
 }
 
 export interface LaunchInput {
@@ -91,12 +94,14 @@ export interface LaunchInput {
   cwd: string;
   parentSessionKey: string;
   parentSessionFile?: string;
+  anchorEntryId?: string;
   name?: string;
   keep: boolean;
   background: boolean;
   model?: string;
   signal?: AbortSignal;
   onUpdate?: (partial: { content: [{ type: "text"; text: string }]; details?: any }) => void;
+  resumeSessionFile?: string;
 }
 
 export interface Runner {

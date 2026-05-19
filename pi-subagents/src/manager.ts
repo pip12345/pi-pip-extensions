@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
+import { existsSync } from "node:fs";
+import type { AgentConfig, LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";
 import { settingValue } from "./settings.ts";
+import { deleteManagedChildSession, deleteParentPersistence, gcOrphanedParents, readParentRuns, restoredRun, toPersistedRun, writeParentRuns } from "./persistence.ts";
 
 const KEY = Symbol.for("pip-subagents.manager");
 
@@ -10,10 +12,15 @@ export interface ManagerOptions {
   runner: Runner;
   now?: () => number;
   inject?: (parentSessionKey: string, message: string) => void;
+  persistenceDir?: string;
 }
 
 function id(): string {
   return `sa_${randomUUID().slice(0, 8)}`;
+}
+
+function canAccessParent(parentSessionFile: string): boolean {
+  return existsSync(parentSessionFile);
 }
 
 function wrapSteerMessage(message: string): string {
@@ -37,36 +44,110 @@ export class SubagentManager {
   runner: Runner;
   now: () => number;
   inject?: (parentSessionKey: string, message: string) => void;
+  persistenceDir?: string;
+  loadedParents = new Set<string>();
+  parentBranches = new Map<string, Set<string>>();
 
   constructor(options: ManagerOptions) {
     this.runner = options.runner;
     this.now = options.now ?? (() => Date.now());
     this.inject = options.inject;
+    this.persistenceDir = options.persistenceDir;
   }
 
   configure(options: Partial<ManagerOptions>): void {
     if (options.runner) this.runner = options.runner;
     if (options.now) this.now = options.now;
     if (options.inject) this.inject = options.inject;
+    if (options.persistenceDir) this.persistenceDir = options.persistenceDir;
   }
 
-  setActiveParent(key: string): void {
+  setActiveParent(key: string, parentSessionFile?: string, branchIds?: string[]): void {
     this.activeParentSessionKey = key;
+    if (branchIds) this.parentBranches.set(key, new Set(branchIds));
+    gcOrphanedParents(parentSessionFile, this.persistenceDir);
+    this.purgeLoadedParentIfDeleted(key, parentSessionFile);
+    this.loadParent(key);
+    this.cleanup(key);
     this.flushPending(key);
   }
 
-  resolve(ref: string | undefined): SubagentRun | undefined {
+  private aliasKey(parentSessionKey: string, name: string): string {
+    return `${parentSessionKey}\0${name}`;
+  }
+
+  private purgeLoadedParentIfDeleted(parentSessionKey: string, parentSessionFile?: string): void {
+    if (!this.loadedParents.has(parentSessionKey) || !parentSessionFile || canAccessParent(parentSessionFile)) return;
+    for (const run of [...this.runs.values()].filter((item) => item.parentSessionKey === parentSessionKey)) {
+      run.abortController.abort();
+      try { void run.cancel?.(); } catch {}
+      try { run.dispose?.(); } catch {}
+      deleteManagedChildSession(parentSessionKey, run.sessionFile);
+      this.runs.delete(run.id);
+      this.foreground.delete(run.id);
+      if (run.name) this.aliases.delete(this.aliasKey(parentSessionKey, run.name));
+    }
+    this.loadedParents.delete(parentSessionKey);
+    deleteParentPersistence(parentSessionKey, this.persistenceDir);
+  }
+
+  private loadParent(parentSessionKey: string): void {
+    if (this.loadedParents.has(parentSessionKey)) return;
+    const loaded = readParentRuns(parentSessionKey, this.persistenceDir);
+    this.loadedParents.add(parentSessionKey);
+    if (!loaded) return;
+    if (!canAccessParent(loaded.parentSessionFile)) {
+      for (const record of loaded.runs) deleteManagedChildSession(parentSessionKey, record.sessionFile);
+      deleteParentPersistence(parentSessionKey, this.persistenceDir);
+      return;
+    }
+    for (const record of loaded.runs) {
+      if (this.runs.has(record.id)) continue;
+      const run = restoredRun(record, this.now());
+      run.persist = () => this.saveRun(run);
+      this.runs.set(run.id, run);
+      if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
+    }
+    this.saveParent(parentSessionKey);
+  }
+
+  private saveParent(parentSessionKey: string): void {
+    const persisted = [...this.runs.values()].filter((run) => run.parentSessionKey === parentSessionKey).map(toPersistedRun).filter((run): run is NonNullable<typeof run> => Boolean(run));
+    const parentSessionFile = persisted[0]?.parentSessionFile;
+    if (!parentSessionFile) {
+      deleteParentPersistence(parentSessionKey, this.persistenceDir);
+      return;
+    }
+    writeParentRuns(parentSessionKey, parentSessionFile, persisted, this.persistenceDir);
+  }
+
+  private saveRun(run: SubagentRun): void {
+    this.saveParent(run.parentSessionKey);
+  }
+
+  private isVisible(run: SubagentRun, parentSessionKey?: string): boolean {
+    if (parentSessionKey && run.parentSessionKey !== parentSessionKey) return false;
+    const branch = this.parentBranches.get(run.parentSessionKey);
+    if (!branch || !run.anchorEntryId) return true;
+    return branch.has(run.anchorEntryId);
+  }
+
+  resolve(ref: string | undefined, parentSessionKey?: string): SubagentRun | undefined {
     if (!ref) return;
-    return this.runs.get(ref) ?? this.runs.get(this.aliases.get(ref) ?? "");
+    const byId = this.runs.get(ref);
+    if (byId && this.isVisible(byId, parentSessionKey)) return byId;
+    if (!parentSessionKey) return undefined;
+    const byAlias = this.runs.get(this.aliases.get(this.aliasKey(parentSessionKey, ref)) ?? "");
+    return byAlias && this.isVisible(byAlias, parentSessionKey) ? byAlias : undefined;
   }
 
   snapshot(run: SubagentRun): SubagentSnapshot {
     return snapshotRun(run);
   }
 
-  ensureNameAvailable(name: string | undefined): void {
+  ensureNameAvailable(name: string | undefined, parentSessionKey?: string): void {
     if (!name) return;
-    if (this.aliases.has(name) || this.runs.has(name)) throw new Error(`Subagent name already exists: ${name}`);
+    if (this.runs.has(name) || (parentSessionKey && this.aliases.has(this.aliasKey(parentSessionKey, name)))) throw new Error(`Subagent name already exists: ${name}`);
   }
 
   runningCount(): number {
@@ -78,7 +159,7 @@ export class SubagentManager {
     this.cleanup();
     const maxRunning = settingValue("maxRunning", 6);
     if (this.runningCount() >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
-    this.ensureNameAvailable(input.name);
+    this.ensureNameAvailable(input.name, input.parentSessionKey);
     const run: SubagentRun = {
       id: id(),
       name: input.name,
@@ -88,6 +169,7 @@ export class SubagentManager {
       parentSessionKey: input.parentSessionKey,
       parentSessionFile: input.parentSessionFile,
       keep: input.keep,
+      anchorEntryId: input.anchorEntryId,
       background: input.background,
       detached: input.background,
       status: "running",
@@ -97,8 +179,9 @@ export class SubagentManager {
       abortController: new AbortController(),
       forwarding: true,
     };
+    run.persist = () => this.saveRun(run);
     this.runs.set(run.id, run);
-    if (run.name) this.aliases.set(run.name, run.id);
+    if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
     if (!run.background) this.foreground.add(run.id);
     run.detachPromise = new Promise<void>((resolve) => { run.resolveDetach = resolve; });
     if (!run.background && input.signal) {
@@ -121,6 +204,8 @@ export class SubagentManager {
       run.resolveDetach?.();
     };
 
+    this.saveRun(run);
+
     run.runPromise = this.runner.launch(input, run).catch((error) => {
       run.status = run.abortController.signal.aborted ? "cancelled" : "error";
       run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
@@ -133,15 +218,17 @@ export class SubagentManager {
       finished.removeParentAbort?.();
       finished.removeParentAbort = undefined;
       if (finished.background && finished.status !== "cancelled") this.completeBackground(finished);
+      this.saveRun(finished);
       this.cleanup();
       return finished;
     });
     return run;
   }
 
-  async continueRun(run: SubagentRun, prompt: string): Promise<void> {
-    if (!run.keep) throw new Error(`Subagent ${run.id} is ephemeral and cannot be continued. Launch a new subagent with full context, or use keep:true when creating a reusable run.`);
+  async continueRun(run: SubagentRun, prompt: string, agent?: AgentConfig): Promise<void> {
+    if (!run.keep && run.status !== "interrupted") throw new Error(`Subagent ${run.id} is ephemeral and cannot be continued after completion. Launch a new subagent with full context, or use keep:true when creating a reusable run.`);
     if (run.status === "running") throw new Error(`Subagent ${run.id} is already running.`);
+    if (!run.sessionFile) throw new Error(`Subagent ${run.id} cannot be continued because its child session file is missing.`);
     run.abortController = new AbortController();
     run.errorText = undefined;
     run.resultText = undefined;
@@ -151,7 +238,12 @@ export class SubagentManager {
     run.forwarding = true;
     this.foreground.add(run.id);
     try {
-      await run.continuePrompt?.(prompt);
+      if (run.continuePrompt) await run.continuePrompt(prompt);
+      else {
+        if (!agent) throw new Error(`Subagent ${run.id} cannot be continued until its agent definition is available.`);
+        run.runPromise = this.runner.launch({ agent, prompt, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, resumeSessionFile: run.sessionFile }, run);
+        await run.runPromise;
+      }
       if (run.status === "running") run.status = "completed";
     } catch (error) {
       run.status = run.abortController.signal.aborted ? "cancelled" : "error";
@@ -161,6 +253,7 @@ export class SubagentManager {
       run.completedAt = this.now();
       run.updatedAt = run.completedAt;
       this.foreground.delete(run.id);
+      this.saveRun(run);
     }
   }
 
@@ -175,6 +268,7 @@ export class SubagentManager {
     run.events.push({ type: "steer", text: message, at: this.now() });
     if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
     await run.steer(wrapSteerMessage(message), message);
+    this.saveRun(run);
   }
 
   async cancel(run: SubagentRun): Promise<void> {
@@ -186,33 +280,49 @@ export class SubagentManager {
     run.completedAt = this.now();
     run.updatedAt = run.completedAt;
     this.foreground.delete(run.id);
+    this.saveRun(run);
   }
 
   detach(run: SubagentRun): void {
     if (run.status !== "running") throw new Error(`Subagent ${run.id} is not running.`);
     run.detach?.();
+    this.saveRun(run);
   }
 
-  detachAll(): SubagentRun[] {
-    const runs = [...this.foreground].map((id) => this.runs.get(id)).filter((run): run is SubagentRun => Boolean(run));
+  detachAll(parentSessionKey?: string): SubagentRun[] {
+    const runs = [...this.foreground]
+      .map((id) => this.runs.get(id))
+      .filter((run): run is SubagentRun => !!run)
+      .filter((run) => !parentSessionKey || run.parentSessionKey === parentSessionKey);
     for (const run of runs) this.detach(run);
     return runs;
   }
 
   keep(run: SubagentRun): void {
     run.keep = true;
+    if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
+    this.saveRun(run);
   }
 
   forget(run: SubagentRun): void {
-    if (run.status === "running") throw new Error(`Cannot forget running subagent ${run.id}; cancel or background it first.`);
+    if (!run.keep) return;
+    run.keep = false;
+    if (run.name) this.aliases.delete(this.aliasKey(run.parentSessionKey, run.name));
+    this.saveParent(run.parentSessionKey);
+  }
+
+  delete(run: SubagentRun): void {
+    if (run.status === "running") throw new Error(`Cannot delete running subagent ${run.id}; cancel or background it first.`);
     run.dispose?.();
-    deleteRunSessionFile(run);
+    deleteManagedChildSession(run.parentSessionKey, run.sessionFile);
+    if (!run.sessionFile) deleteRunSessionFile(run);
     this.runs.delete(run.id);
-    if (run.name) this.aliases.delete(run.name);
+    if (run.name) this.aliases.delete(this.aliasKey(run.parentSessionKey, run.name));
+    this.saveParent(run.parentSessionKey);
   }
 
   list(parentSessionKey?: string): SubagentRun[] {
-    const runs = [...this.runs.values()].filter((run) => !parentSessionKey || run.parentSessionKey === parentSessionKey);
+    const runs = [...this.runs.values()].filter((run) => this.isVisible(run, parentSessionKey));
     return runs.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
@@ -236,25 +346,42 @@ export class SubagentManager {
     for (const message of pending) this.inject(parentSessionKey, message);
   }
 
-  cleanup(): void {
+  cleanup(parentSessionKey?: string): void {
     const ttlMs = settingValue("ephemeralTtlMinutes", 30) * 60_000;
     const now = this.now();
-    for (const run of [...this.runs.values()]) {
-      if (run.status === "running" || run.keep || !run.completedAt) continue;
-      if (now - run.completedAt > ttlMs) this.forgetCompleted(run);
+    const candidates = [...this.runs.values()].filter((run) => !parentSessionKey || run.parentSessionKey === parentSessionKey);
+    for (const run of candidates) {
+      if (run.keep) continue;
+      const branch = this.parentBranches.get(run.parentSessionKey);
+      if (branch && run.anchorEntryId && !branch.has(run.anchorEntryId)) {
+        this.pruneEphemeral(run);
+        continue;
+      }
+      if (run.status !== "running" && run.completedAt && now - run.completedAt > ttlMs) this.pruneEphemeral(run);
     }
     const max = settingValue("maxRecentPerParent", 20);
     const groups = new Map<string, SubagentRun[]>();
-    for (const run of this.runs.values()) if (run.status !== "running" && !run.keep) groups.set(run.parentSessionKey, [...(groups.get(run.parentSessionKey) ?? []), run]);
+    for (const run of this.runs.values()) {
+      if (parentSessionKey && run.parentSessionKey !== parentSessionKey) continue;
+      if (run.status !== "running" && !run.keep) groups.set(run.parentSessionKey, [...(groups.get(run.parentSessionKey) ?? []), run]);
+    }
     for (const runs of groups.values()) {
       const extra = runs.sort((a, b) => b.updatedAt - a.updatedAt).slice(max);
-      for (const run of extra) this.forgetCompleted(run);
+      for (const run of extra) this.pruneEphemeral(run);
     }
   }
 
-  private forgetCompleted(run: SubagentRun): void {
-    if (run.status === "running") return;
-    try { this.forget(run); } catch {}
+  private pruneEphemeral(run: SubagentRun): void {
+    if (run.keep) return;
+    if (run.status === "running") {
+      run.abortController.abort();
+      try { void run.cancel?.(); } catch {}
+      run.status = "cancelled";
+      run.errorText = "Pruned";
+      run.completedAt = this.now();
+      run.updatedAt = run.completedAt;
+    }
+    try { this.delete(run); } catch {}
   }
 
   async shutdown(): Promise<void> {
@@ -263,9 +390,13 @@ export class SubagentManager {
       if (run.status === "running") {
         run.abortController.abort();
         try { await run.cancel?.(); } catch {}
+        run.status = "interrupted";
+        run.errorText = "Subagent was interrupted by parent process shutdown/restart.";
+        run.completedAt = this.now();
+        run.updatedAt = run.completedAt;
       }
+      this.saveRun(run);
       try { run.dispose?.(); } catch {}
-      try { deleteRunSessionFile(run); } catch {}
     }
     this.runs.clear();
     this.aliases.clear();

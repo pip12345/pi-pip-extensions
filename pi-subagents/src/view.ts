@@ -47,7 +47,7 @@ export class SubagentViewer extends PipCustomComponent<void> {
   }
 
   private run(): SubagentRun | undefined {
-    return this.manager.resolve(this.runId);
+    return this.manager.resolve(this.runId, this.ctx?.sessionManager?.getSessionFile?.() ?? this.ctx?.sessionManager?.getSessionId?.());
   }
 
   handleInput(data: string): void {
@@ -172,11 +172,11 @@ export class SubagentViewer extends PipCustomComponent<void> {
   private forget(run: SubagentRun): void {
     try {
       this.manager.forget(run);
-      this.close();
+      this.message = `Forgot ${run.id}; it is ephemeral now`;
     } catch (error) {
       this.message = error instanceof Error ? error.message : String(error);
-      this.requestRender();
     }
+    this.requestRender();
   }
 
   private contentLines(snapshot: SubagentSnapshot, inner: number): string[] {

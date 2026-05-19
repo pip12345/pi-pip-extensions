@@ -20,7 +20,7 @@ export const SubagentParams = Type.Object({
   name: Type.Optional(Type.String({ description: "Optional alias for kept subagents." })),
   message: Type.Optional(Type.String({ description: "Message for steer." })),
   background: Type.Optional(Type.Boolean({ description: "Run in background and return immediately." })),
-  keep: Type.Optional(Type.Boolean({ description: "Retain for reuse after completion. Ephemeral completed subagents cannot be continued." })),
+  keep: Type.Optional(Type.Boolean({ description: "Retain for reuse after completion. Ephemeral completed subagents cannot be continued, but interrupted ephemerals can." })),
   wait: Type.Optional(Type.Boolean({ description: "For status, wait briefly for completion." })),
   timeoutMs: Type.Optional(Type.Number({ description: "Maximum milliseconds to wait when wait=true." })),
 });

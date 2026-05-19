@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "pip-common/testing";
 import { flushPipTools, pipSettings, resetPipToolsForTests } from "pip-common";
@@ -38,6 +41,27 @@ function setup(runner: Runner = new FakeRunner()) {
   createSubagentsExtension({ runner })(pi as any);
   flushPipTools(pi as any);
   return { pi, runner, tool: getRegisteredTool(pi, "subagent") };
+}
+
+function persistedSetup(runner: Runner = new FakeRunner()) {
+  const dir = mkdtempSync(join(tmpdir(), "pi-subagents-test-"));
+  const manager = new SubagentManager({ runner, persistenceDir: dir });
+  const pi = createMockPi();
+  createSubagentsExtension({ manager })(pi as any);
+  flushPipTools(pi as any);
+  return { dir, manager, pi, runner, tool: getRegisteredTool(pi, "subagent"), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+function ctxForSession(sessionFile: string, cwd = process.cwd(), leafId?: string, branchIds?: string[]) {
+  return createMockCtx({
+    cwd,
+    sessionManager: {
+      getSessionFile: () => sessionFile,
+      getSessionId: () => sessionFile,
+      getLeafId: () => leafId,
+      getBranch: () => (branchIds ?? (leafId ? [leafId] : [])).map((id) => ({ id })),
+    },
+  });
 }
 
 beforeEach(() => {
@@ -84,6 +108,219 @@ describe("pi-subagents", () => {
     const continued = await tool.execute("2", { id: "scout", prompt: "again" }, undefined, undefined, ctx);
     expect(continued.isError).toBeFalsy();
     expect(continued.content[0].text).toContain("continued: again");
+  });
+
+  it("persists kept subagents and restores them for the same parent", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const first = persistedSetup();
+    try {
+      const ctx = ctxForSession(parentFile);
+      const launched = await first.tool.execute("1", { agent: "explore", prompt: "persist me", keep: true, name: "persisted" }, undefined, undefined, ctx);
+      expect(launched.content[0].text).toContain("keep: true");
+      const secondRunner = new FakeRunner();
+      const secondManager = new SubagentManager({ runner: secondRunner, persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const list = await secondTool.execute("2", {}, undefined, undefined, ctx);
+      expect(list.content[0].text).toContain("persisted");
+      expect(list.content[0].text).toContain("persist me");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
+  });
+
+  it("ephemeral subagents persist on the same branch and prune when anchored off-branch", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const first = persistedSetup();
+    try {
+      const ctx = ctxForSession(parentFile, process.cwd(), "m1", ["root", "m1"]);
+      const launched = await first.tool.execute("1", { agent: "explore", prompt: "ephemeral" }, undefined, undefined, ctx);
+      const id = launched.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+
+      const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const sameBranch = await secondTool.execute("2", {}, undefined, undefined, ctx);
+      expect(sameBranch.content[0].text).toContain("ephemeral");
+
+      const otherBranch = ctxForSession(parentFile, process.cwd(), "m0", ["root", "m0"]);
+      await emitEvent(secondPi, "session_start", {}, otherBranch);
+      const hidden = await secondTool.execute("3", { action: "status", id }, undefined, undefined, otherBranch);
+      expect(hidden.isError).toBe(true);
+      const listed = await secondTool.execute("4", {}, undefined, undefined, otherBranch);
+      expect(listed.content[0].text).toBe("No retained subagents.");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
+  });
+
+  it("kept subagents are hidden off-branch but not pruned", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const first = persistedSetup();
+    try {
+      const ctx = ctxForSession(parentFile, process.cwd(), "m1", ["root", "m1"]);
+      await first.tool.execute("1", { agent: "explore", prompt: "kept branch", keep: true, name: "branchy" }, undefined, undefined, ctx);
+      const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+
+      const otherBranch = ctxForSession(parentFile, process.cwd(), "m0", ["root", "m0"]);
+      await emitEvent(secondPi, "session_start", {}, otherBranch);
+      const hidden = await secondTool.execute("2", {}, undefined, undefined, otherBranch);
+      expect(hidden.content[0].text).toBe("No retained subagents.");
+
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const visible = await secondTool.execute("3", {}, undefined, undefined, ctx);
+      expect(visible.content[0].text).toContain("branchy");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
+  });
+
+  it("running ephemeral subagents restore as interrupted and can be continued", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const runner = new FakeRunner();
+    runner.delay = 100;
+    const first = persistedSetup(runner);
+    try {
+      const ctx = ctxForSession(parentFile, process.cwd(), "m1", ["root", "m1"]);
+      await first.tool.execute("1", { agent: "explore", prompt: "running", background: true }, undefined, undefined, ctx);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await first.manager.shutdown();
+
+      const secondRunner = new FakeRunner();
+      const secondManager = new SubagentManager({ runner: secondRunner, persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const listed = await secondTool.execute("2", {}, undefined, undefined, ctx);
+      expect(listed.content[0].text).toContain("[interrupted");
+      const id = listed.content[0].text.match(/^(sa_\S+)/)?.[1];
+      const continued = await secondTool.execute("3", { id, prompt: "resume" }, undefined, undefined, ctx);
+      expect(continued.isError).toBeFalsy();
+      expect(continued.content[0].text).toContain("done: resume");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
+  });
+
+  it("restored kept subagents are parent-local and continuable", async () => {
+    const parentA = join(mkdtempSync(join(tmpdir(), "pi-parent-a-")), "parent.jsonl");
+    const parentB = join(mkdtempSync(join(tmpdir(), "pi-parent-b-")), "parent.jsonl");
+    writeFileSync(parentA, "{}\n");
+    writeFileSync(parentB, "{}\n");
+    const first = persistedSetup();
+    try {
+      const ctxA = ctxForSession(parentA);
+      const ctxB = ctxForSession(parentB);
+      await first.tool.execute("1", { agent: "explore", prompt: "continue me", keep: true, name: "keep-a" }, undefined, undefined, ctxA);
+
+      const secondRunner = new FakeRunner();
+      const secondManager = new SubagentManager({ runner: secondRunner, persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+
+      await emitEvent(secondPi, "session_start", {}, ctxA);
+      const restored = await secondTool.execute("2", {}, undefined, undefined, ctxA);
+      expect(restored.content[0].text).toContain("keep-a");
+
+      await emitEvent(secondPi, "session_start", {}, ctxB);
+      const otherParentList = await secondTool.execute("3", {}, undefined, undefined, ctxB);
+      expect(otherParentList.content[0].text).toBe("No retained subagents.");
+      const runId = secondManager.list(parentA)[0]?.id ?? "missing";
+      const crossReadByName = await secondTool.execute("4", { action: "status", id: "keep-a" }, undefined, undefined, ctxB);
+      expect(crossReadByName.isError).toBe(true);
+      const crossReadById = await secondTool.execute("5", { action: "status", id: runId }, undefined, undefined, ctxB);
+      expect(crossReadById.isError).toBe(true);
+
+      await emitEvent(secondPi, "session_start", {}, ctxA);
+      const continued = await secondTool.execute("6", { id: "keep-a", prompt: "again" }, undefined, undefined, ctxA);
+      expect(continued.isError).toBeFalsy();
+      expect(continued.content[0].text).toContain("done: again");
+      expect(secondRunner.launched.length).toBe(1);
+      expect((secondRunner.launched as any)[0]).toBeTruthy();
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentA), { recursive: true, force: true });
+      rmSync(dirname(parentB), { recursive: true, force: true });
+    }
+  });
+
+  it("forget makes a kept subagent ephemeral and keeps it persisted while relevant", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const first = persistedSetup();
+    try {
+      const ctx = ctxForSession(parentFile);
+      const launched = await first.tool.execute("1", { agent: "explore", prompt: "forget me", keep: true, name: "forgotten" }, undefined, undefined, ctx);
+      const id = launched.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+      const forgot = await first.tool.execute("2", { action: "forget", id: "forgotten" }, undefined, undefined, ctx);
+      expect(forgot.content[0].text).toContain("ephemeral now");
+      const sameSessionStatus = await first.tool.execute("2b", { action: "status", id }, undefined, undefined, ctx);
+      expect(sameSessionStatus.content[0].text).toContain("keep: false");
+      const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const list = await getRegisteredTool(secondPi, "subagent").execute("3", {}, undefined, undefined, ctx);
+      expect(list.content[0].text).toContain("forgotten");
+      expect(list.content[0].text).toContain("[completed");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
+  });
+
+  it("deleting parent session lazily removes persisted kept subagents", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-")), "parent.jsonl");
+    const otherParent = join(mkdtempSync(join(tmpdir(), "pi-parent-other-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    writeFileSync(otherParent, "{}\n");
+    const first = persistedSetup();
+    try {
+      const parentCtx = ctxForSession(parentFile);
+      await first.tool.execute("1", { agent: "explore", prompt: "orphan", keep: true, name: "orphan" }, undefined, undefined, parentCtx);
+      await emitEvent(first.pi, "session_start", {}, parentCtx);
+      expect(first.manager.list(parentFile).length).toBe(1);
+      rmSync(parentFile, { force: true });
+      await emitEvent(first.pi, "session_start", {}, parentCtx);
+      expect(first.manager.list(parentFile).length).toBe(0);
+      const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const ctx = ctxForSession(otherParent);
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const orphanCtx = ctxForSession(parentFile);
+      const list = await getRegisteredTool(secondPi, "subagent").execute("2", {}, undefined, undefined, orphanCtx);
+      expect(list.content[0].text).toBe("No retained subagents.");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+      rmSync(dirname(otherParent), { recursive: true, force: true });
+    }
   });
 
   it("failed kept continuation cleans up running state", async () => {
@@ -157,7 +394,7 @@ describe("pi-subagents", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     const run = runner.launched[0];
     await emitEvent(pi, "session_shutdown", { reason: "reload" }, ctx);
-    expect(run.status).toBe("cancelled");
+    expect(run.status).toBe("interrupted");
     await promise;
   });
 
@@ -181,6 +418,32 @@ describe("pi-subagents", () => {
     await getRegisteredShortcut(pi, "ctrl+shift+b").handler(ctx);
     const result = await promise;
     expect(result.content[0].text).toContain("Moved to background");
+  });
+
+  it("background all only detaches current parent foreground runs", async () => {
+    const runner = new FakeRunner();
+    runner.delay = 200;
+    const { pi, tool } = setup(runner);
+    const parentAFile = join(mkdtempSync(join(tmpdir(), "pi-parent-a-")), "parent.jsonl");
+    const parentBFile = join(mkdtempSync(join(tmpdir(), "pi-parent-b-")), "parent.jsonl");
+    writeFileSync(parentAFile, "{}\n");
+    writeFileSync(parentBFile, "{}\n");
+    const parentA = ctxForSession(parentAFile);
+    const parentB = ctxForSession(parentBFile);
+    const promiseA = tool.execute("1", { agent: "explore", prompt: "a" }, undefined, undefined, parentA);
+    const promiseB = tool.execute("2", { agent: "explore", prompt: "b" }, undefined, undefined, parentB);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await runCommand(pi, "subagent", "background", parentA);
+    const runA = runner.launched.find((run) => run.prompt === "a");
+    const runB = runner.launched.find((run) => run.prompt === "b");
+    expect(runA?.parentSessionKey).toBe(parentAFile);
+    expect(runB?.parentSessionKey).toBe(parentBFile);
+    expect(runA?.background).toBe(true);
+    expect(runB?.background).toBe(false);
+    runner.launched.forEach((run) => run.detach?.());
+    await Promise.all([promiseA, promiseB]);
+    rmSync(dirname(parentAFile), { recursive: true, force: true });
+    rmSync(dirname(parentBFile), { recursive: true, force: true });
   });
 
   it("cleans up foreground state when runner launch rejects", async () => {

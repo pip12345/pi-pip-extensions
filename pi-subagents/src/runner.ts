@@ -1,4 +1,5 @@
-import { mkdirSync, rmSync, rmdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createAgentSession, SessionManager, AuthStorage, ModelRegistry, DefaultResourceLoader, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isPipReadOnlyActive, pipPath } from "pip-common";
@@ -7,7 +8,9 @@ import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { snapshotRun } from "./snapshot.ts";
 
 function safePart(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 120) || "unknown";
+  const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
+  const hash = createHash("sha256").update(value).digest("hex").slice(0, 16);
+  return `${slug}-${hash}`;
 }
 
 export function privateSessionDir(parentSessionKey: string): string {
@@ -115,7 +118,10 @@ export class RealRunner implements Runner {
       const dir = privateSessionDir(input.parentSessionKey);
       mkdirSync(dir, { recursive: true });
       const { authStorage, modelRegistry } = auth();
-      const sessionManager = SessionManager.create(input.cwd, dir);
+      if (input.resumeSessionFile && !existsSync(input.resumeSessionFile)) throw new Error(`Subagent session file not found: ${input.resumeSessionFile}`);
+      const sessionManager = input.resumeSessionFile
+        ? SessionManager.open(input.resumeSessionFile, dir, input.cwd)
+        : SessionManager.create(input.cwd, dir);
       const agentDir = getAgentDir();
       const settingsManager = SettingsManager.create(input.cwd, agentDir);
       const resourceLoader = new DefaultResourceLoader({
@@ -137,6 +143,7 @@ export class RealRunner implements Runner {
       const activeSession = session;
       run.session = activeSession;
       run.sessionFile = activeSession.sessionFile;
+      run.persist?.();
       if (run.abortController.signal.aborted) {
         await activeSession.abort();
         throw new Error("Cancelled");
@@ -172,6 +179,7 @@ export class RealRunner implements Runner {
           if (text) run.resultText = text;
         }
         run.updatedAt = now;
+        run.persist?.();
         if (run.forwarding !== false) input.onUpdate?.({ content: [{ type: "text", text: run.resultText ?? "" }], details: { run: snapshotRun(run) } });
       });
 
@@ -192,6 +200,7 @@ export class RealRunner implements Runner {
         run.resultText = undefined;
         run.completedAt = undefined;
         run.updatedAt = Date.now();
+        run.persist?.();
         try {
           if (run.abortController.signal.aborted) throw new Error("Cancelled");
           await activeSession.prompt(prompt);
@@ -202,6 +211,7 @@ export class RealRunner implements Runner {
         } finally {
           run.completedAt = Date.now();
           run.updatedAt = run.completedAt;
+          run.persist?.();
         }
       }
 
