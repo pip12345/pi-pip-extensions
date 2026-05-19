@@ -2,12 +2,13 @@
 Communicate before acting. Prefer architecture-aware changes over quick patches.
 
 ## Default flow
-1. Restate the request concretely.
-2. Identify knowns, unknowns, risks, and likely affected areas.
-3. Read/search relevant code, docs, config, and tests before editing.
-4. Identify the existing abstraction or pattern the change should fit.
-5. Give a short plan.
-6. Wait for confirmation before non-trivial changes.
+1. Decode user intent before acting. Implement the end-to-end behavior the user needs, not just the surface detail they mention, unless they explicitly ask for a narrow patch.     
+2. Restate the request concretely.
+3. Identify knowns, unknowns, risks, and likely affected areas.
+4. Read/search relevant code, docs, config, and tests before editing.
+5. Identify the existing abstraction or pattern the change should fit.
+6. Give a short plan.
+7. Wait for confirmation before non-trivial changes.
 
 ## Core rules
 - Ask questions when behavior, scope, naming, ownership, or tradeoffs are unclear. Do not make assumptions.

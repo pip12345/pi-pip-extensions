@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+  return { ...actual, generateSummary: vi.fn(async () => "generated compaction summary") };
+});
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +27,7 @@ describe("pi-tree-edit", () => {
     expect(pipSettings.definition("tree-edit")?.toolResultTruncation.default).toBe(20000);
   });
 
-  it("adds a compaction entry after the selected normal message", async () => {
+  it("compacts messages before the selected normal message", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tree-edit-compaction-"));
     const sessionFile = join(dir, "session.jsonl");
     writeFileSync(
@@ -31,14 +36,18 @@ describe("pi-tree-edit", () => {
         JSON.stringify({ type: "session", id: "session-test" }),
         JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "hello" }] } }),
         JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "hi" }], usage: { input: 10, output: 5 } } }),
-        JSON.stringify({ type: "message", id: "u2", parentId: "a1", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "user", content: [{ type: "text", text: "next" }] } }),
+        JSON.stringify({ type: "message", id: "t1", parentId: "a1", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", toolName: "x", toolCallId: "call_1", content: [{ type: "text", text: "tool" }] } }),
+        JSON.stringify({ type: "message", id: "u2", parentId: "t1", timestamp: "2026-01-01T00:00:03.000Z", message: { role: "user", content: [{ type: "text", text: "next" }] } }),
       ].join("\n") + "\n"
     );
 
     try {
       const pi = createMockPi();
       treeEdit(pi as any);
+      let customCalls = 0;
       const ctx: any = {
+        model: { provider: "test", modelId: "test-model" },
+        modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test-key", headers: {} }) },
         waitForIdle: async () => undefined,
         switchSession: async (_file: string, opts: any) => opts.withSession({ navigateTree: async () => undefined, ui: { notify: () => undefined } }),
         sessionManager: {
@@ -47,15 +56,20 @@ describe("pi-tree-edit", () => {
         },
         ui: {
           custom: async (factory: any) => {
+            customCalls++;
             let result: any;
             const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
             const component = factory({ requestRender() {} }, theme, undefined, (value: any) => { result = value; }) as any;
-            component.handleInput("k");
-            component.handleInput("C");
-            expect(component.render(120).join("\n")).toContain("C add compaction entry");
+            if (customCalls === 1) {
+              component.handleInput("k");
+              component.handleInput("C");
+              return result;
+            }
+            expect(component.render(120).join("\n")).toContain("C compact before");
             component.handleInput("q");
             return result;
           },
+          editor: async () => "reviewed compaction summary",
           select: async () => "Save and quit",
           notify: () => undefined,
         },
@@ -64,15 +78,16 @@ describe("pi-tree-edit", () => {
       await runCommand(pi, "tree-edit", "", ctx);
       const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
       const compaction = entries.find((entry) => entry.type === "compaction");
-      expect(compaction).toMatchObject({ parentId: "a1", summary: "", firstKeptEntryId: "u2", details: { from: "pi-tree-edit", kind: "manual", compactedThroughEntryId: "a1" } });
+      expect(compaction).toMatchObject({ parentId: "a1", summary: "reviewed compaction summary", firstKeptEntryId: "a1", details: { from: "pi-tree-edit", kind: "manual", compactedBeforeEntryId: "a1", sourceEntryIds: ["u1"] } });
       expect(compaction.tokensBefore).toBeGreaterThan(0);
-      expect(entries.find((entry) => entry.id === "u2")?.parentId).toBe(compaction.id);
+      expect(entries.find((entry) => entry.id === "t1")?.parentId).toBe(compaction.id);
+      expect(entries.find((entry) => entry.id === "u2")?.parentId).toBe("t1");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("does not add compaction when selected entry is not a normal message", async () => {
+  it("does not compact when selected entry is not a normal message", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tree-edit-compaction-invalid-"));
     const sessionFile = join(dir, "session.jsonl");
     writeFileSync(
@@ -102,7 +117,7 @@ describe("pi-tree-edit", () => {
             component.handleInput("f");
             component.handleInput("j");
             component.handleInput("C");
-            expect(component.render(120).join("\n")).toContain("Select a user/assistant message to add compaction");
+            expect(component.render(120).join("\n")).toContain("Select a user/assistant message to compact before");
             component.handleInput("q");
             return result;
           },

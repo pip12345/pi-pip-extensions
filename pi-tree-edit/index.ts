@@ -18,7 +18,7 @@ type Clipboard =
   | { kind: "entries"; entries: Entry[]; label: string; structure?: "linear" | "preserve" }
   | { kind: "summary"; summary: string; sourceEntryIds: string[]; sourceEntries?: Entry[]; label: string; snapshotPolicy: SummarySnapshotPolicy };
 
-type ExitResult = { action: "quit" } | { action: "edit"; id: string } | { action: "summarize"; id: string } | { action: "label"; id: string };
+type ExitResult = { action: "quit" } | { action: "edit"; id: string } | { action: "summarize"; id: string } | { action: "compact"; id: string } | { action: "label"; id: string };
 type FilterMode = "default" | "show-tools" | "user-only" | "labeled-only" | "all";
 type TreeGutter = { position: number; show: boolean };
 type SummarySourceVirtualRow = { kind: "summary-source"; summaryEntryId: string; sourceEntryId: string; fromSnapshot: boolean; missing?: boolean };
@@ -36,7 +36,7 @@ const HELP_ITEMS = [
   "i include branches",
   "y copy",
   "c cut",
-  "C add compaction entry",
+  "C compact before",
   "S summarize",
   "o open summary",
   "p paste after",
@@ -851,26 +851,65 @@ class DraftSession {
     return built.lastParent;
   }
 
-  addCompactionAfter(selectedId: string): string | null {
+  async compactBefore(selectedId: string, ctx: Ctx): Promise<string | null> {
     const selected = this.entries.find((entry) => entry.id === selectedId);
     if (!isNormalMessageEntry(selected)) {
-      this.message = "Select a user/assistant message to add compaction";
+      this.message = "Select a user/assistant message to compact before";
+      return null;
+    }
+
+    const branch = pathToRoot(this.entries, selectedId);
+    const selectedIndex = branch.findIndex((entry) => entry.id === selectedId);
+    const compactedEntries = branch.slice(0, Math.max(0, selectedIndex));
+    if (!compactedEntries.length) {
+      this.message = "Nothing before selected message to compact";
+      return null;
+    }
+    const messages = messagesFromEntries(compactedEntries);
+    if (!messages.length) {
+      this.message = "No messages before selected message to compact";
+      return null;
+    }
+    if (!ctx.model) {
+      this.message = "No active model for compaction";
+      return null;
+    }
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+    if (!auth?.ok) {
+      this.message = auth?.error || "No API key for active model";
+      return null;
+    }
+
+    ctx.ui.notify(`Compacting ${compactedEntries.length} entries before ${selectedId}...`, "info");
+    const generated = (await generateSummary(
+      messages,
+      ctx.model,
+      4096,
+      auth.apiKey,
+      auth.headers,
+      ctx.signal,
+      "Summarize the session entries before the selected message as a compaction checkpoint. Preserve user goals, constraints, decisions, file changes, commands run, errors, unresolved tasks, and current state. The selected message and later entries will remain after this summary.",
+      undefined,
+      "off"
+    )).trim();
+    const summary = await ctx.ui.editor("Review compaction summary", generated);
+    if (!summary?.trim()) {
+      this.message = "Compaction cancelled";
       return null;
     }
 
     const existing = this.ids();
     const id = newId(existing);
     const continuationChild = this.childOnContinuation(selectedId);
-    const compactedPath = pathToRoot(this.entries, selectedId);
     const entry: Entry = {
       type: "compaction",
       id,
       parentId: selectedId,
       timestamp: new Date().toISOString(),
-      summary: "",
-      firstKeptEntryId: continuationChild?.id ?? id,
-      tokensBefore: compactedPath.reduce((sum, entry) => sum + estimateContextTokensForEntry(entry), 0),
-      details: { from: EXT, kind: "manual", compactedThroughEntryId: selectedId },
+      summary: summary.trim(),
+      firstKeptEntryId: selectedId,
+      tokensBefore: compactedEntries.reduce((sum, entry) => sum + estimateContextTokensForEntry(entry), 0),
+      details: { from: EXT, kind: "manual", compactedBeforeEntryId: selectedId, sourceEntryIds: compactedEntries.map((entry) => entry.id) },
     };
     if (continuationChild) continuationChild.parentId = id;
     this.entries.push(entry);
@@ -882,8 +921,8 @@ class DraftSession {
     this.flashNonce += 1;
     this.markId = null;
     this.dirty = true;
-    this.lastOperation = "added compaction entry";
-    this.message = "Added compaction entry; press e to edit summary";
+    this.lastOperation = `compacted ${compactedEntries.length} entr${compactedEntries.length === 1 ? "y" : "ies"}`;
+    this.message = `Compacted ${compactedEntries.length} entr${compactedEntries.length === 1 ? "y" : "ies"} before ${selectedId}`;
     return id;
   }
 
@@ -1190,9 +1229,9 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       else { this.draft.checkpoint(); const pastedId = this.draft.pasteAfter(selectedId, true); this.selectId(pastedId); }
       changed = true;
     } else if (selectedId && key === "C") {
-      if (isVirtual) this.draft.message = "Select a real tree row to add compaction";
-      else { this.draft.checkpoint(); const compactionId = this.draft.addCompactionAfter(selectedId); this.selectId(compactionId); }
-      changed = true;
+      if (isVirtual) { this.draft.message = "Select a real tree row to compact before"; changed = true; }
+      else if (!isNormalMessageEntry(selectedEntry)) { this.draft.message = "Select a user/assistant message to compact before"; changed = true; }
+      else { this.draft.viewSelectedId = selectedId; this.close({ action: "compact", id: selectedId }); return; }
     } else if (selectedId && key === "d") {
       if (isVirtual) changed = virtualReadOnly();
       else { this.draft.checkpoint(); this.draft.deleteRangeOrEntry(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)); this.clampSelection(); changed = true; }
@@ -1517,6 +1556,11 @@ export default function (pi: ExtensionAPI) {
           draft.checkpoint();
           await draft.summarizeToClipboard(result.id, ctx, (draft as any).__lastFoldedIds ?? new Set(), (draft as any).__lastVisibleRangeEntries);
           delete (draft as any).__lastVisibleRangeEntries;
+          continue;
+        }
+        if (result?.action === "compact") {
+          draft.checkpoint();
+          await draft.compactBefore(result.id, ctx);
           continue;
         }
         if (result?.action === "label") {
