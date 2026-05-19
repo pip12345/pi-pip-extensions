@@ -36,6 +36,7 @@ const HELP_ITEMS = [
   "i include branches",
   "y copy",
   "c cut",
+  "C add compaction entry",
   "S summarize",
   "o open summary",
   "p paste after",
@@ -145,6 +146,11 @@ function isSummaryEntry(entry: Entry): boolean {
 function isToolLikeEntry(entry: Entry): boolean {
   const role = entry.type === "message" ? entry.message?.role : undefined;
   return role === "toolResult" || role === "bashExecution";
+}
+
+function isNormalMessageEntry(entry: Entry | undefined): entry is Entry {
+  const role = entry?.type === "message" ? entry.message?.role : undefined;
+  return role === "user" || role === "assistant";
 }
 
 function truncateStrings(value: any, limit: number): any {
@@ -474,21 +480,22 @@ function entryMap(entries: Entry[]): Map<string, Entry> {
   return new Map(entries.map((entry) => [entry.id, entry]));
 }
 
-function pathBetween(entries: Entry[], a: string, b: string): Entry[] | null {
+function pathToRoot(entries: Entry[], id: string): Entry[] {
   const byId = entryMap(entries);
-  const pathToRoot = (id: string): Entry[] => {
-    const path: Entry[] = [];
-    const seen = new Set<string>();
-    let cur = byId.get(id);
-    while (cur && !seen.has(cur.id)) {
-      seen.add(cur.id);
-      path.unshift(cur);
-      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
-    }
-    return path;
-  };
-  const pa = pathToRoot(a);
-  const pb = pathToRoot(b);
+  const path: Entry[] = [];
+  const seen = new Set<string>();
+  let cur = byId.get(id);
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    path.unshift(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return path;
+}
+
+function pathBetween(entries: Entry[], a: string, b: string): Entry[] | null {
+  const pa = pathToRoot(entries, a);
+  const pb = pathToRoot(entries, b);
   const ia = pa.findIndex((e) => e.id === b);
   if (ia >= 0) return pa.slice(ia);
   const ib = pb.findIndex((e) => e.id === a);
@@ -844,6 +851,42 @@ class DraftSession {
     return built.lastParent;
   }
 
+  addCompactionAfter(selectedId: string): string | null {
+    const selected = this.entries.find((entry) => entry.id === selectedId);
+    if (!isNormalMessageEntry(selected)) {
+      this.message = "Select a user/assistant message to add compaction";
+      return null;
+    }
+
+    const existing = this.ids();
+    const id = newId(existing);
+    const continuationChild = this.childOnContinuation(selectedId);
+    const compactedPath = pathToRoot(this.entries, selectedId);
+    const entry: Entry = {
+      type: "compaction",
+      id,
+      parentId: selectedId,
+      timestamp: new Date().toISOString(),
+      summary: "",
+      firstKeptEntryId: continuationChild?.id ?? id,
+      tokensBefore: compactedPath.reduce((sum, entry) => sum + estimateContextTokensForEntry(entry), 0),
+      details: { from: EXT, kind: "manual", compactedThroughEntryId: selectedId },
+    };
+    if (continuationChild) continuationChild.parentId = id;
+    this.entries.push(entry);
+    this.viewSelectedId = id;
+    this.highlightEntryIds = [id];
+    this.highlightKind = "paste";
+    this.flashEntryIds = [id];
+    this.flashKind = "paste";
+    this.flashNonce += 1;
+    this.markId = null;
+    this.dirty = true;
+    this.lastOperation = "added compaction entry";
+    this.message = "Added compaction entry; press e to edit summary";
+    return id;
+  }
+
   private childOnContinuation(parentId: string): Entry | undefined {
     const currentPathChild = this.childOnCurrentPath(parentId);
     if (currentPathChild) return currentPathChild;
@@ -1145,6 +1188,10 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       if (isVirtual) this.draft.message = "Select a real tree row to paste";
       else if (this.draft.markId) this.draft.message = "P is disabled while a range is active; use p to replace the range or v to cancel";
       else { this.draft.checkpoint(); const pastedId = this.draft.pasteAfter(selectedId, true); this.selectId(pastedId); }
+      changed = true;
+    } else if (selectedId && key === "C") {
+      if (isVirtual) this.draft.message = "Select a real tree row to add compaction";
+      else { this.draft.checkpoint(); const compactionId = this.draft.addCompactionAfter(selectedId); this.selectId(compactionId); }
       changed = true;
     } else if (selectedId && key === "d") {
       if (isVirtual) changed = virtualReadOnly();

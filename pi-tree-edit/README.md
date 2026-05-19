@@ -22,6 +22,7 @@ By default, the view uses the `no-tools` filter: the normal tree view without to
 - `v` - start range at cursor; press `v` again to cancel
 - `y` - copy from range start to cursor, or selected entry if no range; clears range after copy
 - `c` - cut from range start to cursor, or selected entry if no range; clears range after cut
+- `C` - add compaction entry after selected user/assistant message
 - `p` - paste clipboard after selected entry; with an active range, replace the range
 - `P` - paste clipboard as a new branch from selected entry; disabled while a range is active
 - `d` - delete selected range, or selected entry if no range
@@ -31,7 +32,6 @@ By default, the view uses the `no-tools` filter: the normal tree view without to
 - `U` - redo last undone draft change
 - `e` - edit selected message text
 - `L` - set or clear selected entry label
-- `C` - create a manual compaction clipboard item from the selected range; keeps range active so `p` can replace it
 - `b` - set current location to selected entry
 - `q` / `Esc` - exit prompt
 

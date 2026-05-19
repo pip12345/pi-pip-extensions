@@ -75,6 +75,7 @@ export function normalizeInputKey(data: string): string {
   if (matchesKey(data, "pageDown") || data === "\u001b[6~") return "pagedown";
   if (matchesKey(data, "return") || data === "\r" || data === "\n") return "return";
   if (matchesKey(data, "backspace")) return "backspace";
+  if (data.length === 1 && data >= "A" && data <= "Z") return data;
 
   const parsed = parseKey(data);
   if (parsed) {
