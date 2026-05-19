@@ -253,6 +253,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             const message = rest.join(" ");
             if (!message) throw new Error("steer requires a message.");
             await manager.steer(run, message);
+            ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
           } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }
           else if (cmd === "forget") { manager.forget(run); ctx.ui?.notify?.(`Forgot ${run.id}.`, "info"); }

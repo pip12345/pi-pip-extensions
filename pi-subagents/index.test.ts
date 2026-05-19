@@ -7,6 +7,7 @@ import type { Runner, SubagentRun } from "./src/types.ts";
 
 class FakeRunner implements Runner {
   delay = 0;
+  failContinue = false;
   launched: SubagentRun[] = [];
   async launch(input: any, run: SubagentRun): Promise<SubagentRun> {
     this.launched.push(run);
@@ -16,10 +17,11 @@ class FakeRunner implements Runner {
       run.abortController.abort();
       run.status = "cancelled";
     };
-    run.steer = async (message: string) => {
-      run.events.push({ type: "text_delta", text: message, at: Date.now() });
+    run.steer = async (message: string, displayMessage?: string) => {
+      run.events.push({ type: "text_delta", text: displayMessage ?? message, at: Date.now() });
     };
     run.continuePrompt = async (prompt: string) => {
+      if (this.failContinue) throw new Error("continue failed");
       run.resultText = `continued: ${prompt}`;
     };
     if (this.delay) await new Promise((resolve) => setTimeout(resolve, this.delay));
@@ -82,6 +84,19 @@ describe("pi-subagents", () => {
     const continued = await tool.execute("2", { id: "scout", prompt: "again" }, undefined, undefined, ctx);
     expect(continued.isError).toBeFalsy();
     expect(continued.content[0].text).toContain("continued: again");
+  });
+
+  it("failed kept continuation cleans up running state", async () => {
+    const runner = new FakeRunner();
+    runner.failContinue = true;
+    const { tool } = setup(runner);
+    const ctx = createMockCtx();
+    await tool.execute("1", { agent: "explore", prompt: "look", keep: true, name: "bad-continue" }, undefined, undefined, ctx);
+    const failed = await tool.execute("2", { id: "bad-continue", prompt: "again" }, undefined, undefined, ctx);
+    expect(failed.isError).toBe(true);
+    expect(failed.content[0].text).toContain("continue failed");
+    const status = await tool.execute("3", { action: "status", id: "bad-continue" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("state: error");
   });
 
   it("alwaysKeep makes new subagents reusable unless keep false", async () => {
@@ -216,6 +231,63 @@ describe("pi-subagents", () => {
     expect(result.content[0].text).toContain("state: cancelled");
   });
 
+  it("parent abort before runner wires cancel still marks run cancelled", async () => {
+    const runner: Runner = {
+      async launch(_input, run) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (run.abortController.signal.aborted) {
+          run.status = "cancelled";
+          return run;
+        }
+        run.status = "completed";
+        return run;
+      },
+    };
+    const { tool } = setup(runner);
+    const controller = new AbortController();
+    const ctx = createMockCtx();
+    const promise = tool.execute("1", { agent: "explore", prompt: "slow" }, controller.signal, undefined, ctx);
+    controller.abort();
+    const result = await promise;
+    expect(result.content[0].text).toContain("state: cancelled");
+  });
+
+  it("already-aborted parent signal prevents launch from completing", async () => {
+    const runner: Runner = {
+      async launch(_input, run) {
+        expect(run.abortController.signal.aborted).toBe(true);
+        run.status = "cancelled";
+        return run;
+      },
+    };
+    const { tool } = setup(runner);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await tool.execute("1", { agent: "explore", prompt: "slow" }, controller.signal, undefined, createMockCtx());
+    expect(result.content[0].text).toContain("state: cancelled");
+  });
+
+  it("shutdown aborts runs before runner wires cancel", async () => {
+    let captured: SubagentRun | undefined;
+    const runner: Runner = {
+      async launch(_input, run) {
+        captured = run;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return run;
+      },
+    };
+    const manager = new SubagentManager({ runner });
+    const pi = createMockPi();
+    createSubagentsExtension({ manager })(pi as any);
+    flushPipTools(pi as any);
+    const tool = getRegisteredTool(pi, "subagent");
+    const promise = tool.execute("1", { agent: "explore", prompt: "slow", background: true }, undefined, undefined, createMockCtx());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await emitEvent(pi, "session_shutdown", { reason: "reload" }, createMockCtx());
+    expect(captured?.abortController.signal.aborted).toBe(true);
+    await promise;
+  });
+
   it("/subagent open/back are disabled in favor of view", async () => {
     const { pi } = setup();
     const ctx = createMockCtx();
@@ -266,9 +338,18 @@ describe("pi-subagents", () => {
     const output = component.render(100).join("\n");
     expect(output).toContain("steer");
     expect(output).toContain("new direction");
-    expect(output).toContain("mid-run steering note");
-    expect(output).toContain("original delegated task");
+    expect(output).not.toContain("mid-run steering note");
+    expect(output).not.toContain("original delegated task");
     component.dispose?.();
+  });
+
+  it("/subagent steer reports success", async () => {
+    const { pi, tool } = setup();
+    const ctx = createMockCtx();
+    const result = await tool.execute("1", { agent: "explore", prompt: "look", keep: true, name: "steerable" }, undefined, undefined, ctx);
+    expect(result.isError).toBeFalsy();
+    await runCommand(pi, "subagent", "steer steerable go left", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("Steered");
   });
 
   it("/subagent view renders stable full-height frames", async () => {

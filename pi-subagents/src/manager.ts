@@ -108,6 +108,7 @@ export class SubagentManager {
       };
       input.signal.addEventListener("abort", onAbort, { once: true });
       run.removeParentAbort = () => input.signal?.removeEventListener("abort", onAbort);
+      if (input.signal.aborted) onAbort();
     }
 
     run.detach = () => {
@@ -121,8 +122,8 @@ export class SubagentManager {
     };
 
     run.runPromise = this.runner.launch(input, run).catch((error) => {
-      run.status = "error";
-      run.errorText = error instanceof Error ? error.message : String(error);
+      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
+      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
       run.completedAt = this.now();
       run.updatedAt = run.completedAt;
       return run;
@@ -149,10 +150,18 @@ export class SubagentManager {
     run.detached = false;
     run.forwarding = true;
     this.foreground.add(run.id);
-    await run.continuePrompt?.(prompt);
-    if (run.status === "running") run.status = "completed";
-    run.completedAt = this.now();
-    this.foreground.delete(run.id);
+    try {
+      await run.continuePrompt?.(prompt);
+      if (run.status === "running") run.status = "completed";
+    } catch (error) {
+      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
+      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      run.completedAt = this.now();
+      run.updatedAt = run.completedAt;
+      this.foreground.delete(run.id);
+    }
   }
 
   async steer(run: SubagentRun, message: string): Promise<void> {
@@ -165,11 +174,12 @@ export class SubagentManager {
     }
     run.events.push({ type: "steer", text: message, at: this.now() });
     if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
-    await run.steer(wrapSteerMessage(message));
+    await run.steer(wrapSteerMessage(message), message);
   }
 
   async cancel(run: SubagentRun): Promise<void> {
     if (run.status !== "running") throw new Error(`Subagent ${run.id} is not running.`);
+    run.abortController.abort();
     await run.cancel?.();
     run.status = "cancelled";
     run.errorText = "Cancelled";
@@ -251,6 +261,7 @@ export class SubagentManager {
     this.shuttingDown = true;
     for (const run of [...this.runs.values()]) {
       if (run.status === "running") {
+        run.abortController.abort();
         try { await run.cancel?.(); } catch {}
       }
       try { run.dispose?.(); } catch {}

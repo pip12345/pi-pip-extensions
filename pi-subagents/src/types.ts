@@ -76,7 +76,7 @@ export interface SubagentRun {
   runPromise?: Promise<SubagentRun>;
   dispose?: () => Promise<void> | void;
   continuePrompt?: (prompt: string) => Promise<void>;
-  steer?: (message: string) => Promise<void>;
+  steer?: (message: string, displayMessage?: string) => Promise<void>;
   cancel?: () => Promise<void>;
   detach?: () => void;
   detachPromise?: Promise<void>;

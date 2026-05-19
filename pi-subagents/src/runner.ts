@@ -31,36 +31,57 @@ function textFromMessage(msg: any): string {
   return (msg?.content ?? []).filter((part: any) => part?.type === "text").map((part: any) => part.text ?? "").join("\n");
 }
 
-function textFromToolResult(result: any): string {
-  if (!result) return "";
-  if (typeof result === "string") return result;
-  const content = Array.isArray(result.content) ? result.content : [];
-  const text = content.filter((part: any) => part?.type === "text").map((part: any) => part.text ?? "").join("\n");
-  if (text) return text;
-  if (typeof result.message === "string") return result.message;
-  if (typeof result.error === "string") return result.error;
-  try { return JSON.stringify(result); } catch { return String(result); }
+function appendBounded(out: string[], value: unknown, remaining: () => number): void {
+  const max = remaining();
+  if (max <= 0 || value == null) return;
+  const raw = typeof value === "string" ? value : String(value);
+  const text = raw.slice(0, max * 2).replace(/\s+/g, " ").trim();
+  if (!text) return;
+  out.push(text.slice(0, max));
 }
 
 function summarizeToolResult(result: any): string | undefined {
-  // Intentionally tiny: the live viewer is a status/log surface, not a full
-  // transcript store. Full read/grep/bash outputs can be massive and make the
-  // overlay unusable.
+  // Intentionally tiny and bounded while extracting: the live viewer is a
+  // status/log surface, not a full transcript store. Full read/grep/bash
+  // outputs can be massive and make the overlay unusable.
   const limit = 180;
-  const text = textFromToolResult(result).replace(/\s+/g, " ").trim();
+  const parts: string[] = [];
+  const remaining = () => Math.max(0, limit - parts.join(" ").length);
+  if (!result) return undefined;
+  if (typeof result === "string") appendBounded(parts, result, remaining);
+  else {
+    const content = Array.isArray(result.content) ? result.content : [];
+    for (const part of content) {
+      if (part?.type === "text") appendBounded(parts, part.text, remaining);
+      if (remaining() <= 0) break;
+    }
+    if (!parts.length) appendBounded(parts, result.message, remaining);
+    if (!parts.length) appendBounded(parts, result.error, remaining);
+    if (!parts.length && result.isError != null) appendBounded(parts, `isError: ${result.isError}`, remaining);
+  }
+  const text = parts.join(" ").trim();
   if (!text) return undefined;
-  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+  return text.length >= limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-function pushEvent(run: SubagentRun, event: SubagentRun["events"][number]): void {
+function pushEvent(run: SubagentRun, event: SubagentRun["events"][number]): number {
   const previous = run.events.at(-1);
   if (previous?.type === "text_delta" && event.type === "text_delta") {
     previous.text += event.text;
     previous.at = event.at;
-  } else {
-    run.events.push(event);
+    return run.events.length - 1;
   }
+  run.events.push(event);
   if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
+  return run.events.indexOf(event);
+}
+
+function replaceTextEvent(run: SubagentRun, index: number | undefined, text: string, at: number): number {
+  if (index != null && run.events[index]?.type === "text_delta") {
+    run.events[index] = { type: "text_delta", text, at };
+    return index;
+  }
+  return pushEvent(run, { type: "text_delta", text, at });
 }
 
 function activeTools(tools: AgentTools): string[] | undefined {
@@ -116,13 +137,19 @@ export class RealRunner implements Runner {
       const activeSession = session;
       run.session = activeSession;
       run.sessionFile = activeSession.sessionFile;
+      if (run.abortController.signal.aborted) {
+        await activeSession.abort();
+        throw new Error("Cancelled");
+      }
 
       const starts = new Map<string, number>();
       let lastAssistantText = "";
+      let assistantEventIndex: number | undefined;
       unsubscribe = activeSession.subscribe((event: any) => {
         const now = Date.now();
         if (event.type === "message_start" && event.message?.role === "assistant") {
           lastAssistantText = "";
+          assistantEventIndex = undefined;
         } else if (event.type === "tool_execution_start") {
           starts.set(event.toolCallId, now);
           pushEvent(run, { type: "tool_start", id: event.toolCallId, name: event.toolName, argsSummary: summarizeArgs(event.toolName, event.args), at: now });
@@ -132,9 +159,13 @@ export class RealRunner implements Runner {
           pushEvent(run, { type: "tool_end", id: event.toolCallId, ok: !event.isError, resultSummary: summarizeToolResult(event.result), durationMs: started ? now - started : undefined, at: now });
         } else if (event.type === "message_update" && event.message?.role === "assistant") {
           const text = textFromMessage(event.message);
-          const delta = text.startsWith(lastAssistantText) ? text.slice(lastAssistantText.length) : text;
+          if (text.startsWith(lastAssistantText)) {
+            const delta = text.slice(lastAssistantText.length);
+            if (delta) assistantEventIndex = pushEvent(run, { type: "text_delta", text: delta, at: now });
+          } else if (text) {
+            assistantEventIndex = replaceTextEvent(run, assistantEventIndex, text, now);
+          }
           lastAssistantText = text;
-          if (delta) pushEvent(run, { type: "text_delta", text: delta, at: now });
         } else if (event.type === "message_end" && event.message?.role === "assistant") {
           const text = textFromMessage(event.message);
           lastAssistantText = text;
@@ -162,6 +193,7 @@ export class RealRunner implements Runner {
         run.completedAt = undefined;
         run.updatedAt = Date.now();
         try {
+          if (run.abortController.signal.aborted) throw new Error("Cancelled");
           await activeSession.prompt(prompt);
           run.status = run.abortController.signal.aborted ? "cancelled" : "completed";
         } catch (error) {
@@ -173,9 +205,13 @@ export class RealRunner implements Runner {
         }
       }
 
-      run.steer = async (message: string) => {
+      run.steer = async (message: string, displayMessage?: string) => {
         if (activeSession.isStreaming) await activeSession.sendUserMessage(message, { deliverAs: "steer" });
-        else await runPrompt(message);
+        else {
+          const previousPrompt = run.prompt;
+          await runPrompt(message);
+          run.prompt = displayMessage ?? previousPrompt;
+        }
       };
       run.continuePrompt = runPrompt;
 

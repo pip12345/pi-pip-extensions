@@ -28,6 +28,7 @@ export class SubagentViewer extends PipCustomComponent<void> {
   private steerMode = false;
   private steerText = "";
   private steering = false;
+  private lastContentLength: number | undefined;
 
   constructor(
     tui: any,
@@ -229,6 +230,10 @@ export class SubagentViewer extends PipCustomComponent<void> {
     if (this.message) chrome.push(themeFg(this.theme, this.message.toLowerCase().includes("error") ? "error" : "warning", this.message));
 
     const content = this.contentLines(snapshot, inner);
+    if (this.scrollFromBottom > 0 && this.lastContentLength != null && content.length > this.lastContentLength) {
+      this.scrollFromBottom += content.length - this.lastContentLength;
+    }
+    this.lastContentLength = content.length;
     const footer: string[] = [];
     if (this.steerMode) footer.push(themeFg(this.theme, "accent", `steer> `) + truncateToWidth(this.steerText || themeFg(this.theme, "dim", "type message, enter sends, esc cancels"), Math.max(1, inner - 7)));
     else if (this.steering) footer.push(themeFg(this.theme, "accent", "Sending steer…"));
