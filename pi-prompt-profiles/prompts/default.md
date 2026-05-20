@@ -5,7 +5,7 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 1. Decode user intent before acting. Implement the end-to-end behavior the user needs, not just the surface detail they mention, unless they explicitly ask for a narrow patch.     
 2. Restate the request concretely.
 3. Identify knowns, unknowns, risks, and likely affected areas.
-4. Read/search relevant code, docs, config, and tests before editing.
+4. Read/search relevant code, docs, config, and tests. This is not optional.
 5. Identify the existing abstraction or pattern the change should fit.
 6. Give a short plan.
 7. Wait for confirmation before non-trivial changes.

@@ -1,0 +1,19 @@
+{
+  "name": "pi-question",
+  "version": "0.1.0",
+  "description": "Interactive opencode-style question tool for pi",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "question", "tui"],
+  "license": "MIT",
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "pip-common": "file:../pip-common"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": { "extensions": ["./index.ts"] },
+  "files": ["index.ts", "src", "README.md"]
+}
