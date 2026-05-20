@@ -6,9 +6,9 @@ Pip footer for pi. This is the renamed successor to `pi-token-counter`: it keeps
 
 - live token burn while the assistant streams, above the input box
 - settled token totals as `↓` input, `↑` output, and `↻`/`c` cache with short-lived deltas, above the input box
-- context usage bar in the lower footer, e.g. `ctx ━━━━━━━── 220k/272k`
-- model and thinking level
-- Codex, Anthropic/Claude, or Copilot quota windows with reset times
+- context usage bar in the lower footer, e.g. `gpt-5/high   ctx ━━━━━━━── 184k/272k   ~/proj   main*`
+- model and thinking level as `{model}/{thinking}`
+- Codex, Anthropic/Claude, or Copilot quota windows with reset times, e.g. `codex        5h ━━━━━━━── 74% ↻ 1h22m   7d ━━━────── 31% ↻ 4d`; if quota fetch fails, shows `usage offline`
 - optional project/CWD and git branch
 - additional lines registered by other pip plugins via `pip-common`'s footer line registry
 

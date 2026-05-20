@@ -139,6 +139,11 @@ function wrapSegments(segments: string[], width: number, sep: string): string[] 
   return lines;
 }
 
+function padEndVisible(text: string, targetWidth: number): string {
+  const gap = Math.max(0, targetWidth - visibleWidth(text));
+  return `${text}${" ".repeat(gap)}`;
+}
+
 function joinRight(left: string, right: string | undefined, width: number): string {
   if (!right?.trim()) return left;
   const leftWidth = visibleWidth(left);
@@ -204,23 +209,29 @@ function renderBar(usedPercent: number, width: number, theme: any, kind: "quota"
 
 function renderUsageWindow(window: RateWindow, theme: any, barWidth = 10, includeReset = true): string {
   const dim = (s: string) => theme.fg("dim", s);
-  const reset = includeReset && window.resetsIn ? ` ${dim(window.resetsIn)}` : "";
-  return `${dim(window.label)} ${renderBar(window.usedPercent, barWidth, theme)} ${dim(`${Math.round(window.usedPercent)}%`)}${reset}`;
+  const rawLabel = window.label.toLowerCase() === "week" ? "7d" : window.label.toLowerCase();
+  const label = padEndVisible(rawLabel, 3);
+  const reset = includeReset && window.resetsIn ? ` ${dim(`↻ ${window.resetsIn}`)}` : "";
+  return `${dim(label)} ${renderBar(window.usedPercent, barWidth, theme)} ${dim(`${Math.round(window.usedPercent)}%`)}${reset}`;
 }
 
-function renderUsageLine(usage: UsageSnapshot | null, width: number, theme: any): string[] {
-  if (!usage?.windows.length) return [];
-  const sep = ` ${theme.fg("dim", ">")} `;
-  const segments = [theme.fg("accent", usage.provider)];
-  for (const window of usage.windows) {
-    segments.push(
-      fitSegment(width, [
-        renderUsageWindow(window, theme, 10, true),
-        renderUsageWindow(window, theme, 8, true),
-        renderUsageWindow(window, theme, 8, false),
-        renderUsageWindow(window, theme, 5, false),
-      ])
-    );
+function renderUsageLine(usage: UsageSnapshot | null, width: number, theme: any, labelWidth = 10, firstWindowWidth = 0): string[] {
+  if (!usage) return [];
+  const sep = "   ";
+  const provider = padEndVisible(theme.fg("accent", usage.provider.toLowerCase()), labelWidth);
+  if (!usage.windows.length) {
+    if (!usage.error) return [];
+    return wrapSegments([provider, theme.fg("warning", "usage offline")], width, sep);
+  }
+  const segments = [provider];
+  for (const [index, window] of usage.windows.entries()) {
+    const segment = fitSegment(width, [
+      renderUsageWindow(window, theme, 10, true),
+      renderUsageWindow(window, theme, 8, true),
+      renderUsageWindow(window, theme, 8, false),
+      renderUsageWindow(window, theme, 5, false),
+    ]);
+    segments.push(index === 0 && firstWindowWidth > 0 ? padEndVisible(segment, firstWindowWidth) : segment);
   }
   return wrapSegments(segments, width, sep);
 }
@@ -239,7 +250,7 @@ function renderContextLine(ctx: any, width: number, theme: any): string {
   const label = theme.fg("dim", "ctx ");
   if (!info.total) return `${label}${theme.fg("dim", "unknown")}`;
   return fitSegment(width, [
-    `${label}${renderBar(info.percentage, 12, theme, "ctx")} ${theme.fg("accent", `${formatTokenCount(info.used)}/${formatTokenCount(info.total)}`)}`,
+    `${label}${renderBar(info.percentage, 10, theme, "ctx")} ${theme.fg("accent", `${formatTokenCount(info.used)}/${formatTokenCount(info.total)}`)}`,
     `${label}${renderBar(info.percentage, 10, theme, "ctx")} ${theme.fg("accent", `${Math.round(info.percentage)}%`)}`,
     `${label}${renderBar(info.percentage, 8, theme, "ctx")}`,
   ]);
@@ -251,7 +262,7 @@ function renderModelLine(ctx: any, theme: any): string {
   const entries = ctx.sessionManager?.getEntries?.() ?? [];
   const thinking = buildSessionContext(entries, ctx.sessionManager?.getLeafId?.()).thinkingLevel ?? model?.reasoning?.effort;
   const base = theme.fg("muted", modelName);
-  return thinking && thinking !== "off" ? `${base} ${theme.fg("dim", ">")} ${theme.fg("accent", thinking)}` : base;
+  return thinking && thinking !== "off" ? `${base}${theme.fg("dim", "/")}${theme.fg("accent", thinking)}` : base;
 }
 
 function renderToolsExpandedWarning(ctx: any, theme: any): string {
@@ -330,7 +341,7 @@ function renderLocation(ctx: any, theme: any, gitState: GitState | null): string
     if (gitState.behind) branch += theme.fg("error", ` ↓${gitState.behind}`);
     parts.push(branch);
   }
-  return parts.join(` ${theme.fg("dim", ">")} `);
+  return parts.join("   ");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -520,15 +531,28 @@ export default function (pi: ExtensionAPI) {
         },
         invalidate() {},
         render(width: number): string[] {
-          const sep = ` ${theme.fg("dim", ">")} `;
+          const sep = "   ";
+          const modelLine = pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showModel`) ? renderModelLine(ctx, theme) : "";
+          const providerLine = latestUsage?.provider ? latestUsage.provider.toLowerCase() : "";
+          const labelWidth = Math.max(visibleWidth(modelLine), visibleWidth(providerLine), 1);
+          const contextLine = pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showContext`) ? renderContextLine(ctx, width, theme) : "";
+          const firstUsageWindow = latestUsage?.windows[0]
+            ? fitSegment(width, [
+                renderUsageWindow(latestUsage.windows[0], theme, 10, true),
+                renderUsageWindow(latestUsage.windows[0], theme, 8, true),
+                renderUsageWindow(latestUsage.windows[0], theme, 8, false),
+                renderUsageWindow(latestUsage.windows[0], theme, 5, false),
+              ])
+            : "";
+          const firstValueWidth = Math.max(visibleWidth(contextLine), visibleWidth(firstUsageWindow), 1);
           const coreLine = [
+            modelLine ? padEndVisible(modelLine, labelWidth) : "",
+            contextLine ? padEndVisible(contextLine, firstValueWidth) : "",
             renderLocation(ctx, theme, gitState),
-            pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showModel`) ? renderModelLine(ctx, theme) : "",
-            pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showContext`) ? renderContextLine(ctx, width, theme) : "",
           ].filter(Boolean);
 
           const lines = wrapSegments(coreLine, width, sep);
-          lines.push(...renderUsageLine(latestUsage, width, theme));
+          lines.push(...renderUsageLine(latestUsage, width, theme, labelWidth, firstValueWidth));
 
           if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showPluginLines`)) {
             const rightLines = [
@@ -561,7 +585,7 @@ export default function (pi: ExtensionAPI) {
     fetchQuotaForProvider(provider)
       .then((snapshot) => {
         if (activeProvider !== provider) return;
-        if (snapshot.windows.length || !cached?.windows.length) latestUsage = snapshot;
+        if (snapshot.error || snapshot.windows.length || !cached?.windows.length) latestUsage = snapshot;
         if (snapshot.windows.length) usageCache.set(provider, snapshot);
         requestTokenRender();
       })
