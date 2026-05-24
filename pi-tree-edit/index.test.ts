@@ -138,6 +138,108 @@ describe("pi-tree-edit", () => {
     }
   });
 
+  it("prunes selected tool output without deleting the tool result", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-prune-tool-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const largeOutput = "x".repeat(5000);
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "session", id: "session-test" }),
+        JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "read file" }] } }),
+        JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "big.txt" } }], stopReason: "toolUse" } }),
+        JSON.stringify({ type: "message", id: "t1", parentId: "a1", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", toolName: "read", toolCallId: "call_1", content: [{ type: "text", text: largeOutput }], isError: false } }),
+      ].join("\n") + "\n"
+    );
+
+    try {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      const ctx: any = {
+        waitForIdle: async () => undefined,
+        switchSession: async (_file: string, opts: any) => opts.withSession({ navigateTree: async () => undefined, ui: { notify: () => undefined } }),
+        sessionManager: {
+          getSessionFile: () => sessionFile,
+          getLeafId: () => "t1",
+        },
+        ui: {
+          custom: async (factory: any) => {
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {} }, theme, undefined, (value: any) => { result = value; }) as any;
+            component.handleInput("f");
+            component.handleInput("j");
+            component.handleInput("t");
+            expect(component.render(120).join("\n")).toContain("Pruned 1 tool result");
+            component.handleInput("q");
+            return result;
+          },
+          select: async () => "Save and quit",
+          notify: () => undefined,
+        },
+      };
+
+      await runCommand(pi, "tree-edit", "", ctx);
+      const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const assistant = entries.find((entry) => entry.id === "a1");
+      const toolResult = entries.find((entry) => entry.id === "t1");
+      expect(assistant.message.content).toEqual([{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "big.txt" } }]);
+      expect(toolResult.message.content[0].text).toContain("tool result pruned by pi-tree-edit");
+      expect(toolResult.message.content[0].text).not.toContain(largeOutput);
+      expect(toolResult.message.details).toMatchObject({ prunedBy: "pi-tree-edit", originalTextChars: 5000, prunePolicy: "stub" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes tool output linked to a selected assistant tool call", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-prune-assistant-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "session", id: "session-test" }),
+        JSON.stringify({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "read file" }] } }),
+        JSON.stringify({ type: "message", id: "a1", parentId: "u1", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "big.txt" } }], stopReason: "toolUse" } }),
+        JSON.stringify({ type: "message", id: "t1", parentId: "a1", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "toolResult", toolName: "read", toolCallId: "call_1", content: [{ type: "text", text: "big output" }], isError: false } }),
+      ].join("\n") + "\n"
+    );
+
+    try {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      const ctx: any = {
+        waitForIdle: async () => undefined,
+        switchSession: async (_file: string, opts: any) => opts.withSession({ navigateTree: async () => undefined, ui: { notify: () => undefined } }),
+        sessionManager: {
+          getSessionFile: () => sessionFile,
+          getLeafId: () => "u1",
+        },
+        ui: {
+          custom: async (factory: any) => {
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {} }, theme, undefined, (value: any) => { result = value; }) as any;
+            component.handleInput("f");
+            component.handleInput("j");
+            component.handleInput("t");
+            component.handleInput("q");
+            return result;
+          },
+          select: async () => "Save and quit",
+          notify: () => undefined,
+        },
+      };
+
+      await runCommand(pi, "tree-edit", "", ctx);
+      const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const toolResult = entries.find((entry) => entry.id === "t1");
+      expect(toolResult.message.content[0].text).toContain("tool result pruned by pi-tree-edit");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("quits immediately without prompting when the draft is clean", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tree-edit-clean-"));
     const sessionFile = join(dir, "session.jsonl");

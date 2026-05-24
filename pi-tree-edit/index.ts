@@ -43,9 +43,9 @@ const HELP_ITEMS = [
   "P paste as new branch",
   "d delete",
   "D delete branch",
+  "t prune tools",
   "e edit",
   "L edit label",
-  "r rewind here",
   "u undo",
   "U redo",
   "q quit",
@@ -701,16 +701,56 @@ class DraftSession {
     this.dirty = true;
   }
 
-  redoFrom(id: string): void {
-    const removed = descendantsOf(this.entries, id);
-    this.entries = this.entries.filter((entry) => !removed.has(entry.id) && !(entry.type === "label" && removed.has(entry.targetId)));
-    this.targetLeafId = id;
-    this.cleanupLabels();
+  pruneToolOutputs(selectedId: string, foldedIds: Set<string> = new Set(), visibleBase?: Entry[]): void {
+    const selected = this.selectedEntries(selectedId, foldedIds, visibleBase);
+    const selectedIds = new Set(selected.map((entry) => entry.id));
+    const toolCallIds = new Set<string>();
+    for (const entry of selected) {
+      const msg = entry.type === "message" ? entry.message : undefined;
+      if (msg?.role === "toolResult" && msg.toolCallId) toolCallIds.add(String(msg.toolCallId));
+      if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block?.type === "toolCall" && block.id) toolCallIds.add(String(block.id));
+        }
+      }
+    }
+
+    const candidates = this.entries.filter((entry) => {
+      const msg = entry.type === "message" ? entry.message : undefined;
+      return msg?.role === "toolResult" && (selectedIds.has(entry.id) || (msg.toolCallId && toolCallIds.has(String(msg.toolCallId))));
+    });
+
+    let pruned = 0;
+    let removedChars = 0;
+    const prunedIds: string[] = [];
+    const now = new Date().toISOString();
+    for (const entry of candidates) {
+      const msg = entry.message;
+      if (msg?.details?.prunedBy === EXT) continue;
+      const originalText = textFromContent(msg.content);
+      const originalBytes = JSON.stringify(msg.content ?? "").length;
+      const removed = Math.max(0, originalText.length);
+      const stub = `[tool result pruned by ${EXT}: ${removed} chars removed from ${msg.toolName || "tool"}${msg.toolCallId ? ` call ${msg.toolCallId}` : ""}]`;
+      msg.content = [{ type: "text", text: stub }];
+      msg.details = { ...(msg.details ?? {}), prunedBy: EXT, prunedAt: now, originalBytes, originalTextChars: originalText.length, prunePolicy: "stub" };
+      pruned++;
+      removedChars += removed;
+      prunedIds.push(entry.id);
+    }
+
+    this.markId = null;
+    if (!pruned) {
+      this.message = "No unpruned tool results in selection";
+      return;
+    }
+    this.highlightEntryIds = prunedIds;
+    this.highlightKind = "summary";
+    this.flashEntryIds = prunedIds;
+    this.flashKind = "summary";
+    this.flashNonce += 1;
     this.dirty = true;
-    this.highlightEntryIds = [id];
-    this.highlightKind = "paste";
-    this.lastOperation = `rewound to ${id}; removed ${removed.size}`;
-    this.message = `Rewound to ${id}: removed ${removed.size} later entr${removed.size === 1 ? "y" : "ies"}`;
+    this.lastOperation = `pruned ${pruned} tool result${pruned === 1 ? "" : "s"}`;
+    this.message = `Pruned ${pruned} tool result${pruned === 1 ? "" : "s"} (${removedChars} chars removed)`;
   }
 
   selectedEntries(selectedId: string, foldedIds: Set<string> = new Set(), visibleBase?: Entry[]): Entry[] {
@@ -1238,9 +1278,9 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     } else if (selectedId && key === "D") {
       if (isVirtual) changed = virtualReadOnly();
       else { this.draft.checkpoint(); this.draft.deleteSubtree(selectedId); this.clampSelection(); changed = true; }
-    } else if (selectedId && key === "r") {
+    } else if (selectedId && key === "t") {
       if (isVirtual) changed = virtualReadOnly();
-      else { this.draft.checkpoint(); this.draft.redoFrom(selectedId); this.selectId(selectedId); changed = true; }
+      else { this.draft.checkpoint(); this.draft.pruneToolOutputs(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)); changed = true; }
     } else if (selectedId && (key === "b" || key === "return")) {
       if (isVirtual) { this.draft.message = "Virtual summary rows cannot be the current location"; changed = true; }
       else { this.draft.checkpoint(); this.draft.targetLeafId = selectedId; this.draft.dirty = true; this.draft.message = `Current location set to ${selectedId}`; changed = true; }

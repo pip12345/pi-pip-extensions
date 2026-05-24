@@ -27,7 +27,7 @@ By default, the view uses the `no-tools` filter: the normal tree view without to
 - `P` - paste clipboard as a new branch from selected entry; disabled while a range is active
 - `d` - delete selected range, or selected entry if no range
 - `D` - delete selected branch
-- `r` - rewind here: keep selected entry and remove later entries in that branch
+- `t` - prune tool output in the selected range, or selected tool call/result if no range
 - `u` - undo last draft change
 - `U` - redo last undone draft change
 - `e` - edit selected message text
