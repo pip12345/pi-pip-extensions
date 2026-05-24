@@ -24,7 +24,7 @@ import {
   type QuotaProviderSetting,
   type QuotaSnapshot as UsageSnapshot,
   type QuotaWindow as RateWindow,
-} from "pip-common";
+} from "../pip-common/index.ts";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename } from "node:path";

@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pipSettings, registerSettingsSection, setting } from "pip-common";
+import { pipSettings, registerSettingsSection, setting } from "../pip-common/index.ts";
 
 type Mode = "append" | "prepend" | "replace";
 

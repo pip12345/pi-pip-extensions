@@ -3,8 +3,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { once } from "node:events";
 import extension, { parseMcpResponse } from "./index.ts";
 import { rewriteGitHubUrl } from "./src/sites/github.ts";
-import { pipSettings } from "pip-common";
-import { createMockPi, getRegisteredTool } from "pip-common/testing";
+import { pipSettings } from "../pip-common/index.ts";
+import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void, test: (url: string) => Promise<void>) {
   const server = createServer(handler);

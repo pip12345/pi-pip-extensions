@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import quietTools from "./index.ts";
 import todo from "../pi-todo/index.ts";
-import { flushPipTools, pipSettings, resetPipToolsForTests } from "pip-common";
-import { createMockPi, getRegisteredTool } from "pip-common/testing";
+import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
+import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
 

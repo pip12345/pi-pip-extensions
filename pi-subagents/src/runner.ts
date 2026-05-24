@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createAgentSession, SessionManager, AuthStorage, ModelRegistry, DefaultResourceLoader, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { isPipReadOnlyActive, pipPath } from "pip-common";
+import { isPipReadOnlyActive, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { snapshotRun } from "./snapshot.ts";

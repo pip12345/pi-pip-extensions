@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pipSettings } from "pip-common";
+import { pipSettings } from "../pip-common/index.ts";
 import pipFooter from "../pi-pip-footer/index.ts";
 import quietTools from "../pi-quiet-tools/index.ts";
 import promptProfiles from "../pi-prompt-profiles/index.ts";
@@ -8,7 +8,7 @@ import todo from "../pi-todo/index.ts";
 import subagents from "../pi-subagents/index.ts";
 import treeEdit from "../pi-tree-edit/index.ts";
 import undoRedo from "../pi-undo-redo/index.ts";
-import { createMockPi } from "pip-common/testing";
+import { createMockPi } from "../pip-common/testing.ts";
 
 const extensions = [pipFooter, quietTools, promptProfiles, planMode, todo, subagents, treeEdit, undoRedo];
 

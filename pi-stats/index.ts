@@ -14,7 +14,7 @@ import {
   textFromContent,
   pipPath,
   type TokenUsage as Tokens,
-} from "pip-common";
+} from "../pip-common/index.ts";
 
 type ExtensionAPI = any;
 type Theme = any;

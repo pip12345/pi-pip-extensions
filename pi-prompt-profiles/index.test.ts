@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import promptProfiles, { __test } from "./index.ts";
-import { createMockPi } from "pip-common/testing";
-import { pipSettings } from "pip-common";
+import { createMockPi } from "../pip-common/testing.ts";
+import { pipSettings } from "../pip-common/index.ts";
 
 describe("pi-prompt-profiles", () => {
   it("registers prompt settings and before_agent_start hook", () => {

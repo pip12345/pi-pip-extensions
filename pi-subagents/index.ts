@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { registerPipTool } from "pip-common";
+import { registerPipTool } from "../pip-common/index.ts";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
 import { getManager, resetManagerForTests, shutdownGlobalManager, type SubagentManager } from "./src/manager.ts";
 import { RealRunner } from "./src/runner.ts";

@@ -8,4 +8,4 @@ Quiet collapsed TUI rendering for pi tools.
 - Press Ctrl+O to expand a tool row and see the full output.
 - Configure globally and per tool in `/pip-settings` under **Quiet Tools**. Shell-style changes take effect on reload.
 
-Loaded automatically when `settings.json` includes `./extensions-pip`.
+Loaded automatically when `settings.json` includes `./pi-pip-extensions`.

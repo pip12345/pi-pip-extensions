@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { pipSettings, registerSettingsSection, setPipReadOnlyState, setting, themeFg, truncateToWidth } from "pip-common";
+import { pipSettings, registerSettingsSection, setPipReadOnlyState, setting, themeFg, truncateToWidth } from "../pip-common/index.ts";
 
 type BashPolicy = "readonly" | "block";
 type UnknownToolsPolicy = "allow" | "block";

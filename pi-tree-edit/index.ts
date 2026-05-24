@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
-import { boxLines, hasTextContent, PipCustomComponent, pipSettings, registerSettingsSection, setTextContent, setting, stripAnsi, textFromContent as commonTextFromContent } from "pip-common";
+import { boxLines, hasTextContent, PipCustomComponent, pipSettings, registerSettingsSection, setTextContent, setting, stripAnsi, textFromContent as commonTextFromContent } from "../pip-common/index.ts";
 
 type ExtensionAPI = any;
 type Theme = any;

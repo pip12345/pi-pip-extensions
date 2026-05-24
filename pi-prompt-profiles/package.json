@@ -3,15 +3,27 @@
   "version": "0.1.0",
   "description": "Selectable system prompt profile overlays for pi",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "prompt", "system-prompt"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "prompt",
+    "system-prompt"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18.0.0" },
-  "dependencies": {
-    "pip-common": "file:../pip-common"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
-  "pi": { "extensions": ["./index.ts"] },
-  "files": ["index.ts", "README.md", "prompts"]
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "prompts"
+  ]
 }

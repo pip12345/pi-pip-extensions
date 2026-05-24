@@ -1,5 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
-import { themeFg, truncateToWidth, wrapAnsi } from "pip-common";
+import { themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
 import type { SubagentEvent, SubagentSnapshot } from "./types.ts";
 
 function firstText(result: any): string {

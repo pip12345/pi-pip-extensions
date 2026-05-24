@@ -3,16 +3,28 @@
   "version": "0.1.0",
   "description": "Quiet collapsed rendering for pi read, grep, find, and ls tools",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "tools", "tui", "quiet"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "tools",
+    "tui",
+    "quiet"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18.0.0" },
-  "dependencies": {
-    "pip-common": "file:../pip-common"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
-  "pi": { "extensions": ["./index.ts"] },
-  "files": ["index.ts", "README.md"]
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ]
 }

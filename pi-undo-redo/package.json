@@ -3,15 +3,27 @@
   "version": "0.1.0",
   "description": "Destructive tail-only undo and exact redo for recent pi user prompts",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "undo", "redo", "session"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "undo",
+    "redo",
+    "session"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18.0.0" },
-  "dependencies": {
-    "pip-common": "file:../pip-common"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
-  "pi": { "extensions": ["./index.ts"] },
-  "files": ["index.ts", "README.md"]
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ]
 }

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import tinyMcp, { executeTinyMcp, loadTinyMcpConfig, resetManager } from "./index.ts";
-import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { flushPipTools, pipSettings, resetPipToolsForTests } from "pip-common";
+import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
+import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
 
 const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fixtures", name);
 

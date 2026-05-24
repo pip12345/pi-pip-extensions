@@ -3,12 +3,26 @@
   "version": "0.1.0",
   "description": "Pip footer with live token counter, context gauge, model status, and quota usage for pi",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "footer", "tokens", "usage", "working-indicator", "tui"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "footer",
+    "tokens",
+    "usage",
+    "working-indicator",
+    "tui"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18.0.0" },
-  "pi": { "extensions": ["./index.ts"] },
-  "dependencies": {
-    "pip-common": "file:../pip-common"
+  "engines": {
+    "node": ">=18.0.0"
   },
-  "files": ["index.ts", "README.md"]
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ]
 }

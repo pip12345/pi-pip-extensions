@@ -1,192 +1,61 @@
-# extensions-pip
+# pi-pip-extensions
 
-Local pi extension packages plus shared utilities.
+A loose local collection of Pi extensions.
 
-## Packages
 
-- `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers for the extensions
-- `pi-quiet-tools` - compact rendering for built-in read/grep/find/ls tools
-- `pi-stats` - interactive token/session/global usage inspector
-- `pi-pip-footer` - pip footer with live token counter, context gauge, model status, and quota usage
-- `pi-prompt-profiles` - selectable markdown system prompt overlays
-- `pi-tree-edit` - interactive session tree editor
-- `pi-undo-redo` - destructive tail-only undo/redo for recent prompts
-- `pi-todo` - minimal session-scoped todo tools, compact widget, and `/todo`
-- `pi-plan-mode` - minimal read-only planning mode with explicit tool blocking
-- `pi-webfetch-websearch` - dependency-free cleaned web fetching and no-key web search with bounded output
+You can point Pi at this folder and it will load the extensions inside it.
 
-Each extension is intended to work independently, but may depend on `pip-common`.
+## Dependencies
+No external dependencies. The collection only uses Pi's built-in extension packages, Node.js built-ins, and its own shared `pip-common` helpers.
 
-## `/pip-settings`
+## Install
 
-`pip-common` registers a shared `/pip-settings` command. Plugins can register settings under their own header with `registerSettingsSection()`:
-
-```ts
-import { registerSettingsSection, setting } from "pip-common";
-
-registerSettingsSection({
-  id: "plan-mode",
-  title: "Plan Mode",
-  order: 10,
-  settings: {
-    enabled: setting.boolean({ label: "Enabled", default: true, order: 1 }),
-    behavior: setting.enum({
-      label: "Default behavior",
-      default: "ask",
-      choices: ["ask", "always", "never"] as const,
-      order: 2,
-    }),
-  },
-});
-```
-
-The settings UI is inline: `enter`/right arrow advance values, left arrow goes backward, and booleans are just `on`/`off` choices.
-Values persist to `~/.pi/agent/pip/pip-settings.json`.
-
-## Setup
-
-From this directory:
-
-```bash
-npm install
-```
-
-## Run tests
-
-Run all unit tests:
-
-```bash
-npm test
-```
-
-Watch mode:
-
-```bash
-npm run test:watch
-```
-
-Run tests for one package/file:
-
-```bash
-npx vitest run pip-common
-npx vitest run pi-quiet-tools
-npx vitest run pi-tree-edit/index.test.ts
-```
-
-## Typecheck
-
-```bash
-npm run typecheck
-```
-
-## Recommended pre-commit check
-
-```bash
-npm test && npm run typecheck
-```
-
-## Unit-test approach
-
-Tests use Vitest and mostly avoid launching pi. Extensions are imported directly and passed a mocked `ExtensionAPI` from `pip-common/testing`.
-
-Example:
-
-```ts
-import extension from "../index.ts";
-import { createMockPi } from "pip-common/testing";
-
-it("registers command", () => {
-  const pi = createMockPi();
-  extension(pi as any);
-  expect(pi.commands.has("my-command")).toBe(true);
-});
-```
-
-Useful helpers:
-
-- `createMockPi()` - captures registered commands, tools, handlers, messages
-- `createMockCtx()` - fake extension context with fake `ctx.ui`
-- `emitEvent()` - invokes registered event handlers
-- `runCommand()` - invokes a registered slash command
-- `getRegisteredTool()` / `getRegisteredCommand()`
-
-## Package layout
-
-```text
-extensions-pip/
-  package.json
-  tsconfig.json
-  vitest.config.mjs
-
-  pip-common/
-    index.ts
-    testing.ts
-    src/
-    test/
-
-  pi-quiet-tools/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-stats/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-pip-footer/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-prompt-profiles/
-    index.ts
-    index.test.ts
-    prompts/
-    package.json
-
-  pi-tree-edit/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-undo-redo/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-todo/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-plan-mode/
-    index.ts
-    index.test.ts
-    package.json
-
-  pi-webfetch-websearch/
-    index.ts
-    index.test.ts
-    src/
-    package.json
-```
-
-## Adding a new extension
-
-Create a new `pi-*` package with a dependency on `pip-common`:
+Add this folder to your Pi `settings.json`:
 
 ```json
 {
-  "name": "pi-example",
-  "version": "0.1.0",
-  "type": "module",
-  "pi": { "extensions": ["./index.ts"] },
-  "dependencies": {
-    "pip-common": "file:../pip-common"
-  },
-  "files": ["index.ts", "README.md"]
+  "extensions": [
+    "./pi-pip-extensions"
+  ]
 }
 ```
 
-Then add an `index.test.ts` smoke test that verifies the extension loads and registers the expected commands/tools/events.
+Relative paths are resolved from the settings file location. So if your settings file lives in this project root, `./pi-pip-extensions` is correct.
+
+Restart Pi or run `/reload` after changing settings.
+
+## What gets loaded
+
+Pi scans this folder one level deep. Each `pi-*` folder is its own extension.
+
+This collection includes:
+
+- `pi-pip-footer` - richer footer with token/context/model/quota info
+- `pi-plan-mode` - read-only planning mode
+- `pi-prompt-profiles` - switchable prompt profile overlays
+- `pi-question` - structured question tool for the assistant
+- `pi-quiet-tools` - quieter rendering for noisy built-in tools
+- `pi-stats` - session and usage stats
+- `pi-subagents` - quiet subagent task runner
+- `pi-tiny-mcp` - tiny stdio MCP bridge
+- `pi-todo` - todo tools and `/todo`
+- `pi-tree-edit` - session tree editor
+- `pi-undo-redo` - undo/redo recent prompts
+- `pi-webfetch-websearch` - bounded web fetch/search tools
+- `pip-common` - shared settings and helper code, including `/pip-settings`
+
+## Configure
+
+After loading the collection, use:
+
+```text
+/pip-settings
+```
+
+That opens settings for the extensions that expose options.
+
+Settings are saved under:
+
+```text
+~/.pi/agent/pip/pip-settings.json
+```

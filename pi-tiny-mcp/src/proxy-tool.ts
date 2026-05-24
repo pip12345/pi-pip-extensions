@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { registerPipTool } from "pip-common";
+import { registerPipTool } from "../../pip-common/index.ts";
 import { resultLimit } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
 import type { VisibleToolInfo } from "./types.ts";

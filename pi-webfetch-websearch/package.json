@@ -3,16 +3,30 @@
   "version": "0.1.0",
   "description": "Minimal dependency-free web fetch and web search tools with bounded output for pi",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "webfetch", "websearch", "search", "web"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "webfetch",
+    "websearch",
+    "search",
+    "web"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=18.0.0" },
-  "dependencies": {
-    "pip-common": "file:../pip-common"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
-  "pi": { "extensions": ["./index.ts"] },
-  "files": ["index.ts", "src", "README.md"]
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "README.md"
+  ]
 }

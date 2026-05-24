@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import stats from "./index.ts";
-import { createMockPi } from "pip-common/testing";
+import { createMockPi } from "../pip-common/testing.ts";
 
 describe("pi-stats", () => {
   it("registers the stats command and usage event handlers", () => {

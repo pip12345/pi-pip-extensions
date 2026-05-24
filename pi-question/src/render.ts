@@ -1,5 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
-import { themeFg, truncateToWidth } from "pip-common";
+import { themeFg, truncateToWidth } from "../../pip-common/index.ts";
 import { compactAnswers } from "./format.ts";
 import type { QuestionInfo, QuestionResultDetails } from "./schema.ts";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import pipFooter, { __test } from "./index.ts";
-import { createMockPi } from "pip-common/testing";
+import { createMockPi } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
 

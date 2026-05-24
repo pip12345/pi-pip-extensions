@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import planMode, { __test, isReadOnlyBash, shouldBlockTool, stateFromBranch } from "./index.ts";
-import { pipSettings } from "pip-common";
-import { createMockCtx, createMockPi, emitEvent, runCommand } from "pip-common/testing";
+import { pipSettings } from "../pip-common/index.ts";
+import { createMockCtx, createMockPi, emitEvent, runCommand } from "../pip-common/testing.ts";
 
 function resetPlanSettings() {
   pipSettings.set("plan-mode.enabled", true);

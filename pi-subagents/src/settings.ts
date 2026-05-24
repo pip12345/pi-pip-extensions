@@ -1,4 +1,4 @@
-import { pipSettings, registerSettingsSection, setting } from "pip-common";
+import { pipSettings, registerSettingsSection, setting } from "../../pip-common/index.ts";
 
 export const SETTINGS_ID = "subagents";
 

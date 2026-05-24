@@ -7,7 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { listPipToolRegistrations, onPipToolRegistrationChange, pipSettings, registerPipToolFinalizer, registerSettingsSection, setting, themeFg } from "pip-common";
+import { listPipToolRegistrations, onPipToolRegistrationChange, pipSettings, registerPipToolFinalizer, registerSettingsSection, setting, themeFg } from "../pip-common/index.ts";
 
 const HOME = homedir();
 const SETTINGS_ID = "quiet-tools";
