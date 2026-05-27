@@ -8,7 +8,7 @@ A subagent is a child task run with isolated context. The caller must put all ne
 
 ```text
 subagent({ agent, prompt, background?, keep?, name? })
-subagent({ id, prompt })                 # continue kept runs only
+subagent({ id, prompt })                 # continue retained runs
 subagent({ action: "agents" })
 subagent({ action: "get_agent", agent })
 subagent({ action: "status"|"read", id })
@@ -17,7 +17,7 @@ subagent({ action: "background", id? })
 subagent({ action: "cancel"|"keep"|"forget", id })
 ```
 
-Ephemeral subagents cannot be continued after completion, but running ephemerals restored after restart are marked interrupted and can be continued. Use `keep:true` or `action:"keep"` for reusable completed runs, or enable **Always keep** in `/pip-settings`. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor.
+Ephemeral subagents can be continued or steered while they are retained. Their TTL is refreshed whenever they run, receive a message/steer, or emit activity. Use `keep:true` or `action:"keep"` only to disable TTL expiry, or enable **Always keep** in `/pip-settings`. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor.
 
 ## Commands
 

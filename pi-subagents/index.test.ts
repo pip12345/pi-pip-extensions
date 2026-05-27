@@ -89,15 +89,15 @@ describe("pi-subagents", () => {
     expect(detail.content[0].text).toContain("tools:");
   });
 
-  it("runs foreground subagents and prevents ephemeral continuation", async () => {
+  it("runs foreground subagents and allows ephemeral continuation while retained", async () => {
     const { tool } = setup();
     const ctx = createMockCtx();
     const result = await tool.execute("1", { agent: "explore", prompt: "look around" }, undefined, undefined, ctx);
     expect(result.content[0].text).toContain("state: completed");
     const id = result.content[0].text.match(/subagent_id: (\S+)/)?.[1];
     const continued = await tool.execute("2", { id, prompt: "again" }, undefined, undefined, ctx);
-    expect(continued.isError).toBe(true);
-    expect(continued.content[0].text).toContain("ephemeral");
+    expect(continued.isError).toBeFalsy();
+    expect(continued.content[0].text).toContain("continued: again");
   });
 
   it("kept subagents can be continued", async () => {
@@ -152,6 +152,9 @@ describe("pi-subagents", () => {
       await emitEvent(secondPi, "session_start", {}, ctx);
       const sameBranch = await secondTool.execute("2", {}, undefined, undefined, ctx);
       expect(sameBranch.content[0].text).toContain("ephemeral");
+      const continued = await secondTool.execute("2b", { id, prompt: "again" }, undefined, undefined, ctx);
+      expect(continued.isError).toBeFalsy();
+      expect(continued.content[0].text).toContain("done: again");
 
       const otherBranch = ctxForSession(parentFile, process.cwd(), "m0", ["root", "m0"]);
       await emitEvent(secondPi, "session_start", {}, otherBranch);
@@ -336,6 +339,31 @@ describe("pi-subagents", () => {
     expect(status.content[0].text).toContain("state: error");
   });
 
+  it("message and steer refresh ephemeral TTL", async () => {
+    pipSettings.set("subagents.ephemeralTtlMinutes", 1);
+    let now = 0;
+    const manager = new SubagentManager({ runner: new FakeRunner(), now: () => now });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    const run = manager.launch({ agent, prompt: "one", cwd: process.cwd(), parentSessionKey: "parent", keep: false, background: false });
+    await run.runPromise;
+
+    now = 50_000;
+    await manager.continueRun(run, "two", agent);
+    now = 105_000;
+    manager.cleanup("parent");
+    expect(manager.resolve(run.id, "parent")).toBeTruthy();
+
+    now = 110_000;
+    await manager.steer(run, "three", agent);
+    now = 169_000;
+    manager.cleanup("parent");
+    expect(manager.resolve(run.id, "parent")).toBeTruthy();
+
+    now = 171_000;
+    manager.cleanup("parent");
+    expect(manager.resolve(run.id, "parent")).toBeUndefined();
+  });
+
   it("alwaysKeep makes new subagents reusable unless keep false", async () => {
     pipSettings.set("subagents.alwaysKeep", true);
     const { tool } = setup();
@@ -346,9 +374,11 @@ describe("pi-subagents", () => {
     expect(continued.isError).toBeFalsy();
 
     const forced = await tool.execute("3", { agent: "explore", prompt: "one", keep: false }, undefined, undefined, ctx);
+    expect(forced.content[0].text).toContain("keep: false");
     const id = forced.content[0].text.match(/subagent_id: (\S+)/)?.[1];
-    const rejected = await tool.execute("4", { id, prompt: "again" }, undefined, undefined, ctx);
-    expect(rejected.isError).toBe(true);
+    const forcedContinued = await tool.execute("4", { id, prompt: "again" }, undefined, undefined, ctx);
+    expect(forcedContinued.isError).toBeFalsy();
+    expect(forcedContinued.content[0].text).toContain("continued: again");
   });
 
   it("does not shutdown manager on normal session replacement", async () => {
@@ -606,12 +636,13 @@ describe("pi-subagents", () => {
     component.dispose?.();
   });
 
-  it("/subagent steer reports success", async () => {
+  it("/subagent steer reports success for completed ephemeral runs", async () => {
     const { pi, tool } = setup();
     const ctx = createMockCtx();
-    const result = await tool.execute("1", { agent: "explore", prompt: "look", keep: true, name: "steerable" }, undefined, undefined, ctx);
+    const result = await tool.execute("1", { agent: "explore", prompt: "look" }, undefined, undefined, ctx);
     expect(result.isError).toBeFalsy();
-    await runCommand(pi, "subagent", "steer steerable go left", ctx);
+    const id = result.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+    await runCommand(pi, "subagent", `steer ${id} go left`, ctx);
     expect(ctx.ui.notifications.at(-1).message).toContain("Steered");
   });
 

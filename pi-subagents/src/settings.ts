@@ -14,7 +14,7 @@ export function registerSubagentSettings(): void {
       maxRecentPerParent: setting.number({ label: "Max recent", default: 20, min: 1, max: 200, step: 1, order: 3, description: "Maximum non-kept subagents retained per parent session." }),
       maxRunning: setting.number({ label: "Max running", default: 6, min: 1, max: 50, step: 1, order: 4, description: "Maximum concurrent running subagents in this Pi process." }),
       injectBackgroundResults: setting.boolean({ label: "Inject background results", default: true, order: 5, description: "Send a follow-up message to the original parent session when a background subagent finishes." }),
-      alwaysKeep: setting.boolean({ label: "Always keep", default: false, order: 6, description: "Treat new subagents as kept by default unless a tool call explicitly sets keep:false." }),
+      alwaysKeep: setting.boolean({ label: "Always keep", default: false, order: 6, description: "Treat new subagents as non-expiring by default unless a tool call explicitly sets keep:false." }),
     },
   });
 }

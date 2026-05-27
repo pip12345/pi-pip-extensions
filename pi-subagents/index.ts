@@ -125,7 +125,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           "Launch and manage quiet subagent task runs with isolated context. The caller must include all context the subagent needs in prompt.",
           "Use action:'agents' to list agent files and creation paths; action:'get_agent' to inspect a default/schema example.",
           "Agent files live in ~/.pi/agent/agents/*.md, .pi/agents/*.md, or legacy .agents/*.md. Omitted model uses the parent/current model; omitted tools means all tools.",
-          "Ephemeral completed subagents cannot be continued, but interrupted ephemerals can. Use keep:true for reusable persisted runs scoped to the parent branch anchor; /pip-settings can enable Always keep.",
+          "Ephemeral subagents can be messaged or steered while retained; each interaction refreshes their TTL. Use keep:true for runs that should not expire; /pip-settings can enable Always keep.",
           "Use background:true for long tasks. action:'background' moves foreground subagents to background. Nested subagents are disabled. Use /subagent view for live inspection/steering."
         ].join(" "),
         parameters: SubagentParams,
@@ -180,7 +180,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               if (!params.message) throw new Error("steer requires message.");
-              await manager.steer(run, params.message);
+              await manager.steer(run, params.message, findAgent(cwd, run.agent));
               return textResult(`Steered subagent ${run.id}.`, { run: manager.snapshot(run) });
             }
             if (params.id && params.prompt) {
@@ -229,7 +229,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             else if (action === "steer") {
               const message = await ctx.ui?.input?.("Steer subagent", "");
               if (!message) return;
-              await manager.steer(selectedRun, message);
+              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent));
               ctx.ui?.notify?.(`Steered ${selectedRun.id}.`, "info");
             } else if (action === "background") { manager.detach(selectedRun); ctx.ui?.notify?.(`Moved ${selectedRun.id} to background.`, "info"); }
             else if (action === "cancel") { await manager.cancel(selectedRun); ctx.ui?.notify?.(`Cancelled ${selectedRun.id}.`, "info"); }
@@ -263,7 +263,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           else if (cmd === "steer") {
             const message = rest.join(" ");
             if (!message) throw new Error("steer requires a message.");
-            await manager.steer(run, message);
+            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent));
             ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
           } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }

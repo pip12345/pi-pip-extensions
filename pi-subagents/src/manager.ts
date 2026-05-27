@@ -125,6 +125,11 @@ export class SubagentManager {
     this.saveParent(run.parentSessionKey);
   }
 
+  private touchRun(run: SubagentRun, at = this.now()): void {
+    run.updatedAt = at;
+    this.saveRun(run);
+  }
+
   private isVisible(run: SubagentRun, parentSessionKey?: string): boolean {
     if (parentSessionKey && run.parentSessionKey !== parentSessionKey) return false;
     const branch = this.parentBranches.get(run.parentSessionKey);
@@ -226,7 +231,6 @@ export class SubagentManager {
   }
 
   async continueRun(run: SubagentRun, prompt: string, agent?: AgentConfig): Promise<void> {
-    if (!run.keep && run.status !== "interrupted") throw new Error(`Subagent ${run.id} is ephemeral and cannot be continued after completion. Launch a new subagent with full context, or use keep:true when creating a reusable run.`);
     if (run.status === "running") throw new Error(`Subagent ${run.id} is already running.`);
     if (!run.sessionFile) throw new Error(`Subagent ${run.id} cannot be continued because its child session file is missing.`);
     run.abortController = new AbortController();
@@ -237,6 +241,7 @@ export class SubagentManager {
     run.detached = false;
     run.forwarding = true;
     this.foreground.add(run.id);
+    this.touchRun(run);
     try {
       if (run.continuePrompt) await run.continuePrompt(prompt);
       else {
@@ -257,18 +262,28 @@ export class SubagentManager {
     }
   }
 
-  async steer(run: SubagentRun, message: string): Promise<void> {
-    if (run.status !== "running" && !run.keep) throw new Error(`Subagent ${run.id} is ephemeral and cannot be steered after completion.`);
-    if (!run.steer) throw new Error(`Subagent ${run.id} cannot be steered.`);
+  async steer(run: SubagentRun, message: string, agent?: AgentConfig): Promise<void> {
+    const steeringPrompt = wrapSteerMessage(message);
+    const at = this.now();
+    run.events.push({ type: "steer", text: message, at });
+    if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
+    this.touchRun(run, at);
+
+    if (!run.steer) {
+      if (run.status === "running") throw new Error(`Subagent ${run.id} cannot be steered.`);
+      await this.continueRun(run, steeringPrompt, agent);
+      run.prompt = message;
+      this.touchRun(run);
+      return;
+    }
+
     if (run.status !== "running") {
       run.abortController = new AbortController();
       run.errorText = undefined;
       run.resultText = undefined;
     }
-    run.events.push({ type: "steer", text: message, at: this.now() });
-    if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
-    await run.steer(wrapSteerMessage(message), message);
-    this.saveRun(run);
+    await run.steer(steeringPrompt, message);
+    this.touchRun(run);
   }
 
   async cancel(run: SubagentRun): Promise<void> {
@@ -357,7 +372,7 @@ export class SubagentManager {
         this.pruneEphemeral(run);
         continue;
       }
-      if (run.status !== "running" && run.completedAt && now - run.completedAt > ttlMs) this.pruneEphemeral(run);
+      if (run.status !== "running" && now - run.updatedAt > ttlMs) this.pruneEphemeral(run);
     }
     const max = settingValue("maxRecentPerParent", 20);
     const groups = new Map<string, SubagentRun[]>();
