@@ -10,7 +10,23 @@ No external dependencies. The collection only uses Pi's built-in extension packa
 
 ## Install
 
-Add this folder to your Pi `settings.json`:
+Recommended: install this repo as a git Pi package:
+
+```bash
+pi install git:github.com/pip12345/pi-pip-extensions
+```
+
+Pi reads the top-level package manifest and loads each `pi-*/index.ts` as its own extension. `pip-common` is shared helper code and is imported by those extensions; it is not loaded as an extension.
+
+When the remote git branch moves, Pi warns at startup that package updates are available. Update with:
+
+```bash
+pi update --extensions
+```
+
+Then restart Pi or run `/reload`.
+
+For local development, you can point Pi directly at this folder in `settings.json`:
 
 ```json
 {
@@ -21,8 +37,6 @@ Add this folder to your Pi `settings.json`:
 ```
 
 Relative paths are resolved from the settings file location. So if your settings file lives in this project root, `./pi-pip-extensions` is correct.
-
-Restart Pi or run `/reload` after changing settings.
 
 ## What gets loaded
 

@@ -2,6 +2,14 @@
   "name": "extensions-pip-workspace",
   "private": true,
   "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "pi-*/index.ts"
+    ]
+  },
   "workspaces": [
     "pip-common",
     "pi-*"
