@@ -236,10 +236,17 @@ function renderUsageLine(usage: UsageSnapshot | null, width: number, theme: any,
   return wrapSegments(segments, width, sep);
 }
 
-function getContextInfo(ctx: any): { percentage: number; used: number; total: number } {
+function getContextInfo(ctx: any): { percentage: number | null; used: number | null; total: number } {
   const direct = ctx.getContextUsage?.();
-  const modelWindow = ctx.model?.contextWindow ?? direct?.contextWindow ?? direct?.total ?? 0;
-  if (direct?.tokens && modelWindow) return { percentage: (direct.tokens / modelWindow) * 100, used: direct.tokens, total: modelWindow };
+  const modelWindow = direct?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+
+  if (direct) {
+    if (!modelWindow) return { percentage: null, used: null, total: 0 };
+    if (typeof direct.tokens !== "number") return { percentage: null, used: null, total: modelWindow };
+    const percentage = typeof direct.percent === "number" ? direct.percent : (direct.tokens / modelWindow) * 100;
+    return { percentage, used: direct.tokens, total: modelWindow };
+  }
+
   if (!modelWindow) return { percentage: 0, used: 0, total: 0 };
   const tokens = getBranchTokens(ctx)?.total ?? 0;
   return { percentage: tokens ? (tokens / modelWindow) * 100 : 0, used: tokens, total: modelWindow };
@@ -249,6 +256,13 @@ function renderContextLine(ctx: any, width: number, theme: any): string {
   const info = getContextInfo(ctx);
   const label = theme.fg("dim", "ctx ");
   if (!info.total) return `${label}${theme.fg("dim", "unknown")}`;
+  if (info.used == null || info.percentage == null) {
+    return fitSegment(width, [
+      `${label}${renderBar(0, 10, theme, "ctx")} ${theme.fg("accent", `?/${formatTokenCount(info.total)}`)}`,
+      `${label}${theme.fg("accent", `?/${formatTokenCount(info.total)}`)}`,
+      `${label}${theme.fg("dim", "unknown")}`,
+    ]);
+  }
   return fitSegment(width, [
     `${label}${renderBar(info.percentage, 10, theme, "ctx")} ${theme.fg("accent", `${formatTokenCount(info.used)}/${formatTokenCount(info.total)}`)}`,
     `${label}${renderBar(info.percentage, 10, theme, "ctx")} ${theme.fg("accent", `${Math.round(info.percentage)}%`)}`,
@@ -486,8 +500,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function renderTokenLine(tokens: TokenBreakdown | undefined, theme: any): string[] {
-    const base = renderTokenBase(tokens, theme);
-    if (!base) return [];
+    const base = renderTokenBase(tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0 }, theme);
     const suffix = renderTokenSuffix(theme);
     return suffix ? [`${base}  ${suffix}`, base] : [base];
   }
@@ -842,10 +855,12 @@ export const __test = {
   joinRight,
   parseGitStatus,
   renderBar,
+  renderContextLine,
   interpolateTokenBreakdown,
   renderTokenMetric,
   renderExtensionStatuses,
   renderToolsExpandedWarning,
   renderUsageLine,
   renderUsageWindow,
+  WIDGET_KEY,
 };

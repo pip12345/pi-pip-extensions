@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import pipFooter, { __test } from "./index.ts";
-import { createMockPi } from "../pip-common/testing.ts";
+import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
 
@@ -60,6 +60,40 @@ describe("pi-pip-footer", () => {
     expect(__test.renderTokenMetric("▣", 14_300_000, false, theme)).toBe("▣:14.3M");
     expect(__test.renderTokenMetric("◫", 14_300_000, false, theme)).toBe("◫:14.3M");
     expect(__test.renderTokenMetric("□", 14_300_000, false, theme)).toBe("□:14.3M");
+  });
+
+  it("shows a zero token baseline while first assistant response is pending", async () => {
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const ctx = createMockCtx({ model: { contextWindow: 272_000 } });
+
+    await emitEvent(pi, "session_start", {}, ctx);
+    const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
+    const component = factory({ requestRender() {} }, theme);
+    expect(component.render(80)).toEqual(["↓:0 ↑:0 ↻:0"]);
+
+    await emitEvent(pi, "turn_start", {}, ctx);
+    expect(component.render(80)[0]).toMatch(/^↓:0 ↑:0 ↻:0  [◐◓◑◒]$/);
+
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("treats nullable direct context usage as unknown after compaction", () => {
+    const entries = [
+      { id: "u1", messages: [{ role: "user", content: "hi" }] },
+      { id: "a1", parentId: "u1", messages: [{ role: "assistant", usage: { input: 90_000_000, output: 1_000, total: 90_001_000 } }] },
+    ];
+    const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 }, contextUsage: { tokens: null, percent: null, contextWindow: 272_000 } });
+
+    expect(__test.getContextInfo(ctx)).toEqual({ percentage: null, used: null, total: 272_000 });
+    expect(__test.renderContextLine(ctx, 80, theme)).toContain("?/272k");
+  });
+
+  it("honors direct zero context usage instead of falling back to branch token totals", () => {
+    const entries = [{ id: "a1", messages: [{ role: "assistant", usage: { input: 90_000_000, total: 90_000_000 } }] }];
+    const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 }, contextUsage: { tokens: 0, percent: 0, contextWindow: 272_000 } });
+
+    expect(__test.getContextInfo(ctx)).toEqual({ percentage: 0, used: 0, total: 272_000 });
   });
 
   it("interpolates token values for count-up animation", () => {
