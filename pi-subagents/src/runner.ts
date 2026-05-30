@@ -117,6 +117,8 @@ export class RealRunner implements Runner {
     try {
       const dir = privateSessionDir(input.parentSessionKey);
       mkdirSync(dir, { recursive: true });
+      if (input.contextRoot) mkdirSync(join(input.contextRoot, "shared"), { recursive: true });
+      if (input.runContextDir) mkdirSync(input.runContextDir, { recursive: true });
       const { authStorage, modelRegistry } = auth();
       if (input.resumeSessionFile && !existsSync(input.resumeSessionFile)) throw new Error(`Subagent session file not found: ${input.resumeSessionFile}`);
       const sessionManager = input.resumeSessionFile

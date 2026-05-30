@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
 import { registerPipTool } from "../pip-common/index.ts";
@@ -68,6 +70,25 @@ function listRuns(manager: SubagentManager, key?: string): string {
   const runs = manager.list(key);
   if (!runs.length) return "No retained subagents.";
   return runs.map(runSummary).join("\n");
+}
+
+function listDir(path: string): string[] {
+  if (!existsSync(path)) return ["(missing)"];
+  return readdirSync(path).sort().map((entry) => {
+    const full = join(path, entry);
+    try { return statSync(full).isDirectory() ? `${entry}/` : entry; }
+    catch { return entry; }
+  });
+}
+
+function contextInfo(manager: SubagentManager, key: string, run?: SubagentRun): string {
+  if (run) {
+    const dir = run.runContextDir ?? join(manager.contextRootFor(run.parentSessionKey), "runs", run.id);
+    return [`Subagent context: ${run.id}`, `Run folder: ${dir}`, "", "Files:", ...listDir(dir).map((line) => `- ${line}`)].join("\n");
+  }
+  const root = manager.contextRootFor(key);
+  const shared = join(root, "shared");
+  return [`Subagent context root: ${root}`, `Shared folder: ${shared}`, "", "Shared files:", ...listDir(shared).map((line) => `- ${line}`)].join("\n");
 }
 
 async function showSubagentView(ctx: any, manager: SubagentManager, run: SubagentRun): Promise<void> {
@@ -221,7 +242,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             const selectedId = String(selected).split(/\s+/, 1)[0];
             const selectedRun = manager.resolve(selectedId, parentKey(ctx));
             if (!selectedRun) throw new Error(`Subagent not found: ${selectedId}`);
-            const actions = ["view", "background", "cancel", selectedRun.keep ? "forget" : "keep"];
+            const actions = ["view", "background", "cancel", selectedRun.keep ? "forget" : "keep", "delete"];
             const action = await ctx.ui?.select?.(`Subagent ${selectedRun.id}`, actions);
             if (!action) return;
             if (action === "view") await showSubagentView(ctx, manager, selectedRun);
@@ -235,12 +256,22 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             else if (action === "cancel") { await manager.cancel(selectedRun); ctx.ui?.notify?.(`Cancelled ${selectedRun.id}.`, "info"); }
             else if (action === "keep") { manager.keep(selectedRun); ctx.ui?.notify?.(`Kept ${selectedRun.id}.`, "info"); }
             else if (action === "forget") { manager.forget(selectedRun); ctx.ui?.notify?.(`Forgot ${selectedRun.id}; it is ephemeral now.`, "info"); }
+            else if (action === "delete") {
+              const ok = await ctx.ui?.confirm?.("Delete subagent", `Delete ${selectedRun.id}? This removes its retained run and workspace artifacts.`);
+              if (ok) { manager.delete(selectedRun); ctx.ui?.notify?.(`Deleted ${selectedRun.id}.`, "info"); }
+            }
             return;
           }
           if (cmd === "agents") {
             if (ref) ctx.ui?.notify?.(formatAgent(findAgent(ctx.cwd ?? process.cwd(), ref)), "info");
             else ctx.ui?.notify?.(listAgents(ctx.cwd ?? process.cwd()), "info");
             return;
+          }
+          if (cmd === "context") {
+            if (!ref) return ctx.ui?.notify?.(contextInfo(manager, parentKey(ctx)), "info");
+            const run = manager.resolve(ref, parentKey(ctx));
+            if (!run) throw new Error(`Subagent not found: ${ref}`);
+            return ctx.ui?.notify?.(contextInfo(manager, parentKey(ctx), run), "info");
           }
           if (cmd === "open" || cmd === "back" || cmd === "parent") {
             ctx.ui?.notify?.("Subagent session navigation was removed. Use /subagent view <id> for live output and steering.", "warning");
@@ -255,7 +286,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             ctx.ui?.notify?.("Moved foreground subagent(s) to background.", "info");
             return;
           }
-          if (!ref && !["list"].includes(cmd)) throw new Error(`/${cmd} requires subagent id or name.`);
+          if (!ref && !["list", "context"].includes(cmd)) throw new Error(`/${cmd} requires subagent id or name.`);
           const run = manager.resolve(ref, parentKey(ctx));
           if (cmd === "list") return ctx.ui?.notify?.(listRuns(manager, parentKey(ctx)), "info");
           if (!run) throw new Error(`Subagent not found: ${ref}`);
@@ -269,6 +300,10 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }
           else if (cmd === "forget") { manager.forget(run); ctx.ui?.notify?.(`Forgot ${run.id}; it is ephemeral now.`, "info"); }
           else if (cmd === "cancel") { await manager.cancel(run); ctx.ui?.notify?.(`Cancelled ${run.id}.`, "info"); }
+          else if (cmd === "delete") {
+            const ok = await ctx.ui?.confirm?.("Delete subagent", `Delete ${run.id}? This removes its retained run and workspace artifacts.`);
+            if (ok) { manager.delete(run); ctx.ui?.notify?.(`Deleted ${run.id}.`, "info"); }
+          }
           else throw new Error(`Unknown /subagent command: ${cmd}`);
         } catch (error) {
           ctx.ui?.notify?.(error instanceof Error ? error.message : String(error), "error");

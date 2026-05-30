@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
@@ -6,14 +6,17 @@ import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegis
 import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
 import { createSubagentsExtension, resetManagerForTests } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
+import { SubagentViewer } from "./src/view.ts";
 import type { Runner, SubagentRun } from "./src/types.ts";
 
 class FakeRunner implements Runner {
   delay = 0;
   failContinue = false;
   launched: SubagentRun[] = [];
+  inputs: any[] = [];
   async launch(input: any, run: SubagentRun): Promise<SubagentRun> {
     this.launched.push(run);
+    this.inputs.push(input);
     run.sessionFile = `/tmp/${run.id}.json`;
     run.dispose = () => undefined;
     run.cancel = async () => {
@@ -337,6 +340,96 @@ describe("pi-subagents", () => {
     expect(failed.content[0].text).toContain("continue failed");
     const status = await tool.execute("3", { action: "status", id: "bad-continue" }, undefined, undefined, ctx);
     expect(status.content[0].text).toContain("state: error");
+  });
+
+  it("adds handoff workspace paths and guidance to launched prompts", async () => {
+    const runner = new FakeRunner();
+    const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));
+    const manager = new SubagentManager({ runner, contextDir });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    try {
+      const run = manager.launch({ agent, prompt: "inspect auth", cwd: process.cwd(), parentSessionKey: "parent", keep: false, background: false });
+      await run.runPromise;
+      expect(run.contextRoot).toContain(contextDir);
+      expect(run.runContextDir).toContain(run.id);
+      expect(runner.inputs[0].prompt).toContain("<subagent_handoff_workspace>");
+      expect(runner.inputs[0].prompt).toContain(run.runContextDir);
+      expect(runner.inputs[0].prompt).toContain("Use chat for the direct answer");
+      const snapshot = manager.snapshot(run);
+      expect(snapshot.contextRoot).toBe(run.contextRoot);
+      expect(snapshot.runContextDir).toBe(run.runContextDir);
+    } finally {
+      rmSync(contextDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes unkept run context on cleanup", async () => {
+    pipSettings.set("subagents.ephemeralTtlMinutes", 1);
+    let now = 0;
+    const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));
+    const manager = new SubagentManager({ runner: new FakeRunner(), now: () => now, contextDir });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    try {
+      const run = manager.launch({ agent, prompt: "one", cwd: process.cwd(), parentSessionKey: "parent", keep: false, background: false });
+      await run.runPromise;
+      mkdirSync(run.runContextDir!, { recursive: true });
+      writeFileSync(join(run.runContextDir!, "artifact.md"), "details");
+      expect(existsSync(run.runContextDir!)).toBe(true);
+      now = 61_000;
+      manager.cleanup("parent");
+      expect(manager.resolve(run.id, "parent")).toBeUndefined();
+      expect(existsSync(run.runContextDir!)).toBe(false);
+    } finally {
+      rmSync(contextDir, { recursive: true, force: true });
+    }
+  });
+
+  it("/subagent delete confirms and deletes a completed run", async () => {
+    const { tool, pi } = setup();
+    const ctx = createMockCtx({ confirm: true });
+    const result = await tool.execute("1", { agent: "explore", prompt: "delete me", keep: true, name: "trash" }, undefined, undefined, ctx);
+    const id = result.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+    await runCommand(pi, "subagent", `delete ${id}`, ctx);
+    expect(ctx.ui.notifications.at(-1)?.message).toContain(`Deleted ${id}`);
+    const list = await tool.execute("2", {}, undefined, undefined, ctx);
+    expect(list.content[0].text).not.toContain(id);
+  });
+
+  it("subagent viewer deletes with ctrl+d then enter", async () => {
+    const manager = new SubagentManager({ runner: new FakeRunner() });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    const run = manager.launch({ agent, prompt: "view delete", cwd: process.cwd(), parentSessionKey: "parent", keep: true, background: false });
+    await run.runPromise;
+    let closed = false;
+    const viewer = new SubagentViewer({ requestRender: () => undefined }, {}, () => { closed = true; }, { sessionManager: { getSessionFile: () => "parent" } }, manager, run.id);
+    viewer.handleInput("\u0004");
+    expect(manager.resolve(run.id, "parent")).toBeTruthy();
+    viewer.handleInput("\r");
+    expect(manager.resolve(run.id, "parent")).toBeUndefined();
+    expect(closed).toBe(true);
+    viewer.dispose();
+  });
+
+  it("/subagent context shows workspace paths", async () => {
+    const runner = new FakeRunner();
+    const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));
+    const manager = new SubagentManager({ runner, contextDir });
+    const pi = createMockPi();
+    createSubagentsExtension({ manager })(pi as any);
+    flushPipTools(pi as any);
+    const ctx = createMockCtx();
+    try {
+      const tool = getRegisteredTool(pi, "subagent");
+      const result = await tool.execute("1", { agent: "explore", prompt: "ctx", keep: true, name: "ctx-run" }, undefined, undefined, ctx);
+      const id = result.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+      await runCommand(pi, "subagent", "context", ctx);
+      expect(ctx.ui.notifications.at(-1)?.message).toContain("Subagent context root");
+      await runCommand(pi, "subagent", `context ${id}`, ctx);
+      expect(ctx.ui.notifications.at(-1)?.message).toContain(`Subagent context: ${id}`);
+      expect(ctx.ui.notifications.at(-1)?.message).toContain("Run folder:");
+    } finally {
+      rmSync(contextDir, { recursive: true, force: true });
+    }
   });
 
   it("message and steer refresh ephemeral TTL", async () => {

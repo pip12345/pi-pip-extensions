@@ -43,6 +43,8 @@ export interface PersistedRun {
   updatedAt: number;
   completedAt?: number;
   sessionFile?: string;
+  contextRoot?: string;
+  runContextDir?: string;
   resultText?: string;
   errorText?: string;
   events: SubagentEvent[];
@@ -79,6 +81,8 @@ export function toPersistedRun(run: SubagentRun): PersistedRun | undefined {
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
     sessionFile: run.sessionFile,
+    contextRoot: run.contextRoot,
+    runContextDir: run.runContextDir,
     resultText: run.resultText,
     errorText: run.errorText,
     events: run.events.slice(-300).map((event) => ({ ...event })),
@@ -104,6 +108,8 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
     updatedAt: wasRunning ? now : record.updatedAt,
     completedAt: wasRunning ? now : record.completedAt,
     sessionFile: record.sessionFile,
+    contextRoot: record.contextRoot,
+    runContextDir: record.runContextDir,
     resultText: record.resultText,
     errorText: wasRunning ? "Subagent was interrupted by parent process shutdown/restart." : record.errorText,
     events: record.events.slice(-300).map((event) => ({ ...event })),

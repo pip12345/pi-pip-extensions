@@ -18,6 +18,8 @@ export function snapshotRun(run: SubagentRun): SubagentSnapshot {
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
     sessionFile: run.sessionFile,
+    contextRoot: run.contextRoot,
+    runContextDir: run.runContextDir,
     resultText: run.resultText,
     errorText: run.errorText,
     events: run.events.slice(-120).map((event) => ({ ...event })),

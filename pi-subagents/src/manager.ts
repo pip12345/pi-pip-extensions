@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import type { AgentConfig, LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";
+import { appendWorkspaceGuidance, contextRoot, runContextDir } from "./context.ts";
 import { settingValue } from "./settings.ts";
 import { deleteManagedChildSession, deleteParentPersistence, gcOrphanedParents, readParentRuns, restoredRun, toPersistedRun, writeParentRuns } from "./persistence.ts";
 
@@ -13,6 +14,7 @@ export interface ManagerOptions {
   now?: () => number;
   inject?: (parentSessionKey: string, message: string) => void;
   persistenceDir?: string;
+  contextDir?: string;
 }
 
 function id(): string {
@@ -45,6 +47,7 @@ export class SubagentManager {
   now: () => number;
   inject?: (parentSessionKey: string, message: string) => void;
   persistenceDir?: string;
+  contextDir?: string;
   loadedParents = new Set<string>();
   parentBranches = new Map<string, Set<string>>();
 
@@ -53,6 +56,7 @@ export class SubagentManager {
     this.now = options.now ?? (() => Date.now());
     this.inject = options.inject;
     this.persistenceDir = options.persistenceDir;
+    this.contextDir = options.contextDir;
   }
 
   configure(options: Partial<ManagerOptions>): void {
@@ -60,6 +64,7 @@ export class SubagentManager {
     if (options.now) this.now = options.now;
     if (options.inject) this.inject = options.inject;
     if (options.persistenceDir) this.persistenceDir = options.persistenceDir;
+    if (options.contextDir) this.contextDir = options.contextDir;
   }
 
   setActiveParent(key: string, parentSessionFile?: string, branchIds?: string[]): void {
@@ -83,11 +88,13 @@ export class SubagentManager {
       try { void run.cancel?.(); } catch {}
       try { run.dispose?.(); } catch {}
       deleteManagedChildSession(parentSessionKey, run.sessionFile);
+      this.deleteRunContext(run);
       this.runs.delete(run.id);
       this.foreground.delete(run.id);
       if (run.name) this.aliases.delete(this.aliasKey(parentSessionKey, run.name));
     }
     this.loadedParents.delete(parentSessionKey);
+    rmSync(contextRoot(parentSessionKey, this.contextDir), { recursive: true, force: true });
     deleteParentPersistence(parentSessionKey, this.persistenceDir);
   }
 
@@ -98,12 +105,15 @@ export class SubagentManager {
     if (!loaded) return;
     if (!canAccessParent(loaded.parentSessionFile)) {
       for (const record of loaded.runs) deleteManagedChildSession(parentSessionKey, record.sessionFile);
+      rmSync(contextRoot(parentSessionKey, this.contextDir), { recursive: true, force: true });
       deleteParentPersistence(parentSessionKey, this.persistenceDir);
       return;
     }
     for (const record of loaded.runs) {
       if (this.runs.has(record.id)) continue;
       const run = restoredRun(record, this.now());
+      run.contextRoot ??= contextRoot(run.parentSessionKey, this.contextDir);
+      run.runContextDir ??= runContextDir(run.parentSessionKey, run.id, this.contextDir);
       run.persist = () => this.saveRun(run);
       this.runs.set(run.id, run);
       if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
@@ -150,6 +160,10 @@ export class SubagentManager {
     return snapshotRun(run);
   }
 
+  contextRootFor(parentSessionKey: string): string {
+    return contextRoot(parentSessionKey, this.contextDir);
+  }
+
   ensureNameAvailable(name: string | undefined, parentSessionKey?: string): void {
     if (!name) return;
     if (this.runs.has(name) || (parentSessionKey && this.aliases.has(this.aliasKey(parentSessionKey, name)))) throw new Error(`Subagent name already exists: ${name}`);
@@ -165,8 +179,11 @@ export class SubagentManager {
     const maxRunning = settingValue("maxRunning", 6);
     if (this.runningCount() >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
     this.ensureNameAvailable(input.name, input.parentSessionKey);
+    const runId = id();
+    const root = contextRoot(input.parentSessionKey, this.contextDir);
+    const runDir = runContextDir(input.parentSessionKey, runId, this.contextDir);
     const run: SubagentRun = {
-      id: id(),
+      id: runId,
       name: input.name,
       agent: input.agent.name,
       prompt: input.prompt,
@@ -180,6 +197,8 @@ export class SubagentManager {
       status: "running",
       createdAt: this.now(),
       updatedAt: this.now(),
+      contextRoot: root,
+      runContextDir: runDir,
       events: [],
       abortController: new AbortController(),
       forwarding: true,
@@ -211,7 +230,8 @@ export class SubagentManager {
 
     this.saveRun(run);
 
-    run.runPromise = this.runner.launch(input, run).catch((error) => {
+    const launchInput = { ...input, prompt: appendWorkspaceGuidance(input.prompt, root, runDir), contextRoot: root, runContextDir: runDir };
+    run.runPromise = this.runner.launch(launchInput, run).catch((error) => {
       run.status = run.abortController.signal.aborted ? "cancelled" : "error";
       run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
       run.completedAt = this.now();
@@ -222,6 +242,7 @@ export class SubagentManager {
       this.foreground.delete(run.id);
       finished.removeParentAbort?.();
       finished.removeParentAbort = undefined;
+      finished.prompt = input.prompt;
       if (finished.background && finished.status !== "cancelled") this.completeBackground(finished);
       this.saveRun(finished);
       this.cleanup();
@@ -241,12 +262,17 @@ export class SubagentManager {
     run.detached = false;
     run.forwarding = true;
     this.foreground.add(run.id);
+    const root = run.contextRoot ?? contextRoot(run.parentSessionKey, this.contextDir);
+    const runDir = run.runContextDir ?? runContextDir(run.parentSessionKey, run.id, this.contextDir);
+    run.contextRoot = root;
+    run.runContextDir = runDir;
+    const promptWithWorkspace = appendWorkspaceGuidance(prompt, root, runDir);
     this.touchRun(run);
     try {
-      if (run.continuePrompt) await run.continuePrompt(prompt);
+      if (run.continuePrompt) await run.continuePrompt(promptWithWorkspace);
       else {
         if (!agent) throw new Error(`Subagent ${run.id} cannot be continued until its agent definition is available.`);
-        run.runPromise = this.runner.launch({ agent, prompt, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, resumeSessionFile: run.sessionFile }, run);
+        run.runPromise = this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir }, run);
         await run.runPromise;
       }
       if (run.status === "running") run.status = "completed";
@@ -255,6 +281,7 @@ export class SubagentManager {
       run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
+      run.prompt = prompt;
       run.completedAt = this.now();
       run.updatedAt = run.completedAt;
       this.foreground.delete(run.id);
@@ -331,9 +358,15 @@ export class SubagentManager {
     run.dispose?.();
     deleteManagedChildSession(run.parentSessionKey, run.sessionFile);
     if (!run.sessionFile) deleteRunSessionFile(run);
+    this.deleteRunContext(run);
     this.runs.delete(run.id);
     if (run.name) this.aliases.delete(this.aliasKey(run.parentSessionKey, run.name));
     this.saveParent(run.parentSessionKey);
+  }
+
+  private deleteRunContext(run: SubagentRun): void {
+    if (!run.runContextDir) return;
+    rmSync(run.runContextDir, { recursive: true, force: true });
   }
 
   list(parentSessionKey?: string): SubagentRun[] {

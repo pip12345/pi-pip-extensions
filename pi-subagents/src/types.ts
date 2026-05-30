@@ -48,6 +48,8 @@ export interface SubagentSnapshot {
   updatedAt: number;
   completedAt?: number;
   sessionFile?: string;
+  contextRoot?: string;
+  runContextDir?: string;
   resultText?: string;
   errorText?: string;
   events: SubagentEvent[];
@@ -71,6 +73,8 @@ export interface SubagentRun {
   completedAt?: number;
   session?: AgentSession;
   sessionFile?: string;
+  contextRoot?: string;
+  runContextDir?: string;
   resultText?: string;
   errorText?: string;
   events: SubagentEvent[];
@@ -102,6 +106,8 @@ export interface LaunchInput {
   signal?: AbortSignal;
   onUpdate?: (partial: { content: [{ type: "text"; text: string }]; details?: any }) => void;
   resumeSessionFile?: string;
+  contextRoot?: string;
+  runContextDir?: string;
 }
 
 export interface Runner {

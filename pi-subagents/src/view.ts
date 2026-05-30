@@ -28,6 +28,8 @@ export class SubagentViewer extends PipCustomComponent<void> {
   private steerMode = false;
   private steerText = "";
   private steering = false;
+  private deleteConfirm = false;
+  private deleting = false;
   private lastContentLength: number | undefined;
 
   constructor(
@@ -38,7 +40,7 @@ export class SubagentViewer extends PipCustomComponent<void> {
     private readonly manager: SubagentManager,
     private readonly runId: string,
   ) {
-    super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d", "q", "Q"] });
+    super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "q", "Q"] });
     this.timer = setInterval(() => this.requestRender(), 1000);
   }
 
@@ -51,9 +53,30 @@ export class SubagentViewer extends PipCustomComponent<void> {
   }
 
   handleInput(data: string): void {
+    const normalized = normalizeInputKey(data);
+    if (this.deleteConfirm) {
+      if (normalized === "return") {
+        const run = this.run();
+        this.deleteConfirm = false;
+        if (run) void this.delete(run);
+        else this.close();
+        return;
+      }
+      if (normalized === "escape" || normalized === "ctrl+d") {
+        this.deleteConfirm = false;
+        this.message = "Delete cancelled";
+        this.requestRender();
+        return;
+      }
+      if (normalized === "ctrl+c") {
+        this.close();
+        return;
+      }
+      return;
+    }
+
     if (!this.steerMode) return super.handleInput(data);
 
-    const normalized = normalizeInputKey(data);
     const key = printableInput(data);
     if (normalized === "ctrl+c" || normalized === "ctrl+d") {
       this.close();
@@ -93,6 +116,7 @@ export class SubagentViewer extends PipCustomComponent<void> {
       return;
     }
     if (key === "s") this.startSteer();
+    else if (key === "ctrl+d") this.startDeleteConfirm(run);
     else if (key === "c") void this.cancel(run);
     else if (key === "b") this.background(run);
     else if (key === "k") this.keep(run);
@@ -108,8 +132,17 @@ export class SubagentViewer extends PipCustomComponent<void> {
 
   private startSteer(): void {
     this.steerMode = true;
+    this.deleteConfirm = false;
     this.steerText = "";
     this.message = "";
+    this.requestRender();
+  }
+
+  private startDeleteConfirm(run: SubagentRun): void {
+    this.steerMode = false;
+    this.steerText = "";
+    this.deleteConfirm = true;
+    this.message = `Delete ${run.id}? Press Enter to confirm, Esc to cancel.`;
     this.requestRender();
   }
 
@@ -179,6 +212,21 @@ export class SubagentViewer extends PipCustomComponent<void> {
     this.requestRender();
   }
 
+  private async delete(run: SubagentRun): Promise<void> {
+    if (this.deleting) return;
+    this.deleting = true;
+    try {
+      this.manager.delete(run);
+      this.message = `Deleted ${run.id}`;
+      this.close();
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : String(error);
+      this.requestRender();
+    } finally {
+      this.deleting = false;
+    }
+  }
+
   private contentLines(snapshot: SubagentSnapshot, inner: number): string[] {
     const contentWidth = Math.max(1, inner - 10);
     const lines: string[] = [];
@@ -224,7 +272,7 @@ export class SubagentViewer extends PipCustomComponent<void> {
     const snapshot = this.manager.snapshot(run);
     const statusColor = snapshot.status === "error" ? "error" : snapshot.status === "completed" ? "success" : snapshot.status === "cancelled" ? "warning" : "accent";
     const chrome: string[] = [];
-    chrome.push(themeFg(this.theme, "dim", "↑↓/PgUp/PgDn scroll · End follow · r refresh · s steer · c cancel · b background · k keep · f forget · q close"));
+    chrome.push(themeFg(this.theme, "dim", "↑↓/PgUp/PgDn scroll · End follow · r refresh · s steer · c cancel · b background · k keep · f forget · Ctrl+D delete · q close"));
     chrome.push(`${themeFg(this.theme, "accent", snapshot.id)} ${snapshot.name ? `(${snapshot.name}) ` : ""}${snapshot.agent}`);
     chrome.push([themeFg(this.theme, statusColor, snapshot.status), elapsed(snapshot), snapshot.background ? "background" : "foreground", snapshot.keep ? "kept" : "ephemeral"].join(themeFg(this.theme, "dim", " · ")));
     if (this.message) chrome.push(themeFg(this.theme, this.message.toLowerCase().includes("error") ? "error" : "warning", this.message));
@@ -235,7 +283,9 @@ export class SubagentViewer extends PipCustomComponent<void> {
     }
     this.lastContentLength = content.length;
     const footer: string[] = [];
-    if (this.steerMode) footer.push(themeFg(this.theme, "accent", `steer> `) + truncateToWidth(this.steerText || themeFg(this.theme, "dim", "type message, enter sends, esc cancels"), Math.max(1, inner - 7)));
+    if (this.deleteConfirm) footer.push(themeFg(this.theme, "error", "delete> Press Enter to confirm, Esc cancels"));
+    else if (this.deleting) footer.push(themeFg(this.theme, "error", "Deleting subagent…"));
+    else if (this.steerMode) footer.push(themeFg(this.theme, "accent", `steer> `) + truncateToWidth(this.steerText || themeFg(this.theme, "dim", "type message, enter sends, esc cancels"), Math.max(1, inner - 7)));
     else if (this.steering) footer.push(themeFg(this.theme, "accent", "Sending steer…"));
 
     const targetInnerLines = Math.max(1, terminalRows() - 2);
