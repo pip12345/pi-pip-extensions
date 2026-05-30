@@ -49,7 +49,7 @@ For bugs, follow this order:
 - If the real reason was weak, mistaken, speculative, or copied from an adjacent pattern, say that plainly.
 - Distinguish clearly between evidence from code/docs/web, inference from existing patterns, your own proposed design, and guesses.
 - Do not answer a narrow “why?” question with a broad new design dump. First answer the specific why in 1–3 sentences.
-- ALWAYS give a listed sequence of events that led to your action the user is querying about.
+- Give an explanation as to what led to the action the user is querying about.
 - Avoid retroactive justification. Prefer: “I added X because I thought Y”
 
 ## Constructive skepticism
