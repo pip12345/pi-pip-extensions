@@ -15,12 +15,9 @@ const baseTool = (name: string): any => ({
 describe("pip tool broker", () => {
   beforeEach(() => resetPipToolsForTests());
 
-  it("defers tool registration until flush", () => {
+  it("registers tools synchronously so resumed sessions can render them immediately", () => {
     const pi = createMockPi();
     registerPipTool(pi as any, { tool: baseTool("x"), metadata: { pluginId: "test" } });
-    expect(pi.tools.has("x")).toBe(false);
-
-    flushPipTools(pi as any);
     expect(pi.tools.has("x")).toBe(true);
   });
 
@@ -39,6 +36,15 @@ describe("pip tool broker", () => {
     flushPipTools(pi as any);
     registerPipTool(pi as any, { tool: baseTool("late"), metadata: { pluginId: "test" } });
     expect(pi.tools.has("late")).toBe(true);
+  });
+
+  it("re-finalizes already registered tools when a finalizer is registered late", () => {
+    const pi = createMockPi();
+    registerPipTool(pi as any, { tool: baseTool("x"), metadata: { pluginId: "test" } });
+    expect(pi.tools.get("x").label).toBe("x");
+
+    registerPipToolFinalizer({ id: "late", finalize: ({ tool }) => ({ ...tool, label: `${tool.label}!` }) });
+    expect(pi.tools.get("x").label).toBe("x!");
   });
 
   it("lists registrations and notifies listeners", () => {

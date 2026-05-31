@@ -89,6 +89,13 @@ function registerOne(state: PiState, registration: PipToolRegistration): void {
   state.registeredNames.add(registration.tool.name);
 }
 
+function refinalizeRegistered(state: PiState): void {
+  for (const registration of state.registrations) {
+    if (!state.registeredNames.has(registration.tool.name)) continue;
+    state.pi.registerTool(finalizeTool(registration));
+  }
+}
+
 function scheduleFlush(state: PiState): void {
   if (state.scheduled) return;
   state.scheduled = setTimeout(() => {
@@ -101,13 +108,16 @@ export function registerPipTool(pi: ExtensionAPI, registration: PipToolRegistrat
   const state = getState(pi);
   state.registrations.push(registration);
   notify();
-  if (state.flushed) registerOne(state, registration);
-  else scheduleFlush(state);
+  registerOne(state, registration);
+  if (!state.flushed) scheduleFlush(state);
 }
 
 export function registerPipToolFinalizer(finalizer: PipToolFinalizer): () => void {
   finalizers().set(finalizer.id, finalizer);
-  for (const state of states()) if (!state.flushed) scheduleFlush(state);
+  for (const state of states()) {
+    refinalizeRegistered(state);
+    if (!state.flushed) scheduleFlush(state);
+  }
   return () => finalizers().delete(finalizer.id);
 }
 

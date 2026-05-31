@@ -1,7 +1,9 @@
+import { Text } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it } from "vitest";
 import toolUi from "./index.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
+import subagents from "../pi-subagents/index.ts";
 import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
@@ -54,12 +56,16 @@ describe("pi-tool-ui", () => {
     expect(edit.prepareArguments).toBeTypeOf("function");
   });
 
-  it("renders edit diffs as split view by default on wide terminals", () => {
+  it("installs split edit diffs into the edit call component instead of returning duplicate output", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
-    const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(140).join("\n");
+    const callComponent: any = { children: [new Text("header", 0, 0), { render: () => [""] }, new Text("builtin diff", 0, 0)], invalidate: () => undefined };
+    const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: { callComponent }, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false });
+    expect(resultComponent.render(140)).toEqual([]);
+    const rendered = callComponent.children[2].render(140).join("\n");
+    expect(rendered).toContain("diff +1 -1");
     expect(rendered).toContain("old value");
     expect(rendered).toContain("new value");
     expect(rendered).toContain("│");
@@ -89,7 +95,7 @@ describe("pi-tool-ui", () => {
     expect(pipSettings.definition("tool-ui")?.todo_write.description).toContain("compact Tool UI rendering");
   });
 
-  it("display metadata rendering is load-order safe", () => {
+  it("display metadata rendering is load-order safe before flush", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     todo(pi as any);
@@ -101,6 +107,18 @@ describe("pi-tool-ui", () => {
     expect(pipSettings.definition("tool-ui")?.todo_update.description).toContain("compact Tool UI rendering");
   });
 
+  it("display metadata rendering is re-applied when Tool UI loads after pip tools registered", () => {
+    const pi = createMockPi();
+    todo(pi as any);
+    expect(getRegisteredTool(pi, "todo_update").renderShell).toBeUndefined();
+
+    toolUi(pi as any);
+    const update = getRegisteredTool(pi, "todo_update");
+    expect(update.renderShell).toBe("self");
+    expect(update.renderCall({ updates: [{ match: "x", status: "done" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_update: 1 updates");
+    expect(update.renderResult({ content: [{ type: "text", text: "Updated 1 todo" }], details: { todos: [] } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
+  });
+
   it("renders tiny-mcp through display metadata", () => {
     const pi = createMockPi();
     tinyMcp(pi as any);
@@ -110,5 +128,18 @@ describe("pi-tool-ui", () => {
 
     expect(mcp.renderShell).toBe("self");
     expect(mcp.renderCall({ search: "files" }, theme, {}).render(80).join("\n")).toContain("› tiny-mcp: search files");
+  });
+
+  it("renders subagent through display metadata", () => {
+    const pi = createMockPi();
+    subagents(pi as any);
+    toolUi(pi as any);
+    flushPipTools(pi as any);
+    const tool = getRegisteredTool(pi, "subagent");
+
+    expect(tool.renderShell).toBe("self");
+    expect(tool.renderCall({ agent: "general", prompt: "do a very long thing", background: true }, theme, {}).render(80).join("\n")).toContain("› subagent: general background");
+    expect(tool.renderResult({ content: [{ type: "text", text: "subagent_id: x\nstate: running" }], details: { run: { id: "x" } } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
+    expect(pipSettings.definition("tool-ui")?.subagent.description).toContain("compact Tool UI rendering");
   });
 });

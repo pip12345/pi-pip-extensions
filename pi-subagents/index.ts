@@ -246,7 +246,21 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           }
         },
       },
-      metadata: { pluginId: "subagents", label: "Subagent" },
+      metadata: {
+        pluginId: "subagents",
+        label: "Subagent",
+        display: {
+          kind: "command",
+          call: (args: any) => {
+            const label = args?.agent ?? args?.action ?? args?.id ?? "status";
+            const flags = [args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");
+            return flags ? `${label} ${flags}` : String(label);
+          },
+          result: (result: any) => result?.details?.run ? undefined : String(result?.content?.find?.((item: any) => item?.type === "text")?.text ?? "").split("\n")[0],
+          expandedResult: (result: any) => String(result?.content?.find?.((item: any) => item?.type === "text")?.text ?? ""),
+          hideSuccessfulResult: true,
+        },
+      },
     });
 
     pi.registerCommand("subagent", {

@@ -105,7 +105,7 @@ function quietResult(tool: BuiltinName) {
   };
 }
 
-function editDiffResult(result: any, theme: any): Component | undefined {
+function editDiffComponent(result: any, theme: any): Component | undefined {
   const diff = result?.details?.diff;
   if (typeof diff !== "string" || !diff.trim()) return undefined;
   return {
@@ -122,6 +122,15 @@ function editDiffResult(result: any, theme: any): Component | undefined {
     },
     invalidate() {},
   };
+}
+
+function replaceEditCallDiff(context: any, component: Component): boolean {
+  const callComponent = context?.state?.callComponent as any;
+  const children = callComponent?.children;
+  if (!Array.isArray(children) || children.length < 3) return false;
+  children[children.length - 1] = component;
+  callComponent.invalidate?.();
+  return true;
 }
 
 function makeQuietAdapter(tool: BuiltinName, label: string, summarize: (args: any) => string): SlotAdapter {
@@ -172,7 +181,9 @@ const BUILTIN_ADAPTERS: SlotAdapter[] = [
         builtin = EMPTY_COMPONENT;
       }
       if (!adapterEnabled("editDiff")) return builtin;
-      return editDiffResult(result, theme) ?? builtin;
+      const split = editDiffComponent(result, theme);
+      if (!split) return builtin;
+      return replaceEditCallDiff(context, split) ? builtin : split;
     },
   },
 ];

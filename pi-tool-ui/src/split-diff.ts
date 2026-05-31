@@ -79,6 +79,12 @@ function renderCell(no: string | undefined, text: string | undefined, gutterWidt
   return themeFg(theme, color, `${gutter} ${padAnsi(body, contentWidth)}`);
 }
 
+function summaryLine(rows: SplitDiffRow[], theme: any): string {
+  const added = rows.filter((row) => row.kind === "add" || row.kind === "change").length;
+  const removed = rows.filter((row) => row.kind === "remove" || row.kind === "change").length;
+  return `${themeFg(theme, "muted", "diff")} ${themeFg(theme, "toolDiffAdded", `+${added}`)} ${themeFg(theme, "toolDiffRemoved", `-${removed}`)}`;
+}
+
 export function renderSplitEditDiff(diff: string, width: number, theme: any, options: { maxLines?: number } = {}): string[] | undefined {
   const rows = parseEditDisplayDiff(diff);
   if (!rows) return undefined;
@@ -91,11 +97,11 @@ export function renderSplitEditDiff(diff: string, width: number, theme: any, opt
 
   const maxLines = options.maxLines && options.maxLines > 0 ? options.maxLines : rows.length;
   const visibleRows = rows.slice(0, maxLines);
-  const rendered = visibleRows.map((row) => {
+  const rendered = [summaryLine(rows, theme), ...visibleRows.map((row) => {
     const oldCell = renderCell(row.oldNo, row.oldText, gutterWidth, contentWidth, theme, colorForSide(row, "old"));
     const newCell = renderCell(row.newNo, row.newText, gutterWidth, contentWidth, theme, colorForSide(row, "new"));
     return oldCell + separator + newCell;
-  });
+  })];
   const hidden = rows.length - visibleRows.length;
   if (hidden > 0) rendered.push(themeFg(theme, "muted", `... ${hidden} more diff lines`));
   return rendered;
