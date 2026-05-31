@@ -55,8 +55,8 @@ export function registerTinyMcpTool(pi: any): void {
     metadata: {
       pluginId: "tiny-mcp",
       label: "MCP",
-      quietCapable: true,
-      compact: {
+      display: {
+        kind: "command",
         call: (args: any) => args?.tool ? args.tool : args?.search ? `search ${args.search}` : args?.connect ? `connect ${args.connect}` : "status",
         result: (result: any) => firstText(result).split("\n")[0],
         expandedResult: firstText,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import pipCommon from "../index.ts";
 import { createMockPi } from "../src/testing.ts";
 import { createPipSettingsComponent, registerPipSettingsCommand } from "../src/settings-command.ts";
+import { visibleWidth } from "../src/keys.ts";
 import { createSettingsRegistry, setting } from "../src/settings.ts";
 
 describe("pip settings command", () => {
@@ -43,6 +44,17 @@ describe("pip settings command", () => {
     expect(result.values["plan-mode"].enabled).toBe(false);
     expect(result.values["plan-mode"].behavior).toBe("ask");
     expect(registry.get("plan-mode.enabled")).toBe(true);
+  });
+
+  it("draws the settings box across the full overlay width", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+    const component = createPipSettingsComponent({ requestRender() {} }, { fg: (_name: string, text: string) => text }, () => undefined, registry) as any;
+
+    const lines = component.render(140);
+
+    expect(lines.every((line: string) => visibleWidth(line) === 140)).toBe(true);
+    expect(visibleWidth(lines[0].trimEnd())).toBe(140);
   });
 
   it("keeps settings rows stable when selected description appears or disappears", () => {

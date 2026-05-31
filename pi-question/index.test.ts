@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import extension from "./index.ts";
-import quietTools from "../pi-quiet-tools/index.ts";
+import toolUi from "../pi-tool-ui/index.ts";
 import { formatAnsweredOutput } from "./src/format.ts";
 import { createQuestionState, questionSaveCustom, questionSelect, questionSetTab, questionStoreCustom, questionSubmit } from "./src/state.ts";
 import { validateQuestions, type QuestionInfo } from "./src/schema.ts";
@@ -192,9 +192,9 @@ describe("pi-question", () => {
     expect(result.render(80).join("\n")).toContain("Yes");
   });
 
-  it("keeps answered result visible when quiet-tools is loaded", () => {
+  it("keeps answered result visible when tool-ui is loaded", () => {
     const pi = createMockPi();
-    quietTools(pi as any);
+    toolUi(pi as any);
     extension(pi as any);
     flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "question");

@@ -1,6 +1,7 @@
 import type { ToolDefinition, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export interface PipToolCompactMetadata {
+export interface PipToolDisplayMetadata {
+  kind?: "query" | "mutation" | "command" | "interactive" | "generic";
   call?: (args: any) => string | undefined;
   result?: (result: any) => string | undefined;
   expandedResult?: (result: any) => string | undefined;
@@ -10,8 +11,7 @@ export interface PipToolCompactMetadata {
 export interface PipToolMetadata {
   pluginId: string;
   label?: string;
-  quietCapable?: boolean;
-  compact?: PipToolCompactMetadata;
+  display?: PipToolDisplayMetadata;
 }
 
 export interface PipToolRegistration {

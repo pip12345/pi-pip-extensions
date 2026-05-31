@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pipSettings } from "../pip-common/index.ts";
 import pipFooter from "../pi-pip-footer/index.ts";
-import quietTools from "../pi-quiet-tools/index.ts";
+import toolUi from "../pi-tool-ui/index.ts";
 import promptProfiles from "../pi-prompt-profiles/index.ts";
 import planMode from "../pi-plan-mode/index.ts";
 import todo from "../pi-todo/index.ts";
@@ -10,7 +10,7 @@ import treeEdit from "../pi-tree-edit/index.ts";
 import undoRedo from "../pi-undo-redo/index.ts";
 import { createMockPi } from "../pip-common/testing.ts";
 
-const extensions = [pipFooter, quietTools, promptProfiles, planMode, todo, subagents, treeEdit, undoRedo];
+const extensions = [pipFooter, toolUi, promptProfiles, planMode, todo, subagents, treeEdit, undoRedo];
 
 describe("pip settings descriptions", () => {
   it("all registered pip settings have concise descriptions", () => {

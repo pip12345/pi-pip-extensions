@@ -109,7 +109,7 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   }
 
   render(width: number): string[] {
-    const bodyWidth = Math.max(50, Math.min(width - 4, 100));
+    const bodyWidth = Math.max(1, width);
     const rows = this.registry.rows();
     const displayRows = buildDisplayRows(this.registry);
     if (this.selected >= displayRows.length) this.selected = firstSettingIndex(displayRows);

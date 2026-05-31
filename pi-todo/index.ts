@@ -276,7 +276,7 @@ class TodoInspector extends PipCustomComponent<void> {
   render(width: number): string[] {
     const state = this.getState();
     const th = this.theme;
-    const bodyWidth = Math.max(50, Math.min(width - 4, 100));
+    const bodyWidth = Math.max(1, width);
     const innerWidth = bodyWidth - 4;
     const lines: string[] = [themeFg(th, "dim", "j/k move · space cycle · d delete · c clear done · q close"), ""];
     if (!state.todos.length) lines.push(themeFg(th, "dim", "No todos."));
@@ -410,8 +410,8 @@ export default function todoExtension(pi: ExtensionAPI) {
     metadata: {
       pluginId: "todo",
       label: "Todo write",
-      quietCapable: true,
-      compact: {
+      display: {
+        kind: "mutation",
         call: (args) => `${args?.todos?.length ?? 0} todos`,
         expandedResult: (result) => compactList(result?.details?.todos ?? []),
         hideSuccessfulResult: true,
@@ -442,8 +442,8 @@ export default function todoExtension(pi: ExtensionAPI) {
     metadata: {
       pluginId: "todo",
       label: "Todo update",
-      quietCapable: true,
-      compact: {
+      display: {
+        kind: "mutation",
         call: (args) => `${args?.updates?.length ?? 0} updates`,
         result: (result) => (result?.details?.errors?.length ? textResult(result) : undefined),
         expandedResult: (result) => compactList(result?.details?.todos ?? []),
@@ -472,8 +472,8 @@ export default function todoExtension(pi: ExtensionAPI) {
     metadata: {
       pluginId: "todo",
       label: "Todo read",
-      quietCapable: true,
-      compact: {
+      display: {
+        kind: "query",
         expandedResult: (result) => compactList(result?.details?.todos ?? []),
         hideSuccessfulResult: true,
       },

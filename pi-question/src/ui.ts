@@ -105,7 +105,7 @@ class QuestionComponent extends PipCustomComponent<AskQuestionResult> {
   }
 
   render(width: number): string[] {
-    const bodyWidth = Math.max(50, Math.min(width, 100));
+    const bodyWidth = Math.max(1, width);
     const innerWidth = bodyWidth - 4;
     const th = this.theme;
     const lines: string[] = [];

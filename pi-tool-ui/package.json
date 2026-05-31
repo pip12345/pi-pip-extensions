@@ -1,14 +1,13 @@
 {
-  "name": "pi-quiet-tools",
+  "name": "pi-tool-ui",
   "version": "0.1.0",
-  "description": "Quiet collapsed rendering for pi read, grep, find, and ls tools",
+  "description": "Unified tool call and result rendering for PiP extensions",
   "type": "module",
   "keywords": [
     "pi-package",
     "pi-extension",
     "tools",
-    "tui",
-    "quiet"
+    "tui"
   ],
   "license": "MIT",
   "engines": {
@@ -25,7 +24,8 @@
   },
   "files": [
     "index.ts",
-    "README.md"
+    "README.md",
+    "src"
   ],
   "dependencies": {
     "pip-common": "0.1.0"

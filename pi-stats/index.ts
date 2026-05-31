@@ -334,7 +334,7 @@ class TokenInspector extends PipCustomComponent<void> {
   }
 
   render(width: number): string[] {
-    const bodyWidth = Math.max(80, Math.min(width - 4, 120));
+    const bodyWidth = Math.max(1, width);
     const lines = this.page === "session" ? this.renderSession(bodyWidth) : this.renderGlobal(bodyWidth);
     return box(lines, bodyWidth, " Stats ", this.theme);
   }
