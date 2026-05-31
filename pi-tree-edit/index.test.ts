@@ -7,6 +7,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateSummary } from "@earendil-works/pi-coding-agent";
 import treeEdit from "./index.ts";
 import { pipSettings } from "../pip-common/index.ts";
 import { createMockPi, runCommand } from "../pip-common/testing.ts";
@@ -82,6 +83,66 @@ describe("pi-tree-edit", () => {
       expect(compaction.tokensBefore).toBeGreaterThan(0);
       expect(entries.find((entry) => entry.id === "t1")?.parentId).toBe(compaction.id);
       expect(entries.find((entry) => entry.id === "u2")?.parentId).toBe("t1");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("compacts only entries since the previous compaction on the selected branch", async () => {
+    vi.mocked(generateSummary).mockClear();
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-compaction-after-existing-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "session", id: "session-test" }),
+        JSON.stringify({ type: "message", id: "old-user", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "old user" }] } }),
+        JSON.stringify({ type: "message", id: "old-assistant", parentId: "old-user", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "old assistant" }] } }),
+        JSON.stringify({ type: "compaction", id: "existing-compaction", parentId: "old-assistant", timestamp: "2026-01-01T00:00:02.000Z", summary: "already compacted", firstKeptEntryId: "old-assistant", tokensBefore: 123, details: { from: "pi-tree-edit", kind: "manual" } }),
+        JSON.stringify({ type: "message", id: "new-user", parentId: "existing-compaction", timestamp: "2026-01-01T00:00:03.000Z", message: { role: "user", content: [{ type: "text", text: "new user" }] } }),
+        JSON.stringify({ type: "message", id: "new-assistant", parentId: "new-user", timestamp: "2026-01-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "new assistant" }] } }),
+        JSON.stringify({ type: "message", id: "selected", parentId: "new-assistant", timestamp: "2026-01-01T00:00:05.000Z", message: { role: "user", content: [{ type: "text", text: "selected" }] } }),
+      ].join("\n") + "\n"
+    );
+
+    try {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      let customCalls = 0;
+      const ctx: any = {
+        model: { provider: "test", modelId: "test-model" },
+        modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test-key", headers: {} }) },
+        waitForIdle: async () => undefined,
+        switchSession: async (_file: string, opts: any) => opts.withSession({ navigateTree: async () => undefined, ui: { notify: () => undefined } }),
+        sessionManager: {
+          getSessionFile: () => sessionFile,
+          getLeafId: () => "selected",
+        },
+        ui: {
+          custom: async (factory: any) => {
+            customCalls++;
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {} }, theme, undefined, (value: any) => { result = value; }) as any;
+            if (customCalls === 1) {
+              component.handleInput("C");
+              return result;
+            }
+            component.handleInput("q");
+            return result;
+          },
+          editor: async () => "reviewed second compaction summary",
+          select: async () => "Save and quit",
+          notify: () => undefined,
+        },
+      };
+
+      await runCommand(pi, "tree-edit", "", ctx);
+      const summarizedMessages = vi.mocked(generateSummary).mock.calls[0][0] as any[];
+      expect(summarizedMessages.map((message) => message.content[0].text)).toEqual(["new user", "new assistant"]);
+      const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const compaction = entries.find((entry) => entry.summary === "reviewed second compaction summary");
+      expect(compaction.details.sourceEntryIds).toEqual(["new-user", "new-assistant"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -235,6 +296,53 @@ describe("pi-tree-edit", () => {
       const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
       const toolResult = entries.find((entry) => entry.id === "t1");
       expect(toolResult.message.content[0].text).toContain("tool result pruned by pi-tree-edit");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("opens deep linear sessions without overflowing the call stack", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-deep-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const depth = 15000;
+    const lines = [JSON.stringify({ type: "session", id: "session-test" })];
+    for (let i = 0; i < depth; i++) {
+      const role = i % 2 === 0 ? "user" : "assistant";
+      lines.push(JSON.stringify({
+        type: "message",
+        id: `e${i}`,
+        parentId: i === 0 ? null : `e${i - 1}`,
+        timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+        message: { role, content: [{ type: "text", text: `message ${i}` }], ...(role === "assistant" && i % 1000 === 1 ? { usage: { input: i, output: 10 } } : {}) },
+      }));
+    }
+    writeFileSync(sessionFile, lines.join("\n") + "\n");
+
+    try {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      const ctx: any = {
+        model: { provider: "test", modelId: "test-model", contextWindow: 200000 },
+        waitForIdle: async () => undefined,
+        sessionManager: {
+          getSessionFile: () => sessionFile,
+          getLeafId: () => `e${depth - 1}`,
+        },
+        ui: {
+          custom: async (factory: any) => {
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {}, terminal: { height: 30 } }, theme, undefined, (value: any) => { result = value; }) as any;
+            expect(component.render(120).join("\n")).toContain("tree-edit");
+            component.handleInput("q");
+            return result;
+          },
+          select: async () => "Cancel",
+          notify: () => undefined,
+        },
+      };
+
+      await runCommand(pi, "tree-edit", "", ctx);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
