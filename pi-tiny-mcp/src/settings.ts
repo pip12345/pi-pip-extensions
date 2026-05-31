@@ -1,4 +1,4 @@
-import { pipSettings, registerSettingsSection, setting } from "../../pip-common/index.ts";
+import { registerSettingsSection, setting, settingsFor } from "../../pip-common/index.ts";
 
 export const SETTINGS_ID = "tiny-mcp";
 
@@ -26,13 +26,8 @@ export function registerTinyMcpSettings(): void {
   });
 }
 
-export function settingValue<T>(key: string, fallback: T): T {
-  try {
-    return pipSettings.get<T>(`${SETTINGS_ID}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
+const scopedSettings = settingsFor(SETTINGS_ID);
+export const settingValue = scopedSettings.get;
 
 export function defaultTimeoutMs(): number {
   return Number(settingValue<TimeoutSetting>("defaultTimeout", "120")) * 1000;

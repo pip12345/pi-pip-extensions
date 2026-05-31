@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { pipSettings, registerSettingsSection, setPipReadOnlyState, setting, themeFg, truncateToWidth } from "../pip-common/index.ts";
+import { branchEntries, registerSettingsSection, restoreLatestCustomState, setPipReadOnlyState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
 
 type BashPolicy = "readonly" | "block";
 type UnknownToolsPolicy = "allow" | "block";
@@ -53,13 +53,8 @@ registerSettingsSection({
   },
 });
 
-function settingValue<T>(key: string, fallback: T): T {
-  try {
-    return pipSettings.get<T>(`${SETTINGS_ID}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
+const scopedSettings = settingsFor(SETTINGS_ID);
+const settingValue = scopedSettings.get;
 
 function settingsEnabled(): boolean {
   return settingValue("enabled", true);
@@ -97,14 +92,16 @@ export function isReadOnlyBash(command: string): boolean {
   return false;
 }
 
+function emptyState(): PlanModeState {
+  return { active: false, updatedAt: 0 };
+}
+
+function normalizeState(data: any): PlanModeState {
+  return { active: Boolean(data?.active), updatedAt: typeof data?.updatedAt === "number" ? data.updatedAt : Date.now() };
+}
+
 export function stateFromBranch(entries: any[]): PlanModeState {
-  let state: PlanModeState = { active: false, updatedAt: 0 };
-  for (const entry of entries ?? []) {
-    if ((entry?.type === "custom" && entry.customType === CUSTOM_TYPE) || entry?.customType === CUSTOM_TYPE) {
-      state = { active: Boolean(entry.data?.active), updatedAt: typeof entry.data?.updatedAt === "number" ? entry.data.updatedAt : Date.now() };
-    }
-  }
-  return state;
+  return restoreLatestCustomState(entries, CUSTOM_TYPE, normalizeState, emptyState);
 }
 
 export function shouldBlockTool(toolName: string, input: any, options: { bashPolicy: BashPolicy; unknownTools: UnknownToolsPolicy }): string | undefined {
@@ -122,10 +119,6 @@ export function shouldBlockTool(toolName: string, input: any, options: { bashPol
 
 function planReminder(systemPrompt: string): string {
   return `${systemPrompt}\n\nPlan mode is active. You are in read-only planning mode. Do not edit files, write files, run mutating shell commands, install packages, commit, or otherwise change project/system state. Use read/search tools to understand the codebase. Produce a concise implementation plan and ask before making changes.`;
-}
-
-function branchEntries(ctx: any): any[] {
-  return ctx?.sessionManager?.getBranch?.() ?? ctx?.sessionManager?.getEntries?.() ?? [];
 }
 
 export default function planModeExtension(pi: ExtensionAPI) {

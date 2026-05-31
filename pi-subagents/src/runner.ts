@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, rmdirSync } from "node:fs";
+import { mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createAgentSession, SessionManager, AuthStorage, ModelRegistry, DefaultResourceLoader, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isPipReadOnlyActive, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { snapshotRun } from "./snapshot.ts";
+import { PiChildAgentRuntime, type ChildAgentRuntime, type ChildAgentRuntimeSession } from "./child-runtime.ts";
 
 function safePart(value: string): string {
   const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
@@ -100,47 +100,19 @@ function finalizeTools(names: string[]): string[] {
   return names.filter((name) => name !== "subagent" && (!isPipReadOnlyActive() || !MUTATING_TOOLS.has(name)));
 }
 
-let authStorage: ReturnType<typeof AuthStorage.create> | undefined;
-let modelRegistry: ReturnType<typeof ModelRegistry.create> | undefined;
-
-function auth() {
-  authStorage ??= AuthStorage.create();
-  modelRegistry ??= ModelRegistry.create(authStorage);
-  return { authStorage, modelRegistry };
-}
-
 export class RealRunner implements Runner {
+  constructor(private readonly runtime: ChildAgentRuntime = new PiChildAgentRuntime()) {}
+
   async launch(input: LaunchInput, run: SubagentRun): Promise<SubagentRun> {
     let unsubscribe: (() => void) | undefined;
-    let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+    let session: ChildAgentRuntimeSession["session"] | undefined;
     let promptStarted = false;
     try {
       const dir = privateSessionDir(input.parentSessionKey);
       mkdirSync(dir, { recursive: true });
       if (input.contextRoot) mkdirSync(join(input.contextRoot, "shared"), { recursive: true });
       if (input.runContextDir) mkdirSync(input.runContextDir, { recursive: true });
-      const { authStorage, modelRegistry } = auth();
-      if (input.resumeSessionFile && !existsSync(input.resumeSessionFile)) throw new Error(`Subagent session file not found: ${input.resumeSessionFile}`);
-      const sessionManager = input.resumeSessionFile
-        ? SessionManager.open(input.resumeSessionFile, dir, input.cwd)
-        : SessionManager.create(input.cwd, dir);
-      const agentDir = getAgentDir();
-      const settingsManager = SettingsManager.create(input.cwd, agentDir);
-      const resourceLoader = new DefaultResourceLoader({
-        cwd: input.cwd,
-        agentDir,
-        settingsManager,
-        appendSystemPrompt: input.agent.systemPrompt ? [input.agent.systemPrompt] : [],
-        extensionsOverride: (base) => ({
-          ...base,
-          extensions: base.extensions.filter((extension) => {
-            const path = `${extension.path} ${extension.resolvedPath}`;
-            return !path.includes("pi-subagents") && !path.includes("pi-plan-mode");
-          }),
-        }),
-      });
-      await resourceLoader.reload();
-      const created = await createAgentSession({ cwd: input.cwd, sessionManager, authStorage, modelRegistry, settingsManager, resourceLoader });
+      const created = await this.runtime.create(input, dir);
       session = created.session;
       const activeSession = session;
       run.session = activeSession;
@@ -235,7 +207,7 @@ export class RealRunner implements Runner {
       if (modelString) {
         const [provider, ...rest] = modelString.split("/");
         const id = rest.join("/");
-        const model = provider && id ? modelRegistry.find(provider, id) : undefined;
+        const model = provider && id ? created.modelRegistry.find(provider, id) : undefined;
         if (!model) throw new Error(`Unknown subagent model: ${modelString}`);
         await activeSession.setModel(model);
       }

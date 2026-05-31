@@ -4,20 +4,25 @@ import { resultLimit } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
 import type { VisibleToolInfo } from "./types.ts";
 
-let manager: TinyMcpManager | undefined;
+const managers = new Map<string, TinyMcpManager>();
 
 export function getManager(cwd = process.cwd()): TinyMcpManager {
-  manager ??= new TinyMcpManager(cwd);
+  const key = cwd;
+  let manager = managers.get(key);
+  if (!manager) {
+    manager = new TinyMcpManager(cwd);
+    managers.set(key, manager);
+  }
   return manager;
 }
 
 export async function shutdownManager(): Promise<void> {
-  await manager?.disconnect().catch(() => undefined);
-  manager = undefined;
+  await Promise.all([...managers.values()].map((manager) => manager.disconnect().catch(() => undefined)));
+  managers.clear();
 }
 
 export function resetManager(): void {
-  manager = undefined;
+  managers.clear();
 }
 
 export function registerTinyMcpTool(pi: any): void {

@@ -1,13 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  createFindTool,
-  createGrepTool,
-  createLsTool,
-  createReadTool,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { listPipToolRegistrations, onPipToolRegistrationChange, pipSettings, registerPipToolFinalizer, registerSettingsSection, setting, themeFg } from "../pip-common/index.ts";
+import { createLifecycle, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg } from "../pip-common/index.ts";
 
 const HOME = homedir();
 const SETTINGS_ID = "quiet-tools";
@@ -17,10 +12,19 @@ const BUILTIN_QUIET_TOOLS = [
   { name: "find", label: "Find" },
   { name: "ls", label: "Ls" },
 ] as const;
-type BuiltIns = ReturnType<typeof createBuiltInTools>;
+
+type BuiltinName = (typeof BUILTIN_QUIET_TOOLS)[number]["name"];
+type BuiltIns = Record<BuiltinName, ToolDefinition<any, any, any>>;
+type BuiltinConfig = {
+  name: BuiltinName;
+  fallbackPath: string;
+  summarizeCall: (args: any) => string;
+};
+
+const scopedSettings = settingsFor(SETTINGS_ID);
 const toolCache = new Map<string, BuiltIns>();
 
-function createBuiltInTools(cwd: string) {
+function createBuiltInTools(cwd: string): BuiltIns {
   return {
     read: createReadTool(cwd),
     grep: createGrepTool(cwd),
@@ -48,10 +52,7 @@ function firstText(result: any): string {
   return block?.type === "text" ? block.text ?? "" : "";
 }
 
-const EMPTY_COMPONENT: Component = {
-  render: () => [],
-  invalidate: () => {},
-};
+const EMPTY_COMPONENT: Component = { render: () => [], invalidate: () => {} };
 
 function expandedOutput(result: any, theme: any): Component {
   const text = firstText(result);
@@ -69,17 +70,9 @@ function settingKey(toolName: string): string {
   return toolName.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-function settingValue<T>(key: string, fallback: T): T {
-  try {
-    return pipSettings.get<T>(`${SETTINGS_ID}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
-
 function isQuietEnabled(toolName: string): boolean {
-  if (!settingValue("enabled", true)) return false;
-  return settingValue(settingKey(toolName), true);
+  if (!scopedSettings.get("enabled", true)) return false;
+  return scopedSettings.get(settingKey(toolName), true);
 }
 
 function registerQuietSettings(): void {
@@ -118,139 +111,86 @@ function renderCompactPipResult(compact: any) {
       return expanded.trim() ? new Text("\n" + expanded.split("\n").map((line: string) => themeFg(theme, "toolOutput", line)).join("\n"), 0, 0) : EMPTY_COMPONENT;
     }
     if (resultText?.trim()) return new Text(themeFg(theme, "warning", "⚠ ") + themeFg(theme, "muted", resultText), 0, 0);
-    if (compact.hideSuccessfulResult) return EMPTY_COMPONENT;
     return EMPTY_COMPONENT;
   };
 }
 
-function registerQuietPipFinalizer(): void {
-  registerPipToolFinalizer({
+function registerQuietPipFinalizer(): () => void {
+  return registerPipToolFinalizer({
     id: "quiet-tools",
     order: 100,
     finalize({ tool, metadata }) {
       if (!metadata?.quietCapable || !metadata.compact || !isQuietEnabled(tool.name)) return tool;
-      return {
-        ...tool,
-        renderShell: "self",
-        renderCall: renderCompactPipCall(tool.name, metadata.compact),
-        renderResult: renderCompactPipResult(metadata.compact),
-      };
+      return { ...tool, renderShell: "self", renderCall: renderCompactPipCall(tool.name, metadata.compact), renderResult: renderCompactPipResult(metadata.compact) };
     },
   });
 }
 
 function renderErrorIfCollapsed(result: any, theme: any): Component {
   const text = firstText(result).trim();
-  if (/^(error|access denied|failed)\b/i.test(text)) {
-    return new Text(theme.fg("error", text.split("\n")[0] ?? text), 0, 0);
-  }
+  if (/^(error|access denied|failed)\b/i.test(text)) return new Text(theme.fg("error", text.split("\n")[0] ?? text), 0, 0);
   return EMPTY_COMPONENT;
 }
 
-export default function (pi: ExtensionAPI) {
-  registerQuietSettings();
-  onPipToolRegistrationChange(registerQuietSettings);
-  registerQuietPipFinalizer();
-  pi.registerTool({
+function builtinRenderFallback(name: BuiltinName, kind: "renderCall" | "renderResult", args: any[], fallback: Component): Component {
+  return (getBuiltInTools(process.cwd())[name] as any)[kind]?.(...args) ?? fallback;
+}
+
+const BUILTIN_CONFIGS: BuiltinConfig[] = [
+  {
     name: "read",
-    label: "read",
-    description: getBuiltInTools(process.cwd()).read.description,
-    parameters: getBuiltInTools(process.cwd()).read.parameters,
-    renderShell: isQuietEnabled("read") ? "self" : "default",
-
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      return getBuiltInTools(ctx.cwd).read.execute(toolCallId, params, signal, onUpdate);
-    },
-
-    renderCall(args, theme, context) {
-      if (!isQuietEnabled("read")) return (getBuiltInTools(process.cwd()).read as any).renderCall?.(args, theme, context) ?? quiet(theme, "read", "", context);
+    fallbackPath: "",
+    summarizeCall(args) {
       const path = shortenPath(args.path, "");
       const start = typeof args.offset === "number" ? args.offset : undefined;
       const end = typeof args.limit === "number" ? (start ?? 1) + args.limit - 1 : undefined;
       const range = start || end ? `:${start ?? 1}${end ? `-${end}` : ""}` : "";
-      return quiet(theme, "read", `${path}${range}`, context);
+      return `${path}${range}`;
     },
-
-    renderResult(result, { expanded }, theme, context) {
-      if (!isQuietEnabled("read")) return (getBuiltInTools(process.cwd()).read as any).renderResult?.(result, { expanded }, theme, context) ?? expandedOutput(result, theme);
-      if (!expanded) return renderErrorIfCollapsed(result, theme);
-      return expandedOutput(result, theme);
-    },
-  });
-
-  pi.registerTool({
+  },
+  {
     name: "grep",
-    label: "grep",
-    description: getBuiltInTools(process.cwd()).grep.description,
-    parameters: getBuiltInTools(process.cwd()).grep.parameters,
-    renderShell: isQuietEnabled("grep") ? "self" : "default",
-
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      return getBuiltInTools(ctx.cwd).grep.execute(toolCallId, params, signal, onUpdate);
-    },
-
-    renderCall(args, theme, context) {
-      if (!isQuietEnabled("grep")) return (getBuiltInTools(process.cwd()).grep as any).renderCall?.(args, theme, context) ?? quiet(theme, "grep", "", context);
+    fallbackPath: ".",
+    summarizeCall(args) {
       const pattern = args.literal ? String(args.pattern ?? "") : `/${String(args.pattern ?? "")}/`;
-      const path = shortenPath(args.path, ".");
-      const bits = [pattern, `in ${path}`];
+      const bits = [pattern, `in ${shortenPath(args.path, ".")}`];
       if (args.glob) bits.push(String(args.glob));
       if (args.ignoreCase) bits.push("-i");
-      return quiet(theme, "grep", bits.join(" "), context);
+      return bits.join(" ");
     },
+  },
+  { name: "find", fallbackPath: ".", summarizeCall: (args) => `${String(args.pattern ?? "")} in ${shortenPath(args.path, ".")}` },
+  { name: "ls", fallbackPath: ".", summarizeCall: (args) => shortenPath(args.path, ".") },
+];
 
-    renderResult(result, { expanded }, theme, context) {
-      if (!isQuietEnabled("grep")) return (getBuiltInTools(process.cwd()).grep as any).renderResult?.(result, { expanded }, theme, context) ?? expandedOutput(result, theme);
-      if (!expanded) return renderErrorIfCollapsed(result, theme);
-      return expandedOutput(result, theme);
-    },
-  });
-
+function registerQuietBuiltin(pi: ExtensionAPI, config: BuiltinConfig): void {
+  const builtin = getBuiltInTools(process.cwd())[config.name];
   pi.registerTool({
-    name: "find",
-    label: "find",
-    description: getBuiltInTools(process.cwd()).find.description,
-    parameters: getBuiltInTools(process.cwd()).find.parameters,
-    renderShell: isQuietEnabled("find") ? "self" : "default",
-
+    name: config.name,
+    label: config.name,
+    description: builtin.description,
+    parameters: builtin.parameters,
+    renderShell: isQuietEnabled(config.name) ? "self" : "default",
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      return getBuiltInTools(ctx.cwd).find.execute(toolCallId, params, signal, onUpdate);
+      return getBuiltInTools(ctx.cwd ?? process.cwd())[config.name].execute(toolCallId, params, signal, onUpdate, ctx);
     },
-
     renderCall(args, theme, context) {
-      if (!isQuietEnabled("find")) return (getBuiltInTools(process.cwd()).find as any).renderCall?.(args, theme, context) ?? quiet(theme, "find", "", context);
-      const pattern = String(args.pattern ?? "");
-      const path = shortenPath(args.path, ".");
-      return quiet(theme, "find", `${pattern} in ${path}`, context);
+      if (!isQuietEnabled(config.name)) return builtinRenderFallback(config.name, "renderCall", [args, theme, context], quiet(theme, config.name, "", context));
+      return quiet(theme, config.name, config.summarizeCall(args), context);
     },
-
     renderResult(result, { expanded }, theme, context) {
-      if (!isQuietEnabled("find")) return (getBuiltInTools(process.cwd()).find as any).renderResult?.(result, { expanded }, theme, context) ?? expandedOutput(result, theme);
+      if (!isQuietEnabled(config.name)) return builtinRenderFallback(config.name, "renderResult", [result, { expanded }, theme, context], expandedOutput(result, theme));
       if (!expanded) return renderErrorIfCollapsed(result, theme);
       return expandedOutput(result, theme);
     },
   });
+}
 
-  pi.registerTool({
-    name: "ls",
-    label: "ls",
-    description: getBuiltInTools(process.cwd()).ls.description,
-    parameters: getBuiltInTools(process.cwd()).ls.parameters,
-    renderShell: isQuietEnabled("ls") ? "self" : "default",
-
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      return getBuiltInTools(ctx.cwd).ls.execute(toolCallId, params, signal, onUpdate);
-    },
-
-    renderCall(args, theme, context) {
-      if (!isQuietEnabled("ls")) return (getBuiltInTools(process.cwd()).ls as any).renderCall?.(args, theme, context) ?? quiet(theme, "ls", "", context);
-      return quiet(theme, "ls", shortenPath(args.path, "."), context);
-    },
-
-    renderResult(result, { expanded }, theme, context) {
-      if (!isQuietEnabled("ls")) return (getBuiltInTools(process.cwd()).ls as any).renderResult?.(result, { expanded }, theme, context) ?? expandedOutput(result, theme);
-      if (!expanded) return renderErrorIfCollapsed(result, theme);
-      return expandedOutput(result, theme);
-    },
-  });
+export default function (pi: ExtensionAPI) {
+  const lifecycle = createLifecycle();
+  registerQuietSettings();
+  lifecycle.add(onPipToolRegistrationChange(registerQuietSettings));
+  lifecycle.add(registerQuietPipFinalizer());
+  pi.on("session_shutdown", async () => { await lifecycle.disposeAll(); });
+  for (const config of BUILTIN_CONFIGS) registerQuietBuiltin(pi, config);
 }

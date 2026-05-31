@@ -16,7 +16,7 @@ Recommended: install this repo as a git Pi package:
 pi install git:github.com/pip12345/pi-pip-extensions
 ```
 
-Pi reads the top-level package manifest and loads each `pi-*/index.ts` as its own extension. `pip-common` is shared helper code and is imported by those extensions; it is not loaded as an extension.
+Pi reads the top-level package manifest and loads each `pi-*/index.ts` as its own extension. `pip-common` is the shared helper package used by those extensions; it is not loaded as an extension from the top-level manifest.
 
 When the remote git branch moves, Pi warns at startup that package updates are available. Update with:
 

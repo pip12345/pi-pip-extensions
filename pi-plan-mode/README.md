@@ -28,6 +28,8 @@ Always blocked in plan mode:
 
 Unknown tools are allowed by default and can be blocked in `/pip-settings`.
 
+Bash `readonly` mode is best-effort, not a security boundary. It uses a conservative allowlist for common inspection commands and blocks shell metacharacters, but command behavior can still vary by platform, aliases, environment, config files, and flags. Use Bash: `block` if you need stricter no-shell planning.
+
 ## Settings
 
 Configure in `/pip-settings` under **Plan Mode**:

@@ -18,7 +18,7 @@ This directory is a loose collection of Pi extensions plus shared helper code.
 - `pi-tiny-mcp` - tiny stdio-only MCP adapter
 - `pi-webfetch-websearch` - cleaned web fetching and no-key web search
 
-Each `pi-*` folder is intended to work as a standalone extension. Shared code is imported by relative path from `pip-common`, so users do not need to run `npm install` just to load the collection.
+Each `pi-*` folder is intended to work both when the whole repo is loaded as a raw extension folder and when packages are installed with dependencies. Shared code lives in `pip-common`; packages declare it as a dependency, but source files use relative imports so raw-folder loading does not require `npm install`.
 
 ## `/pip-settings`
 
@@ -134,10 +134,10 @@ Minimal `package.json`:
 }
 ```
 
-If the extension needs shared helpers, import them relatively:
+If the extension needs shared helpers, declare a `pip-common` dependency in `package.json`, but import it relatively in source so direct folder loading works without installing/linking workspace packages:
 
 ```ts
 import { pipSettings } from "../pip-common/index.ts";
 ```
 
-Do not use bare `pip-common` imports unless you intentionally want to require an install/link step.
+Keep `pip-common` dependency versions in sync with the workspace package version.

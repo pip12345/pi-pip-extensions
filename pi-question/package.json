@@ -27,5 +27,8 @@
     "index.ts",
     "src",
     "README.md"
-  ]
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  }
 }

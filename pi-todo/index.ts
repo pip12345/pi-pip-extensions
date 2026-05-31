@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { boxLines, PipCustomComponent, pipSettings, registerPipTool, registerSettingsSection, setting, themeFg, truncateToWidth } from "../pip-common/index.ts";
+import { boxLines, branchEntries, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
 
 export type TodoStatus = "pending" | "active" | "done";
 
@@ -42,13 +42,8 @@ registerSettingsSection({
   },
 });
 
-function settingValue<T>(key: string, fallback: T): T {
-  try {
-    return pipSettings.get<T>(`${SETTINGS_ID}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
+const scopedSettings = settingsFor(SETTINGS_ID);
+const settingValue = scopedSettings.get;
 
 function emptyState(): TodoState {
   return { todos: [], nextId: 1, updatedAt: Date.now() };
@@ -93,12 +88,7 @@ function normalizeState(data: any): TodoState {
 }
 
 export function stateFromBranch(entries: any[]): TodoState {
-  let state = emptyState();
-  for (const entry of entries ?? []) {
-    if (entry?.type === "custom" && entry.customType === CUSTOM_TYPE) state = normalizeState(entry.data);
-    if (entry?.customType === CUSTOM_TYPE) state = normalizeState(entry.data);
-  }
-  return state;
+  return restoreLatestCustomState(entries, CUSTOM_TYPE, normalizeState, emptyState);
 }
 
 function stateSummary(todos: TodoItem[]): string {
@@ -384,8 +374,7 @@ export default function todoExtension(pi: ExtensionAPI) {
 
   const reconstruct = (ctx: any) => {
     currentCtx = ctx;
-    const branch = ctx?.sessionManager?.getBranch?.() ?? ctx?.sessionManager?.getEntries?.() ?? [];
-    state = stateFromBranch(branch);
+    state = stateFromBranch(branchEntries(ctx));
     refreshWidget(ctx);
   };
 

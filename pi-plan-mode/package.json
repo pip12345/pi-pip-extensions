@@ -24,5 +24,8 @@
   "files": [
     "index.ts",
     "README.md"
-  ]
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  }
 }

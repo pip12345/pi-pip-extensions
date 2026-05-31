@@ -13,6 +13,7 @@ import {
   formatResetTime,
   formatTokenCount,
   getWindowLabel,
+  installWidgetRestacker,
   normalizeUsage,
   pipSettings,
   registerSettingsSection,
@@ -362,7 +363,7 @@ export default function (pi: ExtensionAPI) {
   let tuiRef: { requestRender: () => void } | null = null;
   let footerInstalled = false;
   let originalSetWidget: any;
-  let originalSetWidgetMethod: any;
+  let restoreWidgetRestacker: (() => void) | undefined;
   let gitState: GitState | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let activeProvider: "codex" | "anthropic" | "copilot" | null = null;
@@ -751,26 +752,14 @@ export default function (pi: ExtensionAPI) {
     syncWorkingIndicator(ctx);
 
     if (ctx.hasUI) {
-      originalSetWidgetMethod = ctx.ui.setWidget;
       originalSetWidget = ctx.ui.setWidget?.bind(ctx.ui);
-      let installingTokenWidget = false;
-      const installAtBottom = () => {
-        installingTokenWidget = true;
-        try {
-          installTokenWidget(ctx);
-        } finally {
-          installingTokenWidget = false;
-        }
-      };
-
       if (originalSetWidget) {
-        ctx.ui.setWidget = (key: string, content: any, options?: any) => {
-          const result = originalSetWidget(key, content, options);
-          const placement = options?.placement ?? "aboveEditor";
-          if (!installingTokenWidget && key !== WIDGET_KEY && placement === "aboveEditor") installAtBottom();
-          return result;
-        };
-        installAtBottom();
+        restoreWidgetRestacker = installWidgetRestacker(ctx, {
+          ignoredKey: WIDGET_KEY,
+          watchedPlacement: "aboveEditor",
+          restack: () => installTokenWidget(ctx),
+        });
+        installTokenWidget(ctx);
       }
     }
 
@@ -830,12 +819,12 @@ export default function (pi: ExtensionAPI) {
     ctx?.ui?.setWorkingVisible?.(true);
     ctx?.ui?.setWorkingIndicator?.();
     if (originalSetWidget) originalSetWidget(WIDGET_KEY, undefined);
-    if (ctx?.ui && originalSetWidgetMethod && ctx.ui.setWidget !== originalSetWidgetMethod) ctx.ui.setWidget = originalSetWidgetMethod;
+    restoreWidgetRestacker?.();
     disposeTokenAnimation();
     footerInstalled = false;
     tuiRef = null;
     originalSetWidget = undefined;
-    originalSetWidgetMethod = undefined;
+    restoreWidgetRestacker = undefined;
   };
   pi.on("session_shutdown", shutdown);
   pi.on("session_end", shutdown);

@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pipSettings, registerSettingsSection, setting } from "../pip-common/index.ts";
+import { registerSettingsSection, setting, settingsFor } from "../pip-common/index.ts";
 
 type Mode = "append" | "prepend" | "replace";
 
@@ -75,13 +75,8 @@ export function applyPromptProfile(systemPrompt: string, profileText: string, mo
   return `${systemPrompt}\n\n${profileText}`;
 }
 
-function settingValue<T>(key: string, fallback: T): T {
-  try {
-    return pipSettings.get<T>(`${SETTINGS_ID}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
+const scopedSettings = settingsFor(SETTINGS_ID);
+const settingValue = scopedSettings.get;
 
 export default function promptProfilesExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event: any) => {
