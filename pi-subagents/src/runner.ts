@@ -154,7 +154,13 @@ export class RealRunner implements Runner {
         }
         run.updatedAt = now;
         run.persist?.();
-        if (run.forwarding !== false) input.onUpdate?.({ content: [{ type: "text", text: run.resultText ?? "" }], details: { run: snapshotRun(run) } });
+        if (run.forwarding !== false) {
+          try {
+            input.onUpdate?.({ content: [{ type: "text", text: run.resultText ?? "" }], details: { run: snapshotRun(run) } });
+          } catch {
+            run.forwarding = false;
+          }
+        }
       });
 
       run.dispose = () => {

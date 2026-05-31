@@ -52,6 +52,12 @@ function findAgent(cwd: string, name: string): AgentConfig {
   return agent;
 }
 
+function agentNamesPrompt(cwd: string): string {
+  const names = discoverAgents(cwd).agents.map((agent) => agent.name);
+  if (!names.length) return "";
+  return [`Available subagent agents: ${names.join(", ")}.`, "Use only these subagent agent names; do not invent names."].join("\n");
+}
+
 function listAgents(cwd: string): string {
   const discovered = discoverAgents(cwd);
   const lines = ["Agents:"];
@@ -123,6 +129,12 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
 
     pi.on("session_start", async (_event: any, ctx: any) => activate(ctx));
     pi.on("session_tree", async (_event: any, ctx: any) => activate(ctx));
+    pi.on("before_agent_start", async (event: any, ctx: any) => {
+      if (!settingValue("enabled", true)) return;
+      const block = agentNamesPrompt(ctx?.cwd ?? process.cwd());
+      if (!block) return;
+      return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${block}`.trim() };
+    });
     pi.on("session_shutdown", async (event: any) => {
       if (event?.reason !== "quit" && event?.reason !== "reload") return;
       if (options.manager) await manager.shutdown();
@@ -149,6 +161,12 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           "Ephemeral subagents can be messaged or steered while retained; each interaction refreshes their TTL. Use keep:true for runs that should not expire; /pip-settings can enable Always keep.",
           "Use background:true for long tasks. action:'background' moves foreground subagents to background. Nested subagents are disabled. Use /subagent view for live inspection/steering."
         ].join(" "),
+        promptSnippet: "Launch and manage quiet subagent task runs with isolated context.",
+        promptGuidelines: [
+          "Use only listed subagent agent names; call subagent with action:'agents' if unsure.",
+          "Do not repeatedly poll background subagents; Pi sends a follow-up message when background results are ready if background result injection is enabled.",
+          "Use subagent status/read for explicit user requests, debugging, or when background result injection is disabled.",
+        ],
         parameters: SubagentParams,
         renderCall: renderSubagentCall,
         renderResult: renderSubagentResult,
@@ -215,9 +233,12 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             const agent = findAgent(cwd, params.agent);
             const keep = params.keep ?? settingValue("alwaysKeep", false);
             const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: agent.model ? undefined : currentModelString(ctx), signal, onUpdate });
-            if (run.background) return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nBackground subagent running. Use subagent({action:"status", id:"${run.id}"}) to poll.`, { run: manager.snapshot(run) });
+            const backgroundHint = settingValue("injectBackgroundResults", true)
+              ? "Result will arrive as a follow-up message when done; no routine status checks needed."
+              : "Background result injection is disabled; use status/read later if needed.";
+            if (run.background) return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nBackground subagent running. ${backgroundHint}`, { run: manager.snapshot(run) });
             const outcome = await waitRun(run);
-            if (outcome === "detached") return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nMoved to background. Use subagent({action:"status", id:"${run.id}"}) to poll.`, { run: manager.snapshot(run) });
+            if (outcome === "detached") return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nMoved to background. ${backgroundHint}`, { run: manager.snapshot(run) });
             const snapshot = manager.snapshot(run);
             return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
           } catch (error) {

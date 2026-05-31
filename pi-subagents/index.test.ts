@@ -70,15 +70,49 @@ function ctxForSession(sessionFile: string, cwd = process.cwd(), leafId?: string
 beforeEach(() => {
   resetPipToolsForTests();
   resetManagerForTests();
+  pipSettings.set("subagents.enabled", true);
+  pipSettings.set("subagents.injectBackgroundResults", true);
   pipSettings.set("subagents.alwaysKeep", false);
 });
 
 describe("pi-subagents", () => {
-  it("registers tool, command, and shortcut", () => {
+  it("registers tool, command, shortcut, and prompt metadata", () => {
     const { pi, tool } = setup();
     expect(tool).toBeTruthy();
+    expect(tool.promptSnippet).toContain("subagent");
+    expect(tool.promptGuidelines.join("\n")).toContain("Do not repeatedly poll");
     expect(pi.commands.has("subagent")).toBe(true);
     expect(getRegisteredShortcut(pi, "ctrl+shift+b")).toBeTruthy();
+  });
+
+  it("injects available agent names into the prompt", async () => {
+    const { pi } = setup();
+    const [result] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, createMockCtx());
+    expect(result.systemPrompt).toContain("base");
+    expect(result.systemPrompt).toContain("Available subagent agents:");
+    expect(result.systemPrompt).toContain("explore");
+    expect(result.systemPrompt).toContain("general");
+  });
+
+  it("does not inject available agent names when subagents are disabled", async () => {
+    pipSettings.set("subagents.enabled", false);
+    const { pi } = setup();
+    const [result] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, createMockCtx());
+    expect(result).toBeUndefined();
+  });
+
+  it("injects project agent names from the current workspace", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-subagents-project-agents-"));
+    try {
+      mkdirSync(join(dir, ".pi", "agents"), { recursive: true });
+      writeFileSync(join(dir, ".pi", "agents", "reviewer.md"), "---\ndescription: Reviews code changes\n---\n\nReview code.");
+      const { pi } = setup();
+      const [result] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, createMockCtx({ cwd: dir }));
+      expect(result.systemPrompt).toContain("Available subagent agents:");
+      expect(result.systemPrompt).toContain("reviewer");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("lists built-in agents and returns agent details", async () => {
@@ -521,14 +555,34 @@ describe("pi-subagents", () => {
     await promise;
   });
 
-  it("background launch injects completion", async () => {
+  it("background launch injects completion without asking the model to poll", async () => {
     const { pi, tool } = setup();
     const ctx = createMockCtx();
     await emitEvent(pi, "session_start", {}, ctx);
     const result = await tool.execute("1", { agent: "explore", prompt: "bg", background: true }, undefined, undefined, ctx);
     expect(result.content[0].text).toContain("state: running");
+    expect(result.content[0].text).toContain("follow-up message");
+    expect(result.content[0].text).not.toContain("to poll");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pi.userMessages.at(-1)?.message).toContain("Background subagent completed");
+  });
+
+  it("does not forward live updates for initially backgrounded runs", async () => {
+    const runner = {
+      async launch(_input: any, run: SubagentRun) {
+        run.events.push({ type: "text_delta", text: "hi", at: Date.now() });
+        run.persist?.();
+        run.status = "completed";
+        run.completedAt = Date.now();
+        return run;
+      },
+    } satisfies Runner;
+    const { tool } = setup(runner);
+    const ctx = createMockCtx();
+    const updates: any[] = [];
+    await tool.execute("1", { agent: "explore", prompt: "bg", background: true }, undefined, (update: any) => updates.push(update), ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(updates).toEqual([]);
   });
 
   it("shortcut detaches foreground subagents", async () => {

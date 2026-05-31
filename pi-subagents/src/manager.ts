@@ -201,7 +201,7 @@ export class SubagentManager {
       runContextDir: runDir,
       events: [],
       abortController: new AbortController(),
-      forwarding: true,
+      forwarding: !input.background,
     };
     run.persist = () => this.saveRun(run);
     this.runs.set(run.id, run);
