@@ -1,4 +1,4 @@
-import { Text } from "@earendil-works/pi-tui";
+import { createEditToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import toolUi from "./index.ts";
 import todo from "../pi-todo/index.ts";
@@ -7,9 +7,12 @@ import subagents from "../pi-subagents/index.ts";
 import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
-const theme = { fg: (_name: string, text: string) => text };
+const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
 
-beforeEach(() => resetPipToolsForTests());
+beforeEach(() => {
+  initTheme("dark", false);
+  resetPipToolsForTests();
+});
 
 describe("pi-tool-ui", () => {
   it("registers built-in tool ui overrides", () => {
@@ -29,6 +32,23 @@ describe("pi-tool-ui", () => {
     expect(rendered).not.toContain("expanded");
   });
 
+  it("registers minimal built-in shims instead of cloning full Pi render definitions", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const read = getRegisteredTool(pi, "read");
+    const edit = getRegisteredTool(pi, "edit");
+
+    expect(read.promptSnippet).toBeUndefined();
+    expect(read.promptGuidelines).toBeUndefined();
+    expect(read.renderShell).toBe("self");
+    expect(read.renderCall).toBeTypeOf("function");
+    expect(edit.promptSnippet).toBeUndefined();
+    expect(edit.promptGuidelines).toBeUndefined();
+    expect(edit.renderShell).toBeUndefined();
+    expect(edit.renderCall).toBeTypeOf("function");
+    expect(edit.renderResult).toBeTypeOf("function");
+  });
+
   it("warns when tool output is globally expanded", () => {
     const pi = createMockPi();
     toolUi(pi as any);
@@ -46,29 +66,63 @@ describe("pi-tool-ui", () => {
     expect(grep.renderResult({ content: [{ type: "text", text: "Error: nope\nmore" }] }, { expanded: false }, theme).render(80).join("\n")).toContain("Error: nope");
   });
 
-  it("preserves edit call/shell slots while replacing result", () => {
+  it("wraps edit call rendering so previews can be split without replacing the built-in shell", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
-    expect(edit.renderShell).toBe("self");
+    expect(edit.renderShell).toBeUndefined();
     expect(edit.renderCall).toBeTypeOf("function");
     expect(edit.renderResult).toBeTypeOf("function");
     expect(edit.prepareArguments).toBeTypeOf("function");
   });
 
-  it("installs split edit diffs into the edit call component instead of returning duplicate output", () => {
+  it("renders split edit diffs in the call preview as soon as the built-in preview exists", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
-    const callComponent: any = { children: [new Text("header", 0, 0), { render: () => [""] }, new Text("builtin diff", 0, 0)], invalidate: () => undefined };
-    const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: { callComponent }, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false });
-    expect(resultComponent.render(140)).toEqual([]);
-    const rendered = callComponent.children[2].render(140).join("\n");
+    const args = { path: "a.ts", edits: [] };
+    const state = {};
+    const context = { state, args, cwd: process.cwd(), isError: false, argsComplete: false, invalidate: () => {} };
+    edit.renderCall(args, theme, context);
+    (state as any).callComponent.preview = { diff, firstChangedLine: 2 };
+
+    const callComponent = edit.renderCall(args, theme, context);
+    const rendered = callComponent.render(140).join("\n");
+
+    expect(rendered).toContain("new value");
+    expect(rendered).toContain("│");
+  });
+
+  it("renders split edit diffs as result output without depending on call component internals", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
+    const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false });
+    const rendered = resultComponent.render(140).join("\n");
     expect(rendered).toContain("diff +1 -1");
     expect(rendered).toContain("old value");
     expect(rendered).toContain("new value");
     expect(rendered).toContain("│");
+  });
+
+  it("renders split edit diffs in the built-in call preview without duplicate result output", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
+    const args = { path: "a.ts", edits: [] };
+    const state = {};
+    const context = { state, args, cwd: process.cwd(), isError: false };
+    createEditToolDefinition(process.cwd()).renderCall?.(args, theme, { ...context, argsComplete: false, invalidate: () => {} });
+
+    const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, context);
+
+    expect(resultComponent.render(140)).toEqual([]);
+    const callRendered = (state as any).callComponent.render(140).join("\n");
+    expect(callRendered).toContain("new value");
+    expect(callRendered).toContain("│");
   });
 
   it("falls back to unified edit diffs on narrow terminals", () => {
@@ -130,16 +184,18 @@ describe("pi-tool-ui", () => {
     expect(mcp.renderCall({ search: "files" }, theme, {}).render(80).join("\n")).toContain("› tiny-mcp: search files");
   });
 
-  it("renders subagent through display metadata", () => {
+  it("does not compact-render subagent just because it has display metadata", () => {
     const pi = createMockPi();
     subagents(pi as any);
+    const before = getRegisteredTool(pi, "subagent");
+
     toolUi(pi as any);
     flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "subagent");
 
-    expect(tool.renderShell).toBe("self");
-    expect(tool.renderCall({ agent: "general", prompt: "do a very long thing", background: true }, theme, {}).render(80).join("\n")).toContain("› subagent: general background");
-    expect(tool.renderResult({ content: [{ type: "text", text: "subagent_id: x\nstate: running" }], details: { run: { id: "x" } } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-    expect(pipSettings.definition("tool-ui")?.subagent.description).toContain("compact Tool UI rendering");
+    expect(tool.renderShell).toBe(before.renderShell);
+    expect(tool.renderCall).toBe(before.renderCall);
+    expect(tool.renderResult).toBe(before.renderResult);
+    expect(pipSettings.definition("tool-ui")?.subagent).toBeUndefined();
   });
 });

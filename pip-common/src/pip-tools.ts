@@ -73,6 +73,15 @@ function getState(pi: ExtensionAPI): PiState {
   return state;
 }
 
+function disposeState(state: PiState): void {
+  if (state.scheduled) clearTimeout(state.scheduled);
+  states().delete(state);
+}
+
+function isStalePiError(error: unknown): boolean {
+  return error instanceof Error && /ctx is stale after session replacement or reload/i.test(error.message);
+}
+
 function sortedFinalizers(): PipToolFinalizer[] {
   return [...finalizers().values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id));
 }
@@ -114,9 +123,14 @@ export function registerPipTool(pi: ExtensionAPI, registration: PipToolRegistrat
 
 export function registerPipToolFinalizer(finalizer: PipToolFinalizer): () => void {
   finalizers().set(finalizer.id, finalizer);
-  for (const state of states()) {
-    refinalizeRegistered(state);
-    if (!state.flushed) scheduleFlush(state);
+  for (const state of [...states()]) {
+    try {
+      refinalizeRegistered(state);
+      if (!state.flushed) scheduleFlush(state);
+    } catch (error) {
+      if (!isStalePiError(error)) throw error;
+      disposeState(state);
+    }
   }
   return () => finalizers().delete(finalizer.id);
 }
@@ -127,8 +141,17 @@ export function flushPipTools(pi: ExtensionAPI): void {
     clearTimeout(state.scheduled);
     state.scheduled = undefined;
   }
-  for (const registration of state.registrations) registerOne(state, registration);
-  state.flushed = true;
+  try {
+    for (const registration of state.registrations) registerOne(state, registration);
+    state.flushed = true;
+  } catch (error) {
+    if (!isStalePiError(error)) throw error;
+    disposeState(state);
+  }
+}
+
+export function disposePipToolsForPi(pi: ExtensionAPI): void {
+  for (const state of [...states()]) if (state.pi === pi) disposeState(state);
 }
 
 export function listPipToolRegistrations(): PipToolRegistration[] {

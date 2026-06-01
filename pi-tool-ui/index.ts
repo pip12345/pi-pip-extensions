@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition, createReadToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createEditTool, createEditToolDefinition, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { createLifecycle, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg } from "../pip-common/index.ts";
@@ -23,14 +23,15 @@ type SlotAdapter = {
 
 const scopedSettings = settingsFor(SETTINGS_ID);
 const toolCache = new Map<string, BuiltIns>();
+const COMPACT_PIP_TOOLS = new Set(["todo_write", "todo_update", "todo_read", "tiny-mcp"]);
 
 function createBuiltInTools(cwd: string): BuiltIns {
   return {
-    read: createReadToolDefinition(cwd),
-    grep: createGrepToolDefinition(cwd),
-    find: createFindToolDefinition(cwd),
-    ls: createLsToolDefinition(cwd),
-    edit: createEditToolDefinition(cwd),
+    read: createReadTool(cwd),
+    grep: createGrepTool(cwd),
+    find: createFindTool(cwd),
+    ls: createLsTool(cwd),
+    edit: createEditTool(cwd),
   };
 }
 
@@ -105,8 +106,7 @@ function quietResult(tool: BuiltinName) {
   };
 }
 
-function editDiffComponent(result: any, theme: any): Component | undefined {
-  const diff = result?.details?.diff;
+function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefined {
   if (typeof diff !== "string" || !diff.trim()) return undefined;
   return {
     render(width: number) {
@@ -122,6 +122,10 @@ function editDiffComponent(result: any, theme: any): Component | undefined {
     },
     invalidate() {},
   };
+}
+
+function editDiffComponent(result: any, theme: any): Component | undefined {
+  return editDiffComponentForDiff(result?.details?.diff, theme);
 }
 
 function replaceEditCallDiff(context: any, component: Component): boolean {
@@ -173,16 +177,26 @@ const BUILTIN_ADAPTERS: SlotAdapter[] = [
     label: "Edit diff",
     settingKey: "editDiff",
     settingDescription: "Render edit results with Tool UI split diffs while preserving Pi's built-in edit call/preview renderer.",
+    renderCall(args, theme, context) {
+      const builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderCall?.(args, theme, context) ?? EMPTY_COMPONENT;
+      if (!adapterEnabled("editDiff")) return builtin;
+      const split = editDiffComponentForDiff(context?.state?.callComponent?.preview?.diff, theme);
+      if (split) replaceEditCallDiff(context, split);
+      return builtin;
+    },
     renderResult(result, options, theme, context) {
       let builtin = EMPTY_COMPONENT;
       try {
-        builtin = builtinForContext("edit", context).renderResult?.(result, options, theme, context) ?? EMPTY_COMPONENT;
+        builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderResult?.(result, options, theme, context) ?? EMPTY_COMPONENT;
       } catch {
         builtin = EMPTY_COMPONENT;
       }
       if (!adapterEnabled("editDiff")) return builtin;
       const split = editDiffComponent(result, theme);
       if (!split) return builtin;
+      // Pi's built-in edit renderer owns the live call preview and updates it with
+      // the final diff in renderResult. Replace that preview body with the split
+      // renderer instead of rendering a second diff in the result slot.
       return replaceEditCallDiff(context, split) ? builtin : split;
     },
   },
@@ -209,7 +223,7 @@ function registerToolUiPipFinalizer(): () => void {
     id: "tool-ui",
     order: 100,
     finalize({ tool, metadata }) {
-      if (!metadata?.display || !adapterEnabled(settingKey(tool.name))) return tool;
+      if (!COMPACT_PIP_TOOLS.has(tool.name) || !metadata?.display || !adapterEnabled(settingKey(tool.name))) return tool;
       return { ...tool, renderShell: "self", renderCall: renderDisplayPipCall(tool.name, metadata.display), renderResult: renderDisplayPipResult(metadata.display) };
     },
   });
@@ -222,7 +236,7 @@ function registerToolUiSettings(): void {
   }
   let order = 20;
   for (const registration of listPipToolRegistrations()) {
-    if (!registration.metadata?.display) continue;
+    if (!COMPACT_PIP_TOOLS.has(registration.tool.name) || !registration.metadata?.display) continue;
     const label = registration.metadata.label ?? registration.tool.label ?? registration.tool.name;
     dynamicSettings[settingKey(registration.tool.name)] = setting.boolean({ label, default: true, description: `Use compact Tool UI rendering for ${label}.`, order: order++ });
   }
@@ -243,22 +257,23 @@ function registerToolUiSettings(): void {
   });
 }
 
-function applyAdapter(tool: ToolDefinition<any, any, any>, adapter: SlotAdapter): ToolDefinition<any, any, any> {
-  const next: ToolDefinition<any, any, any> = { ...tool };
-  if (adapter.shell) next.renderShell = adapterEnabled(adapter.settingKey) ? adapter.shell : "default";
-  if (adapter.renderCall) next.renderCall = adapter.renderCall;
-  if (adapter.renderResult) next.renderResult = adapter.renderResult;
-  return next;
-}
-
 function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter): void {
   const builtin = getBuiltInTools(process.cwd())[adapter.tool];
-  pi.registerTool(applyAdapter({
-    ...builtin,
+  const tool: ToolDefinition<any, any, any> = {
+    name: builtin.name,
+    label: builtin.label,
+    description: builtin.description,
+    parameters: builtin.parameters,
+    prepareArguments: builtin.prepareArguments,
+    executionMode: builtin.executionMode,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       return getBuiltInTools(ctx.cwd ?? process.cwd())[adapter.tool].execute(toolCallId, params, signal, onUpdate, ctx);
     },
-  }, adapter));
+  };
+  if (adapter.shell) tool.renderShell = adapterEnabled(adapter.settingKey) ? adapter.shell : "default";
+  if (adapter.renderCall) tool.renderCall = adapter.renderCall;
+  if (adapter.renderResult) tool.renderResult = adapter.renderResult;
+  pi.registerTool(tool);
 }
 
 export default function (pi: ExtensionAPI) {

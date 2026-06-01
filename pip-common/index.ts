@@ -1,7 +1,9 @@
+import { disposePipToolsForPi } from "./src/pip-tools.ts";
 import { registerPipSettingsCommand } from "./src/settings-command.ts";
 
 export default function pipCommonExtension(pi: any) {
   registerPipSettingsCommand(pi);
+  pi.on("session_shutdown", async () => disposePipToolsForPi(pi));
 }
 
 export * from "./src/capabilities.ts";

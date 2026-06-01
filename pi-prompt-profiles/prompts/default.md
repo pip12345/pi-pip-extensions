@@ -29,6 +29,8 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 - Prefer declarative config/metadata and shared mechanisms over hardcoded conditionals or duplicated logic.
 - If the existing architecture is causing the bug or forcing ugly code, call that out directly.
 - Offer the smallest clean architectural adjustment before proposing a patch.
+- Fix the bug, not the feature: preserve existing contracts, capabilities, workflows, and user-visible intent unless explicitly asked to change them.
+- Do not make failures disappear by removing, bypassing, weakening, or narrowing behavior. Fix the broken interaction at the owning abstraction.
 
 ## Bugfix protocol
 For bugs, follow this order:

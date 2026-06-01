@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { flushPipTools, listPipToolRegistrations, onPipToolRegistrationChange, registerPipTool, registerPipToolFinalizer, resetPipToolsForTests } from "../src/pip-tools.ts";
+import { disposePipToolsForPi, flushPipTools, listPipToolRegistrations, onPipToolRegistrationChange, registerPipTool, registerPipToolFinalizer, resetPipToolsForTests } from "../src/pip-tools.ts";
 import { createMockPi } from "../src/testing.ts";
 
 const baseTool = (name: string): any => ({
@@ -55,5 +55,27 @@ describe("pip tool broker", () => {
     expect(changes).toBe(1);
     expect(listPipToolRegistrations().map((registration) => registration.tool.name)).toEqual(["x"]);
     off();
+  });
+
+  it("disposes registrations for a Pi instance on shutdown", () => {
+    const pi = createMockPi();
+    registerPipTool(pi as any, { tool: baseTool("x"), metadata: { pluginId: "test" } });
+    disposePipToolsForPi(pi as any);
+    expect(listPipToolRegistrations()).toEqual([]);
+  });
+
+  it("prunes stale Pi states when registering a finalizer after reload", () => {
+    const stalePi = createMockPi();
+    registerPipTool(stalePi as any, { tool: baseTool("old"), metadata: { pluginId: "old" } });
+    stalePi.registerTool = () => {
+      throw new Error("This extension ctx is stale after session replacement or reload.");
+    };
+
+    expect(() => registerPipToolFinalizer({ id: "late", finalize: ({ tool }) => ({ ...tool, label: `${tool.label}!` }) })).not.toThrow();
+    expect(listPipToolRegistrations()).toEqual([]);
+
+    const freshPi = createMockPi();
+    registerPipTool(freshPi as any, { tool: baseTool("fresh"), metadata: { pluginId: "fresh" } });
+    expect(freshPi.tools.get("fresh").label).toBe("fresh!");
   });
 });
