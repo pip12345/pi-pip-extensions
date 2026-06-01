@@ -3,21 +3,25 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
-import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
+import { addUsage, flushPipTools, pipSettings, resetPipToolsForTests, type TokenUsage } from "../pip-common/index.ts";
 import { createSubagentsExtension, resetManagerForTests } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";
+import { RealRunner } from "./src/runner.ts";
+import type { ChildAgentRuntime } from "./src/child-runtime.ts";
 import type { Runner, SubagentRun } from "./src/types.ts";
 
 class FakeRunner implements Runner {
   delay = 0;
   failContinue = false;
+  usage?: TokenUsage;
   launched: SubagentRun[] = [];
   inputs: any[] = [];
   async launch(input: any, run: SubagentRun): Promise<SubagentRun> {
     this.launched.push(run);
     this.inputs.push(input);
     run.sessionFile = `/tmp/${run.id}.json`;
+    if (this.usage) addUsage(run.usage, this.usage);
     run.dispose = () => undefined;
     run.cancel = async () => {
       run.abortController.abort();
@@ -36,6 +40,37 @@ class FakeRunner implements Runner {
     run.status = "completed";
     run.completedAt = Date.now();
     return run;
+  }
+}
+
+class UsageRuntime implements ChildAgentRuntime {
+  async create(_input: any, _sessionDir: string) {
+    let subscriber: ((event: any) => void) | undefined;
+    const session = {
+      sessionFile: "/tmp/child-session.jsonl",
+      isStreaming: false,
+      subscribe(cb: (event: any) => void) {
+        subscriber = cb;
+        return () => { subscriber = undefined; };
+      },
+      async prompt() {
+        subscriber?.({
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "child done" }],
+            usage: { input: 172_000, output: 6_000, cacheRead: 848_000, cost: { total: 0.42 } },
+          },
+        });
+      },
+      async abort() {},
+      dispose() {},
+      async sendUserMessage() {},
+      getActiveToolNames: () => [],
+      setActiveToolsByName() {},
+      async setModel() {},
+    };
+    return { session: session as any, modelRegistry: { find: () => ({}) } as any };
   }
 }
 
@@ -73,6 +108,7 @@ beforeEach(() => {
   pipSettings.set("subagents.enabled", true);
   pipSettings.set("subagents.injectBackgroundResults", true);
   pipSettings.set("subagents.alwaysKeep", false);
+  pipSettings.set("subagents.showUsageCost", true);
 });
 
 describe("pi-subagents", () => {
@@ -135,6 +171,50 @@ describe("pi-subagents", () => {
     const continued = await tool.execute("2", { id, prompt: "again" }, undefined, undefined, ctx);
     expect(continued.isError).toBeFalsy();
     expect(continued.content[0].text).toContain("continued: again");
+  });
+
+  it("accumulates real child assistant usage and renders compact usage with cost", async () => {
+    const runner = new RealRunner(new UsageRuntime());
+    const { tool } = setup(runner);
+    const ctx = createMockCtx();
+    const result = await tool.execute("1", { agent: "explore", prompt: "usage" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k · $0.42");
+    expect(result.details.run.usage).toMatchObject({ input: 172_000, output: 6_000, cache: 848_000, cost: 0.42 });
+    const rendered = tool.renderResult(result, { expanded: false }, { fg: (_key: string, text: string) => text }).render(120).join("\n");
+    expect(rendered).toContain("↓:172k ↑:6k ↻:848k · $0.42");
+  });
+
+  it("can hide subagent usage cost", async () => {
+    pipSettings.set("subagents.showUsageCost", false);
+    const runner = new FakeRunner();
+    runner.usage = { input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 };
+    const { tool } = setup(runner);
+    const result = await tool.execute("1", { agent: "explore", prompt: "usage no cost" }, undefined, undefined, createMockCtx());
+    expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k");
+    expect(result.content[0].text).not.toContain("$0.42");
+  });
+
+  it("persists usage for retained subagents", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-usage-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const runner = new FakeRunner();
+    runner.usage = { input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 };
+    const first = persistedSetup(runner);
+    try {
+      const ctx = ctxForSession(parentFile);
+      const launched = await first.tool.execute("1", { agent: "explore", prompt: "persist usage", keep: true, name: "usage-run" }, undefined, undefined, ctx);
+      expect(launched.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k · $0.42");
+      const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+      const restored = await secondTool.execute("2", { action: "status", id: "usage-run" }, undefined, undefined, ctx);
+      expect(restored.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k · $0.42");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
   });
 
   it("kept subagents can be continued", async () => {

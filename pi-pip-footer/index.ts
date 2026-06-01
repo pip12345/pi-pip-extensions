@@ -10,6 +10,7 @@ import {
   clampPercent,
   detectQuotaProvider,
   fetchQuotaForProvider,
+  formatCost,
   formatResetTime,
   formatTokenCount,
   getWindowLabel,
@@ -50,6 +51,7 @@ interface TokenBreakdown {
   cacheWrite: number;
   cache: number;
   total: number;
+  cost?: number;
 }
 
 interface GitState {
@@ -78,10 +80,11 @@ registerSettingsSection({
     showContext: setting.boolean({ label: "Context bar", default: true, order: 3, description: "Show current context-window usage as a compact progress bar." }),
     showModel: setting.boolean({ label: "Model", default: true, order: 4, description: "Show the active model and thinking level in the lower footer." }),
     showTokenCounter: setting.boolean({ label: "Above-editor token counter", default: true, order: 5, description: "Show live token burn and settled token totals above the editor." }),
-    cacheIcon: setting.enum({ label: "Cache icon", default: "↻", choices: ["↻", "c", "▣", "◫", "□"] as const, order: 6, description: "Glyph used for cache read/write token counts in the token counter." }),
-    showPluginLines: setting.boolean({ label: "Plugin lines", default: true, order: 7, description: "Allow other pip plugins to contribute extra lines to the footer." }),
-    showGit: setting.boolean({ label: "Git", default: false, order: 8, description: "Show the current git branch when one is available." }),
-    showCwd: setting.enum({ label: "CWD", default: "project", choices: ["off", "project", "path"] as const, order: 9, description: "Show no working directory, the project name, or the full path." }),
+    showTokenCost: setting.boolean({ label: "Token counter cost", default: true, order: 6, description: "Show estimated cost in the above-editor token counter." }),
+    cacheIcon: setting.enum({ label: "Cache icon", default: "↻", choices: ["↻", "c", "▣", "◫", "□"] as const, order: 7, description: "Glyph used for cache read/write token counts in the token counter." }),
+    showPluginLines: setting.boolean({ label: "Plugin lines", default: true, order: 8, description: "Allow other pip plugins to contribute extra lines to the footer." }),
+    showGit: setting.boolean({ label: "Git", default: false, order: 9, description: "Show the current git branch when one is available." }),
+    showCwd: setting.enum({ label: "CWD", default: "project", choices: ["off", "project", "path"] as const, order: 10, description: "Show no working directory, the project name, or the full path." }),
   },
 });
 
@@ -166,17 +169,18 @@ function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): void {
   total.cacheWrite += next.cacheWrite;
   total.cache += next.cache;
   total.total += next.total;
+  total.cost = (total.cost ?? 0) + (next.cost ?? 0);
 }
 
 function getBranchTokens(ctx: any): TokenBreakdown | undefined {
   const entries = ctx.sessionManager.getEntries();
   const leafId = ctx.sessionManager.getLeafId();
   const context = buildSessionContext(entries, leafId);
-  const total: TokenBreakdown = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0 };
+  const total: TokenBreakdown = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
   let found = false;
 
   for (const message of context.messages) {
-    if (message?.role !== "assistant" || message.stopReason === "aborted" || message.stopReason === "error") continue;
+    if (message?.role !== "assistant") continue;
     const usage = normalizeUsage(message.usage);
     if (!usage) continue;
     addTokenBreakdown(total, usage);
@@ -195,9 +199,10 @@ function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBre
   const cacheWrite = Math.max(0, next.cacheWrite - previous.cacheWrite);
   const total = Math.max(0, next.total - previous.total);
   const cache = cacheRead + cacheWrite;
+  const cost = Math.max(0, (next.cost ?? 0) - (previous.cost ?? 0));
 
-  if (input + output + cache + total <= 0) return undefined;
-  return { input, output, cacheRead, cacheWrite, cache, total };
+  if (input + output + cache + total + cost <= 0) return undefined;
+  return { input, output, cacheRead, cacheWrite, cache, total, cost };
 }
 
 function renderBar(usedPercent: number, width: number, theme: any, kind: "quota" | "ctx" = "quota"): string {
@@ -329,7 +334,8 @@ function renderTokenMetric(label: string, value: number, changed: boolean, theme
 
 function interpolateTokenBreakdown(from: TokenBreakdown, to: TokenBreakdown, progress: number): TokenBreakdown {
   const p = Math.max(0, Math.min(1, progress));
-  const lerp = (a: number, b: number) => Math.round(a + (b - a) * p);
+  const lerpRaw = (a: number, b: number) => a + (b - a) * p;
+  const lerp = (a: number, b: number) => Math.round(lerpRaw(a, b));
   const cache = lerp(from.cache, to.cache);
   return {
     input: lerp(from.input, to.input),
@@ -338,6 +344,7 @@ function interpolateTokenBreakdown(from: TokenBreakdown, to: TokenBreakdown, pro
     cacheWrite: 0,
     cache,
     total: lerp(from.total, to.total),
+    cost: from.cost != null || to.cost != null ? lerpRaw(from.cost ?? 0, to.cost ?? 0) : undefined,
   };
 }
 
@@ -417,7 +424,7 @@ export default function (pi: ExtensionAPI) {
 
   function tokenValuesChanged(previous: TokenBreakdown | undefined, next: TokenBreakdown | undefined): boolean {
     if (!previous || !next) return false;
-    return previous.input !== next.input || previous.output !== next.output || previous.cache !== next.cache;
+    return previous.input !== next.input || previous.output !== next.output || previous.cache !== next.cache || (previous.cost ?? 0) !== (next.cost ?? 0);
   }
 
   function getDisplayedTokens(now = Date.now()): TokenBreakdown | undefined {
@@ -468,11 +475,14 @@ export default function (pi: ExtensionAPI) {
       output: highlighting && tokenHighlightedFields.output,
       cache: highlighting && tokenHighlightedFields.cache,
     };
-    return [
+    const parts = [
       renderTokenMetric("↓", displayed.input, changed.input, theme),
       renderTokenMetric("↑", displayed.output, changed.output, theme),
       renderTokenMetric(cacheIcon(), displayed.cache, changed.cache, theme),
-    ].join(" ");
+    ];
+    let text = parts.join(" ");
+    if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`)) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", formatCost(displayed.cost ?? 0))}`;
+    return text;
   }
 
   function renderTokenSuffix(theme: any): string {
@@ -493,6 +503,7 @@ export default function (pi: ExtensionAPI) {
         delta.input > 0 ? `${dim("↓+")}${dim(formatTokenCount(delta.input))}` : "",
         delta.output > 0 ? `${dim("↑+")}${dim(formatTokenCount(delta.output))}` : "",
         delta.cache > 0 ? `${dim(`${cacheIcon()}+`)}${dim(formatTokenCount(delta.cache))}` : "",
+        pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`) && (delta.cost ?? 0) > 0 ? dim(`+${formatCost(delta.cost ?? 0)}`) : "",
       ].filter(Boolean);
       return parts.length ? `${theme.fg("accent", "Δ")} ${parts.join(" ")}` : "";
     }
@@ -501,7 +512,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function renderTokenLine(tokens: TokenBreakdown | undefined, theme: any): string[] {
-    const base = renderTokenBase(tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0 }, theme);
+    const base = renderTokenBase(tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 }, theme);
     const suffix = renderTokenSuffix(theme);
     return suffix ? [`${base}  ${suffix}`, base] : [base];
   }

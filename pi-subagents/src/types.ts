@@ -1,4 +1,5 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { TokenUsage } from "../../pip-common/index.ts";
 
 export type AgentTools = "all" | "none" | "builtins" | string[];
 export type AgentSource = "builtin" | "user" | "legacy" | "project";
@@ -52,6 +53,7 @@ export interface SubagentSnapshot {
   runContextDir?: string;
   resultText?: string;
   errorText?: string;
+  usage?: TokenUsage;
   events: SubagentEvent[];
 }
 
@@ -77,6 +79,7 @@ export interface SubagentRun {
   runContextDir?: string;
   resultText?: string;
   errorText?: string;
+  usage: TokenUsage;
   events: SubagentEvent[];
   abortController: AbortController;
   runPromise?: Promise<SubagentRun>;

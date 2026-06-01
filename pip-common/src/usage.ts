@@ -66,3 +66,21 @@ export function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
   return `${Math.round(tokens)}`;
 }
+
+export function formatCost(cost: number): string {
+  if (!Number.isFinite(cost) || cost <= 0) return "$0";
+  if (cost < 0.001) return `$${cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+  if (cost < 1) return `$${cost.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}`;
+  return `$${cost.toFixed(2)}`;
+}
+
+export function formatCompactUsage(usage: TokenUsage | undefined, options: { includeCost?: boolean } = {}): string {
+  if (!usage) return "";
+  const parts: string[] = [];
+  if (usage.input) parts.push(`↓:${formatTokenCount(usage.input)}`);
+  if (usage.output) parts.push(`↑:${formatTokenCount(usage.output)}`);
+  if (usage.cache) parts.push(`↻:${formatTokenCount(usage.cache)}`);
+  const text = parts.join(" ");
+  if (options.includeCost && usage.cost) return text ? `${text} · ${formatCost(usage.cost)}` : formatCost(usage.cost);
+  return text;
+}

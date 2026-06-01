@@ -15,6 +15,7 @@ export function registerSubagentSettings(): void {
       maxRunning: setting.number({ label: "Max running", default: 6, min: 1, max: 50, step: 1, order: 4, description: "Maximum concurrent running subagents in this Pi process." }),
       injectBackgroundResults: setting.boolean({ label: "Inject background results", default: true, order: 5, description: "Send a follow-up message to the original parent session when a background subagent finishes." }),
       alwaysKeep: setting.boolean({ label: "Always keep", default: false, order: 6, description: "Treat new subagents as non-expiring by default unless a tool call explicitly sets keep:false." }),
+      showUsageCost: setting.boolean({ label: "Show usage cost", default: true, order: 7, description: "Show estimated cost next to subagent token usage in tool results, status, and view." }),
     },
   });
 }

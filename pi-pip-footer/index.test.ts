@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import pipFooter, { __test } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
+import { pipSettings } from "../pip-common/index.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
 
@@ -70,11 +71,41 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "session_start", {}, ctx);
     const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
     const component = factory({ requestRender() {} }, theme);
-    expect(component.render(80)).toEqual(["↓:0 ↑:0 ↻:0"]);
+    expect(component.render(80)).toEqual(["↓:0 ↑:0 ↻:0 · $0"]);
 
     await emitEvent(pi, "turn_start", {}, ctx);
-    expect(component.render(80)[0]).toMatch(/^↓:0 ↑:0 ↻:0  [◐◓◑◒]$/);
+    expect(component.render(80)[0]).toMatch(/^↓:0 ↑:0 ↻:0 · \$0  [◐◓◑◒]$/);
 
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("can hide token counter cost", async () => {
+    pipSettings.set("pi-pip-footer.showTokenCost", false);
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const ctx = createMockCtx({ model: { contextWindow: 272_000 } });
+
+    await emitEvent(pi, "session_start", {}, ctx);
+    const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
+    const component = factory({ requestRender() {} }, theme);
+    expect(component.render(80)).toEqual(["↓:0 ↑:0 ↻:0"]);
+    pipSettings.set("pi-pip-footer.showTokenCost", true);
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("counts assistant usage even when the assistant stop reason is error/aborted", async () => {
+    const entries = [
+      { id: "u1", messages: [{ role: "user", content: "hi" }] },
+      { id: "a1", parentId: "u1", messages: [{ role: "assistant", stopReason: "error", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } }] },
+      { id: "a2", parentId: "a1", messages: [{ role: "assistant", stopReason: "aborted", usage: { input: 4000, output: 5000, cacheWrite: 6000, cost: { total: 0.05 } } }] },
+    ];
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 } });
+    await emitEvent(pi, "session_start", {}, ctx);
+    const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
+    const component = factory({ requestRender() {} }, theme);
+    expect(component.render(120)[0]).toContain("↓:5k ↑:7k ↻:9k · $0.09");
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 
@@ -98,13 +129,14 @@ describe("pi-pip-footer", () => {
 
   it("interpolates token values for count-up animation", () => {
     const mid = __test.interpolateTokenBreakdown(
-      { input: 55, output: 10, cacheRead: 0, cacheWrite: 0, cache: 100, total: 165 },
-      { input: 59, output: 14, cacheRead: 0, cacheWrite: 0, cache: 200, total: 273 },
+      { input: 55, output: 10, cacheRead: 0, cacheWrite: 0, cache: 100, total: 165, cost: 0.1 },
+      { input: 59, output: 14, cacheRead: 0, cacheWrite: 0, cache: 200, total: 273, cost: 0.3 },
       0.5
     );
     expect(mid.input).toBe(57);
     expect(mid.output).toBe(12);
     expect(mid.cache).toBe(150);
+    expect(mid.cost).toBeCloseTo(0.2);
   });
 
   it("renders a tools-expanded warning", () => {

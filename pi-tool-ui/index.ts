@@ -178,7 +178,7 @@ const BUILTIN_ADAPTERS: SlotAdapter[] = [
     settingKey: "editDiff",
     settingDescription: "Render edit results with Tool UI split diffs while preserving Pi's built-in edit call/preview renderer.",
     renderCall(args, theme, context) {
-      const builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderCall?.(args, theme, context) ?? EMPTY_COMPONENT;
+      const builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderCall?.(args as any, theme, context as any) ?? EMPTY_COMPONENT;
       if (!adapterEnabled("editDiff")) return builtin;
       const split = editDiffComponentForDiff(context?.state?.callComponent?.preview?.diff, theme);
       if (split) replaceEditCallDiff(context, split);
@@ -187,7 +187,7 @@ const BUILTIN_ADAPTERS: SlotAdapter[] = [
     renderResult(result, options, theme, context) {
       let builtin = EMPTY_COMPONENT;
       try {
-        builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderResult?.(result, options, theme, context) ?? EMPTY_COMPONENT;
+        builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderResult?.(result as any, options, theme, context as any) ?? EMPTY_COMPONENT;
       } catch {
         builtin = EMPTY_COMPONENT;
       }

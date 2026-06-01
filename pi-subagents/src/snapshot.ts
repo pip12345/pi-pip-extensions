@@ -1,3 +1,4 @@
+import { emptyUsage } from "../../pip-common/index.ts";
 import type { SubagentRun, SubagentSnapshot } from "./types.ts";
 
 export function snapshotRun(run: SubagentRun): SubagentSnapshot {
@@ -22,6 +23,7 @@ export function snapshotRun(run: SubagentRun): SubagentSnapshot {
     runContextDir: run.runContextDir,
     resultText: run.resultText,
     errorText: run.errorText,
+    usage: { ...(run.usage ?? emptyUsage()) },
     events: run.events.slice(-120).map((event) => ({ ...event })),
   };
 }

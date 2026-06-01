@@ -7,7 +7,7 @@ import subagents from "../pi-subagents/index.ts";
 import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
-const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
 
 beforeEach(() => {
   initTheme("dark", false);
@@ -115,7 +115,7 @@ describe("pi-tool-ui", () => {
     const args = { path: "a.ts", edits: [] };
     const state = {};
     const context = { state, args, cwd: process.cwd(), isError: false };
-    createEditToolDefinition(process.cwd()).renderCall?.(args, theme, { ...context, argsComplete: false, invalidate: () => {} });
+    createEditToolDefinition(process.cwd()).renderCall?.(args, theme, { ...context, argsComplete: false, invalidate: () => {} } as any);
 
     const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, context);
 

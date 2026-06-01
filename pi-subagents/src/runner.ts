@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { isPipReadOnlyActive, pipPath } from "../../pip-common/index.ts";
+import { addUsage, emptyUsage, isPipReadOnlyActive, normalizeUsage, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { snapshotRun } from "./snapshot.ts";
@@ -151,6 +151,11 @@ export class RealRunner implements Runner {
           const text = textFromMessage(event.message);
           lastAssistantText = text;
           if (text) run.resultText = text;
+          const usage = normalizeUsage(event.message.usage);
+          if (usage) {
+            run.usage ??= emptyUsage();
+            addUsage(run.usage, usage);
+          }
         }
         run.updatedAt = now;
         run.persist?.();

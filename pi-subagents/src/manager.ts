@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { emptyUsage } from "../../pip-common/index.ts";
 import type { AgentConfig, LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";
@@ -199,6 +200,7 @@ export class SubagentManager {
       updatedAt: this.now(),
       contextRoot: root,
       runContextDir: runDir,
+      usage: emptyUsage(),
       events: [],
       abortController: new AbortController(),
       forwarding: !input.background,

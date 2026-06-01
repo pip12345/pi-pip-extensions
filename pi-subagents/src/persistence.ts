@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { pipPath } from "../../pip-common/index.ts";
+import { emptyUsage, pipPath, type TokenUsage } from "../../pip-common/index.ts";
 import type { RunStatus, SubagentEvent, SubagentRun } from "./types.ts";
 import { privateSessionDir } from "./runner.ts";
 
-const VERSION = 2;
+const VERSION = 3;
 
 function safePart(value: string): string {
   const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
@@ -26,7 +26,7 @@ export function parentIndexPath(parentSessionKey: string, baseDir?: string): str
 }
 
 export interface PersistedRun {
-  version: 2;
+  version: 2 | 3;
   id: string;
   name?: string;
   agent: string;
@@ -47,11 +47,12 @@ export interface PersistedRun {
   runContextDir?: string;
   resultText?: string;
   errorText?: string;
+  usage?: TokenUsage;
   events: SubagentEvent[];
 }
 
 interface ParentIndex {
-  version: 2;
+  version: 2 | 3;
   parentSessionKey: string;
   parentSessionFile: string;
   runs: PersistedRun[];
@@ -85,6 +86,7 @@ export function toPersistedRun(run: SubagentRun): PersistedRun | undefined {
     runContextDir: run.runContextDir,
     resultText: run.resultText,
     errorText: run.errorText,
+    usage: { ...run.usage },
     events: run.events.slice(-300).map((event) => ({ ...event })),
   };
 }
@@ -112,6 +114,7 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
     runContextDir: record.runContextDir,
     resultText: record.resultText,
     errorText: wasRunning ? "Subagent was interrupted by parent process shutdown/restart." : record.errorText,
+    usage: { ...(record.usage ?? emptyUsage()) },
     events: record.events.slice(-300).map((event) => ({ ...event })),
     abortController: new AbortController(),
     forwarding: false,
@@ -119,7 +122,7 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
 }
 
 function validateIndex(value: any, expectedParentKey: string): ParentIndex {
-  if (!value || value.version !== VERSION || value.parentSessionKey !== expectedParentKey || typeof value.parentSessionFile !== "string" || !Array.isArray(value.runs)) {
+  if (!value || ![2, VERSION].includes(value.version) || value.parentSessionKey !== expectedParentKey || typeof value.parentSessionFile !== "string" || !Array.isArray(value.runs)) {
     throw new Error(`Invalid subagent persistence index for parent ${expectedParentKey}`);
   }
   return value as ParentIndex;
