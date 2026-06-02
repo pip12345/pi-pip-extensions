@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,11 +10,7 @@ async function loadStats() {
 }
 
 function usagePath(home: string) {
-  return join(home, ".pi", "agent", "pip", "token-usage.json");
-}
-
-function legacyUsagePath(home: string) {
-  return join(home, ".pi", "agent", "pip", "token-usage.jsonl");
+  return join(home, ".pi", "agent", "pip", "usage", "token-usage.json");
 }
 
 describe("pi-stats", () => {
@@ -38,7 +34,7 @@ describe("pi-stats", () => {
     expect(pi.handlers.has("message_end")).toBe(true);
   });
 
-  it("writes global usage as daily provider/model rollups", async () => {
+  it("records assistant message usage through the global rollup storage", async () => {
     const stats = await loadStats();
     const pi = createMockPi();
     stats(pi as any);
@@ -59,11 +55,7 @@ describe("pi-stats", () => {
     );
 
     const saved = JSON.parse(readFileSync(usagePath(home), "utf8"));
-    expect(saved.version).toBe(1);
     expect(saved.buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({
-      day: "2026-06-01",
-      provider: "anthropic",
-      model: "claude-sonnet",
       turns: 1,
       input: 10,
       output: 5,
@@ -73,36 +65,5 @@ describe("pi-stats", () => {
       total: 20,
       cost: 0.01,
     });
-    expect(existsSync(legacyUsagePath(home))).toBe(false);
-  });
-
-  it("migrates legacy JSONL usage into the rollup file and removes the old file", async () => {
-    const dir = join(home, ".pi", "agent", "pip");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      legacyUsagePath(home),
-      [
-        JSON.stringify({ id: "a", ts: Date.UTC(2026, 5, 1, 12), provider: "anthropic", model: "claude-sonnet", input: 10, output: 5, cacheRead: 1, cacheWrite: 0, cache: 1, total: 16, cost: 0.01 }),
-        JSON.stringify({ id: "b", ts: Date.UTC(2026, 5, 1, 13), provider: "anthropic", model: "claude-sonnet", input: 3, output: 2, cacheRead: 0, cacheWrite: 4, cache: 4, total: 9, cost: 0.02 }),
-      ].join("\n") + "\n",
-      "utf8"
-    );
-
-    const stats = await loadStats();
-    const pi = createMockPi();
-    stats(pi as any);
-
-    const saved = JSON.parse(readFileSync(usagePath(home), "utf8"));
-    expect(saved.buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({
-      turns: 2,
-      input: 13,
-      output: 7,
-      cacheRead: 1,
-      cacheWrite: 4,
-      cache: 5,
-      total: 25,
-      cost: 0.03,
-    });
-    expect(existsSync(legacyUsagePath(home))).toBe(false);
   });
 });

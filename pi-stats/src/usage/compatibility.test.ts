@@ -1,0 +1,115 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+async function loadStorage() {
+  vi.resetModules();
+  return await import("./storage.ts");
+}
+
+function usagePath(home: string) {
+  return join(home, ".pi", "agent", "pip", "usage", "token-usage.json");
+}
+
+function legacyRootUsagePath(home: string) {
+  return join(home, ".pi", "agent", "pip", "token-usage.json");
+}
+
+function legacyUsagePath(home: string) {
+  return join(home, ".pi", "agent", "pip", "token-usage.jsonl");
+}
+
+describe("pi-stats usage compatibility", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "pi-stats-usage-"));
+    vi.stubEnv("HOME", home);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("migrates legacy root rollup usage into the usage rollup file and removes the old file", async () => {
+    const dir = join(home, ".pi", "agent", "pip");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      legacyRootUsagePath(home),
+      JSON.stringify(
+        {
+          version: 1,
+          updatedAt: Date.UTC(2026, 5, 1, 14),
+          buckets: {
+            "2026-06-01|anthropic|claude-sonnet": {
+              day: "2026-06-01",
+              provider: "anthropic",
+              model: "claude-sonnet",
+              turns: 2,
+              input: 13,
+              output: 7,
+              cacheRead: 1,
+              cacheWrite: 4,
+              cache: 5,
+              total: 25,
+              cost: 0.03,
+              firstTs: Date.UTC(2026, 5, 1, 12),
+              lastTs: Date.UTC(2026, 5, 1, 13),
+            },
+          },
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const { migrateUsageStorage } = await loadStorage();
+    migrateUsageStorage();
+
+    const saved = JSON.parse(readFileSync(usagePath(home), "utf8"));
+    expect(saved.buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({
+      turns: 2,
+      input: 13,
+      output: 7,
+      cacheRead: 1,
+      cacheWrite: 4,
+      cache: 5,
+      total: 25,
+      cost: 0.03,
+    });
+    expect(existsSync(legacyRootUsagePath(home))).toBe(false);
+  });
+
+  it("migrates legacy JSONL usage into the rollup file and removes the old file", async () => {
+    const dir = join(home, ".pi", "agent", "pip");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      legacyUsagePath(home),
+      [
+        JSON.stringify({ id: "a", ts: Date.UTC(2026, 5, 1, 12), provider: "anthropic", model: "claude-sonnet", input: 10, output: 5, cacheRead: 1, cacheWrite: 0, cache: 1, total: 16, cost: 0.01 }),
+        JSON.stringify({ id: "b", ts: Date.UTC(2026, 5, 1, 13), provider: "anthropic", model: "claude-sonnet", input: 3, output: 2, cacheRead: 0, cacheWrite: 4, cache: 4, total: 9, cost: 0.02 }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const { migrateUsageStorage } = await loadStorage();
+    migrateUsageStorage();
+
+    const saved = JSON.parse(readFileSync(usagePath(home), "utf8"));
+    expect(saved.buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({
+      turns: 2,
+      input: 13,
+      output: 7,
+      cacheRead: 1,
+      cacheWrite: 4,
+      cache: 5,
+      total: 25,
+      cost: 0.03,
+    });
+    expect(existsSync(legacyRootUsagePath(home))).toBe(false);
+    expect(existsSync(legacyUsagePath(home))).toBe(false);
+  });
+});

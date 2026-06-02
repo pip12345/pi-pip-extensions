@@ -1,5 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
@@ -12,16 +10,16 @@ import {
   PipCustomComponent,
   printableInput,
   textFromContent,
-  pipPath,
   type TokenUsage as Tokens,
 } from "../pip-common/index.ts";
+import { groupGlobal } from "./src/usage/rollups.ts";
+import { migrateUsageStorage, readRollups, updateRollups } from "./src/usage/storage.ts";
+import type { GroupBy, RangeKey } from "./src/usage/types.ts";
 
 type ExtensionAPI = any;
 type Theme = any;
 
-type RangeKey = "today" | "7d" | "30d" | "all";
 type Page = "session" | "global";
-type GroupBy = "model" | "provider" | "day";
 
 interface SessionRow extends Tokens {
   index: number;
@@ -36,38 +34,6 @@ interface SessionRow extends Tokens {
   cumulative: Tokens;
 }
 
-interface GlobalUsageEvent extends Tokens {
-  id?: string;
-  ts: number;
-  cwd?: string;
-  sessionFile?: string;
-  provider: string;
-  model: string;
-}
-
-interface UsageBucket extends Tokens {
-  day: string;
-  provider: string;
-  model: string;
-  turns: number;
-  firstTs: number;
-  lastTs: number;
-}
-
-interface UsageRollups {
-  version: 1;
-  updatedAt: number;
-  buckets: Record<string, UsageBucket>;
-}
-
-interface GlobalRow extends Tokens {
-  key: string;
-  turns: number;
-  lastTs: number;
-}
-
-const GLOBAL_USAGE_PATH = pipPath("token-usage.json");
-const LEGACY_GLOBAL_USAGE_PATH = pipPath("token-usage.jsonl");
 const RANGE_LABELS: Record<RangeKey, string> = { today: "today", "7d": "last 7d", "30d": "last 30d", all: "all time" };
 
 function fmt(n: number, compact = true): string {
@@ -84,18 +50,6 @@ function money(n: number): string {
 
 function hashId(parts: unknown[]): string {
   return createHash("sha1").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
-}
-
-function dayKey(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
-}
-
-function rangeStart(range: RangeKey): number {
-  const now = new Date();
-  if (range === "all") return 0;
-  if (range === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const days = range === "7d" ? 7 : 30;
-  return Date.now() - days * 24 * 60 * 60 * 1000;
 }
 
 function bar(value: number, max: number, width: number, theme: Theme, color = "accent"): string {
@@ -206,127 +160,6 @@ function buildSessionRows(ctx: any): SessionRow[] {
   }
   finishCurrent();
   return rows;
-}
-
-function emptyRollups(): UsageRollups {
-  return { version: 1, updatedAt: 0, buckets: {} };
-}
-
-function bucketKey(day: string, provider: string, model: string): string {
-  return `${day}|${provider}|${model}`;
-}
-
-function readLegacyGlobalEvents(): GlobalUsageEvent[] {
-  if (!existsSync(LEGACY_GLOBAL_USAGE_PATH)) return [];
-  const lines = readFileSync(LEGACY_GLOBAL_USAGE_PATH, "utf8").split("\n").filter(Boolean);
-  const events: GlobalUsageEvent[] = [];
-  for (const line of lines) {
-    try {
-      const event = JSON.parse(line);
-      if (event?.model && typeof event.ts === "number") events.push(event);
-    } catch {}
-  }
-  return events;
-}
-
-function readRollupsFile(): UsageRollups {
-  if (!existsSync(GLOBAL_USAGE_PATH)) return emptyRollups();
-  try {
-    const parsed = JSON.parse(readFileSync(GLOBAL_USAGE_PATH, "utf8"));
-    if (parsed?.version === 1 && parsed?.buckets && typeof parsed.buckets === "object") return parsed;
-  } catch {}
-  return emptyRollups();
-}
-
-function writeRollupsFile(rollups: UsageRollups): void {
-  mkdirSync(dirname(GLOBAL_USAGE_PATH), { recursive: true });
-  rollups.updatedAt = Date.now();
-  const tmp = `${GLOBAL_USAGE_PATH}.tmp`;
-  writeFileSync(tmp, JSON.stringify(rollups, null, 2) + "\n", "utf8");
-  renameSync(tmp, GLOBAL_USAGE_PATH);
-}
-
-function addEventToRollups(rollups: UsageRollups, event: GlobalUsageEvent): void {
-  const provider = event.provider || "unknown";
-  const model = event.model || "unknown";
-  const ts = event.ts || Date.now();
-  const day = dayKey(ts);
-  const key = bucketKey(day, provider, model);
-  const bucket = rollups.buckets[key] ?? {
-    day,
-    provider,
-    model,
-    turns: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    cache: 0,
-    total: 0,
-    cost: 0,
-    firstTs: ts,
-    lastTs: ts,
-  };
-  bucket.turns += 1;
-  bucket.input += event.input;
-  bucket.output += event.output;
-  bucket.cacheRead += event.cacheRead;
-  bucket.cacheWrite += event.cacheWrite;
-  bucket.cache += event.cache;
-  bucket.total += event.total;
-  bucket.cost += event.cost;
-  bucket.firstTs = Math.min(bucket.firstTs, ts);
-  bucket.lastTs = Math.max(bucket.lastTs, ts);
-  rollups.buckets[key] = bucket;
-}
-
-function migrateLegacyUsage(): void {
-  if (!existsSync(LEGACY_GLOBAL_USAGE_PATH)) return;
-  const rollups = readRollupsFile();
-  for (const event of readLegacyGlobalEvents()) addEventToRollups(rollups, event);
-  writeRollupsFile(rollups);
-  unlinkSync(LEGACY_GLOBAL_USAGE_PATH);
-}
-
-function readRollups(): UsageRollups {
-  migrateLegacyUsage();
-  return readRollupsFile();
-}
-
-function updateRollups(event: GlobalUsageEvent): void {
-  migrateLegacyUsage();
-  const rollups = readRollupsFile();
-  addEventToRollups(rollups, event);
-  writeRollupsFile(rollups);
-}
-
-function bucketInRange(bucket: UsageBucket, range: RangeKey): boolean {
-  if (range === "all") return true;
-  if (range === "today") return bucket.day === dayKey(Date.now());
-  return bucket.day >= dayKey(rangeStart(range));
-}
-
-function groupGlobal(rollups: UsageRollups, range: RangeKey, groupBy: GroupBy, search: string): GlobalRow[] {
-  const q = search.trim().toLowerCase();
-  const map = new Map<string, GlobalRow>();
-  for (const bucket of Object.values(rollups.buckets)) {
-    if (!bucketInRange(bucket, range)) continue;
-    const hay = `${bucket.provider}/${bucket.model}`.toLowerCase();
-    if (q && !hay.includes(q)) continue;
-    const key = groupBy === "provider" ? bucket.provider : groupBy === "day" ? bucket.day : `${bucket.provider}/${bucket.model}`;
-    const row = map.get(key) ?? { key, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0, lastTs: 0 };
-    row.turns += bucket.turns;
-    row.input += bucket.input;
-    row.output += bucket.output;
-    row.cacheRead += bucket.cacheRead;
-    row.cacheWrite += bucket.cacheWrite;
-    row.cache += bucket.cache;
-    row.total += bucket.total;
-    row.cost += bucket.cost;
-    row.lastTs = Math.max(row.lastTs, bucket.lastTs);
-    map.set(key, row);
-  }
-  return Array.from(map.values()).sort((a, b) => b.total - a.total);
 }
 
 class TokenInspector extends PipCustomComponent<void> {
@@ -528,7 +361,7 @@ class TokenInspector extends PipCustomComponent<void> {
 }
 
 export default function (pi: ExtensionAPI) {
-  migrateLegacyUsage();
+  migrateUsageStorage();
   const seen = new Set<string>();
 
   pi.on("message_end", async (event: any, ctx: any) => {
