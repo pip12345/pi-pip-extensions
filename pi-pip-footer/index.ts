@@ -11,6 +11,7 @@ import {
   detectQuotaProvider,
   fetchQuotaForProvider,
   installWidgetRestacker,
+  applyTemporaryLiveModelsDevCostFallback,
   pipSettings,
   truncateToWidth,
   visibleWidth,
@@ -176,6 +177,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("message_end", async (event: any, ctx: any) => {
+    await applyTemporaryLiveModelsDevCostFallback(event.message);
     tokenController.onMessageEnd(event, ctx);
   });
 
