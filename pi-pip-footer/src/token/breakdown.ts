@@ -1,4 +1,7 @@
-import { normalizeUsage } from "../../../pip-common/index.ts";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { normalizeUsage, pipPath } from "../../../pip-common/index.ts";
 import { buildSessionContext } from "../session-context.ts";
 
 export interface TokenBreakdown {
@@ -37,6 +40,80 @@ export function getBranchTokens(ctx: any): TokenBreakdown | undefined {
   }
 
   return found ? total : undefined;
+}
+
+function emptyBreakdown(): TokenBreakdown {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
+}
+
+function sessionFile(ctx: any): string | undefined {
+  return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.sessionFile;
+}
+
+function linkedSessionFiles(parentSessionFile: string | undefined): Set<string> {
+  const files = new Set<string>();
+  if (!parentSessionFile) return files;
+  files.add(parentSessionFile);
+  const parentsDir = pipPath("subagents", "parents");
+  if (!existsSync(parentsDir)) return files;
+  for (const dirent of readdirSync(parentsDir, { withFileTypes: true })) {
+    if (!dirent.isDirectory()) continue;
+    const path = join(parentsDir, dirent.name, "runs.json");
+    if (!existsSync(path)) continue;
+    try {
+      const record = JSON.parse(readFileSync(path, "utf8"));
+      if (record?.parentSessionFile !== parentSessionFile && record?.parentSessionKey !== parentSessionFile) continue;
+      for (const run of Array.isArray(record.runs) ? record.runs : []) {
+        if (typeof run?.sessionFile === "string") files.add(run.sessionFile);
+      }
+    } catch {}
+  }
+  return files;
+}
+
+function eventDays(): string[] {
+  const dir = pipPath("usage", "events");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name))
+    .map((entry) => entry.name);
+}
+
+let historicalCache: { key: string; expiresAt: number; tokens: TokenBreakdown | undefined } | undefined;
+
+export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean } = {}): TokenBreakdown | undefined {
+  const sessions = linkedSessionFiles(sessionFile(ctx));
+  if (!sessions.size) return undefined;
+  const cacheKey = [...sessions].sort().join("\0");
+  const now = Date.now();
+  if (!options.fresh && historicalCache?.key === cacheKey && historicalCache.expiresAt > now) return historicalCache.tokens ? { ...historicalCache.tokens } : undefined;
+  const total = emptyBreakdown();
+  const seen = new Set<string>();
+  let found = false;
+  for (const day of eventDays()) {
+    const dayDir = pipPath("usage", "events", day);
+    for (const file of readdirSync(dayDir, { withFileTypes: true })) {
+      if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
+      const path = join(dayDir, file.name);
+      for (const line of readFileSync(path, "utf8").split("\n")) {
+        if (!line) continue;
+        try {
+          const event = JSON.parse(line);
+          if (!sessions.has(event?.sessionFile)) continue;
+          const dedupe = typeof event.id === "string" && event.id ? event.id : createHash("sha1").update(line).digest("hex");
+          if (seen.has(dedupe)) continue;
+          seen.add(dedupe);
+          const usage = normalizeUsage(event);
+          if (!usage) continue;
+          addTokenBreakdown(total, usage);
+          found = true;
+        } catch {}
+      }
+    }
+  }
+  const tokens = found ? total : undefined;
+  historicalCache = { key: cacheKey, expiresAt: now + 1000, tokens: tokens ? { ...tokens } : undefined };
+  return tokens;
 }
 
 export function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBreakdown): TokenBreakdown | undefined {

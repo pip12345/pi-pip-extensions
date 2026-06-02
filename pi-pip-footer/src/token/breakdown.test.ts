@@ -1,9 +1,29 @@
-import { describe, expect, it } from "vitest";
-import { getBranchTokens, interpolateTokenBreakdown } from "./breakdown.ts";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockCtx } from "../../../pip-common/testing.ts";
 
+async function loadBreakdown() {
+  vi.resetModules();
+  return await import("./breakdown.ts");
+}
+
 describe("pi-pip-footer token breakdown", () => {
-  it("counts assistant usage even when the assistant stop reason is error/aborted", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "pip-footer-usage-"));
+    vi.stubEnv("HOME", home);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("counts branch assistant usage for transcript-scoped callers", async () => {
+    const { getBranchTokens } = await loadBreakdown();
     const entries = [
       { id: "u1", messages: [{ role: "user", content: "hi" }] },
       { id: "a1", parentId: "u1", messages: [{ role: "assistant", stopReason: "error", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } }] },
@@ -13,7 +33,29 @@ describe("pi-pip-footer token breakdown", () => {
     expect(getBranchTokens(ctx)).toMatchObject({ input: 5000, output: 7000, cache: 9000, cost: 0.09 });
   });
 
-  it("interpolates token values for count-up animation", () => {
+  it("counts historical parent and linked subagent usage from the usage ledger", async () => {
+    const parentSession = "/tmp/parent.jsonl";
+    const childSession = "/tmp/child.jsonl";
+    const usageDir = join(home, ".pi", "agent", "pip", "usage", "events", "2026-06-02");
+    mkdirSync(usageDir, { recursive: true });
+    writeFileSync(
+      join(usageDir, "events.jsonl"),
+      [
+        JSON.stringify({ id: "parent", ts: Date.UTC(2026, 5, 2), sessionFile: parentSession, provider: "openai", model: "gpt", input: 10, output: 5, cacheRead: 2, cacheWrite: 0, cache: 2, total: 17, cost: 0.01 }),
+        JSON.stringify({ id: "child", ts: Date.UTC(2026, 5, 2), sessionFile: childSession, provider: "openai", model: "gpt", input: 20, output: 6, cacheRead: 3, cacheWrite: 0, cache: 3, total: 29, cost: 0.02 }),
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    const parentsDir = join(home, ".pi", "agent", "pip", "subagents", "parents", "parent-record");
+    mkdirSync(parentsDir, { recursive: true });
+    writeFileSync(join(parentsDir, "runs.json"), JSON.stringify({ parentSessionFile: parentSession, runs: [{ sessionFile: childSession }] }), "utf8");
+    const { getHistoricalSessionTokens } = await loadBreakdown();
+    const ctx = createMockCtx({ sessionManager: { getSessionFile: () => parentSession } });
+    expect(getHistoricalSessionTokens(ctx)).toMatchObject({ input: 30, output: 11, cache: 5, cost: 0.03 });
+  });
+
+  it("interpolates token values for count-up animation", async () => {
+    const { interpolateTokenBreakdown } = await loadBreakdown();
     const mid = interpolateTokenBreakdown(
       { input: 55, output: 10, cacheRead: 0, cacheWrite: 0, cache: 100, total: 165, cost: 0.1 },
       { input: 59, output: 14, cacheRead: 0, cacheWrite: 0, cache: 200, total: 273, cost: 0.3 },

@@ -32,6 +32,9 @@ interface SessionRow extends Tokens {
   contextPercent: number | null;
   contextWindow: number;
   assistantCount: number;
+  subagentCount: number;
+  parent: Tokens;
+  subagents: Tokens;
   cumulative: Tokens;
 }
 
@@ -89,6 +92,38 @@ function box(lines: string[], width: number, title: string, theme: Theme): strin
   return boxLines(lines, width, theme, { title });
 }
 
+function emptySessionRow(modelWindow: number, prompt: string, timestamp: number): SessionRow {
+  return {
+    ...emptyTokens(),
+    index: 0,
+    prompt,
+    provider: "unknown",
+    model: "unknown",
+    timestamp,
+    contextTokens: 0,
+    contextWindow: modelWindow,
+    contextPercent: null,
+    assistantCount: 0,
+    subagentCount: 0,
+    parent: emptyTokens(),
+    subagents: emptyTokens(),
+    cumulative: emptyTokens(),
+  };
+}
+
+function subagentUsagesFromToolResult(msg: any): Tokens[] {
+  if (msg?.role !== "toolResult" || msg?.toolName !== "subagent") return [];
+  const out: Tokens[] = [];
+  const add = (value: any) => {
+    const usage = normalizeUsage(value);
+    if (usage) out.push(usage);
+  };
+  add(msg.details?.run?.usage);
+  for (const run of Array.isArray(msg.details?.runs) ? msg.details.runs : []) add(run?.usage);
+  for (const result of Array.isArray(msg.details?.results) ? msg.details.results : []) add(result?.usage);
+  return out;
+}
+
 function buildSessionRows(ctx: any): SessionRow[] {
   const modelWindow = ctx.model?.contextWindow ?? 0;
   const entries = ctx.sessionManager.getBranch?.() ?? ctx.sessionManager.getEntries?.() ?? [];
@@ -98,8 +133,13 @@ function buildSessionRows(ctx: any): SessionRow[] {
 
   const cumulative = emptyTokens();
 
+  const ensureCurrent = (entry: any, prompt = "(no prompt)") => {
+    current ??= emptySessionRow(modelWindow, prompt, Date.parse(entry?.timestamp) || Date.now());
+    return current;
+  };
+
   const finishCurrent = () => {
-    if (current && current.assistantCount > 0) {
+    if (current && (current.assistantCount > 0 || current.subagentCount > 0)) {
       current.index = ++idx;
       addTokens(cumulative, current);
       current.cumulative = { ...cumulative };
@@ -112,51 +152,37 @@ function buildSessionRows(ctx: any): SessionRow[] {
     const msg = entry?.message;
     if (entry?.type === "message" && msg?.role === "user") {
       finishCurrent();
-      current = {
-        ...emptyTokens(),
-        index: 0,
-        prompt: textFromContent(msg.content).replace(/\s+/g, " ").trim() || "(empty prompt)",
-        provider: "unknown",
-        model: "unknown",
-        timestamp: msg.timestamp || Date.parse(entry.timestamp) || Date.now(),
-        contextTokens: 0,
-        contextWindow: modelWindow,
-        contextPercent: null,
-        assistantCount: 0,
-        cumulative: emptyTokens(),
-      };
+      current = emptySessionRow(modelWindow, textFromContent(msg.content).replace(/\s+/g, " ").trim() || "(empty prompt)", msg.timestamp || Date.parse(entry.timestamp) || Date.now());
       continue;
     }
 
     if (entry?.type === "message" && msg?.role === "assistant" && msg.stopReason !== "aborted" && msg.stopReason !== "error") {
       const t = normalizeUsage(msg.usage);
       if (!t) continue;
-      if (!current) {
-        current = {
-          ...emptyTokens(),
-          index: 0,
-          prompt: "(no prompt)",
-          provider: "unknown",
-          model: "unknown",
-          timestamp: msg.timestamp || Date.parse(entry.timestamp) || Date.now(),
-          contextTokens: 0,
-          contextWindow: modelWindow,
-          contextPercent: null,
-          assistantCount: 0,
-          cumulative: emptyTokens(),
-        };
-      }
-      if (current.assistantCount === 0) {
+      const row = ensureCurrent(entry);
+      if (row.assistantCount === 0) {
         const promptContext = t.input + t.cacheRead + t.cacheWrite;
-        current.contextTokens = promptContext;
-        current.contextWindow = modelWindow;
-        current.contextPercent = modelWindow > 0 ? (promptContext / modelWindow) * 100 : null;
+        row.contextTokens = promptContext;
+        row.contextWindow = modelWindow;
+        row.contextPercent = modelWindow > 0 ? (promptContext / modelWindow) * 100 : null;
       }
-      addTokens(current, t);
-      current.provider = msg.provider || current.provider;
-      current.model = msg.model || current.model;
-      current.timestamp = msg.timestamp || Date.parse(entry.timestamp) || current.timestamp;
-      current.assistantCount += 1;
+      addTokens(row, t);
+      addTokens(row.parent, t);
+      row.provider = msg.provider || row.provider;
+      row.model = msg.model || row.model;
+      row.timestamp = msg.timestamp || Date.parse(entry.timestamp) || row.timestamp;
+      row.assistantCount += 1;
+    }
+
+    if (entry?.type === "message" && msg?.role === "toolResult") {
+      const usages = subagentUsagesFromToolResult(msg);
+      if (!usages.length) continue;
+      const row = ensureCurrent(entry);
+      for (const usage of usages) {
+        addTokens(row, usage);
+        addTokens(row.subagents, usage);
+        row.subagentCount += 1;
+      }
     }
   }
   finishCurrent();
@@ -321,8 +347,12 @@ class TokenInspector extends PipCustomComponent<void> {
     const selected = rows[this.selected];
     if (selected) {
       lines.push("");
-      lines.push(th.fg("accent", `Prompt ${selected.index} details`) + th.fg("dim", `  ${selected.provider}/${selected.model} · ${selected.assistantCount} response(s)`));
+      lines.push(th.fg("accent", `Prompt ${selected.index} details`) + th.fg("dim", `  ${selected.provider}/${selected.model} · ${selected.assistantCount} response(s) · ${selected.subagentCount} subagent(s)`));
       lines.push(tokenDetailRow("delta", selected, this.compact));
+      if (selected.subagentCount > 0) {
+        lines.push(tokenDetailRow("parent", selected.parent, this.compact));
+        lines.push(tokenDetailRow("subagt", selected.subagents, this.compact));
+      }
       lines.push(tokenDetailRow("total", selected.cumulative, this.compact));
       lines.push(`ctx at prompt ${fmt(selected.contextTokens, this.compact)} / ${fmt(selected.contextWindow, this.compact)} (${selected.contextPercent == null ? "?" : `${Math.round(selected.contextPercent)}%`})`);
       lines.push(th.fg("dim", truncateToWidth(selected.prompt, width - 4)));
@@ -387,3 +417,5 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
+
+export const __test = { buildSessionRows, subagentUsagesFromToolResult };

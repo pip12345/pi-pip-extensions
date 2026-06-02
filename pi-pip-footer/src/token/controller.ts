@@ -1,7 +1,7 @@
 import { formatCost, formatTokenCount, normalizeUsage, pipSettings, truncateToWidth } from "../../../pip-common/index.ts";
 import { FOOTER_SETTINGS_ID, TOKEN_HIGHLIGHT_MS, TOKEN_RENDER_TICK_MS, TOKEN_SPINNER, TOKEN_SPINNER_FRAME_MS, WIDGET_KEY } from "../constants.ts";
 import { fitSegment } from "../layout.ts";
-import { addTokenBreakdown, diffTokenBreakdown, getBranchTokens, interpolateTokenBreakdown, type TokenBreakdown } from "./breakdown.ts";
+import { addTokenBreakdown, diffTokenBreakdown, getHistoricalSessionTokens, interpolateTokenBreakdown, type TokenBreakdown } from "./breakdown.ts";
 import { renderTokenMetric } from "./render.ts";
 
 export interface TokenControllerDeps {
@@ -171,7 +171,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
           dispose: () => deps.setTui(null),
           invalidate() {},
           render(width: number): string[] {
-            const tokens = getBranchTokens(ctx) ?? pendingSettledTokens ?? previousSettledTokens;
+            const tokens = getHistoricalSessionTokens(ctx) ?? pendingSettledTokens ?? previousSettledTokens;
             const tokenBlock = fitSegment(width, renderTokenLine(tokens, theme));
             return [tokenBlock ? truncateToWidth(tokenBlock, width) : " "];
           },
@@ -322,17 +322,17 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
       liveOutputVisibleUntil = Date.now() + 3000;
       ensureAnimationTimer();
     }
-    const branchTokens = getBranchTokens(ctx);
-    pendingSettledTokens = branchTokens ?? (messageTokens && previousSettledTokens ? { ...previousSettledTokens } : pendingSettledTokens);
-    if (!branchTokens && messageTokens && pendingSettledTokens) addTokenBreakdown(pendingSettledTokens, messageTokens);
-    else if (!branchTokens && messageTokens) pendingSettledTokens = messageTokens;
+    const historicalTokens = getHistoricalSessionTokens(ctx, { fresh: true });
+    pendingSettledTokens = historicalTokens ?? (messageTokens && previousSettledTokens ? { ...previousSettledTokens } : pendingSettledTokens);
+    if (!historicalTokens && messageTokens && pendingSettledTokens) addTokenBreakdown(pendingSettledTokens, messageTokens);
+    else if (!historicalTokens && messageTokens) pendingSettledTokens = messageTokens;
     deps.requestRender();
   }
 
   function onAgentEnd(ctx: any): void {
     stopTokenAnimation();
-    const branchTokens = getBranchTokens(ctx);
-    const tokens = pendingSettledTokens && (!branchTokens || pendingSettledTokens.total >= branchTokens.total) ? pendingSettledTokens : branchTokens;
+    const historicalTokens = getHistoricalSessionTokens(ctx, { fresh: true });
+    const tokens = pendingSettledTokens && (!historicalTokens || pendingSettledTokens.total >= historicalTokens.total) ? pendingSettledTokens : historicalTokens;
     pendingSettledTokens = undefined;
     scheduleSettleTokenBreakdown(tokens, { showDeltaReceipt: true });
   }
@@ -341,7 +341,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
     syncWorkingIndicator,
     enabled: tokenCounterEnabled,
     resetSession(ctx: any) {
-      previousSettledTokens = getBranchTokens(ctx);
+      previousSettledTokens = getHistoricalSessionTokens(ctx);
     },
     installWidget,
     start: startTokenAnimation,

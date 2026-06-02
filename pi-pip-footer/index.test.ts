@@ -54,19 +54,15 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 
-  it("renders settled branch usage in the token widget", async () => {
-    const entries = [
-      { id: "u1", messages: [{ role: "user", content: "hi" }] },
-      { id: "a1", parentId: "u1", messages: [{ role: "assistant", stopReason: "error", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } }] },
-      { id: "a2", parentId: "a1", messages: [{ role: "assistant", stopReason: "aborted", usage: { input: 4000, output: 5000, cacheWrite: 6000, cost: { total: 0.05 } } }] },
-    ];
+  it("renders settled live usage in the token widget", async () => {
     const pi = createMockPi();
     pipFooter(pi as any);
-    const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 } });
+    const ctx = createMockCtx({ model: { contextWindow: 272_000 } });
     await emitEvent(pi, "session_start", {}, ctx);
+    await emitEvent(pi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } } }, ctx);
     const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
     const component = factory({ requestRender() {} }, theme);
-    expect(component.render(120)[0]).toContain("↓:5k ↑:7k ↻:9k · $0.09");
+    expect(component.render(120)[0]).toContain("↓:1k ↑:2k ↻:3k · $0.04");
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 });
