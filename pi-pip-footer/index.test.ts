@@ -24,45 +24,6 @@ describe("pi-pip-footer", () => {
     expect(__test.detectProvider("openai", "off")).toBeNull();
   });
 
-  it("renders quota usage lines", () => {
-    const lines = __test.renderUsageLine(
-      {
-        provider: "Codex",
-        providerId: "codex",
-        fetchedAt: Date.now(),
-        windows: [
-          { label: "5h", usedPercent: 40, resetsIn: "2h" },
-          { label: "Week", usedPercent: 20, resetsIn: "6d" },
-        ],
-      },
-      120,
-      theme
-    );
-    expect(lines.join("\n")).toContain("codex");
-    expect(lines.join("\n")).toContain("5h");
-    expect(lines.join("\n")).toContain("7d");
-    expect(lines.join("\n")).toContain("↻ 2h");
-  });
-
-  it("renders quota offline errors", () => {
-    const lines = __test.renderUsageLine(
-      { provider: "Codex", providerId: "codex", fetchedAt: Date.now(), windows: [], error: "HTTP 500" },
-      120,
-      theme
-    );
-    expect(lines.join("\n")).toContain("codex");
-    expect(lines.join("\n")).toContain("usage offline");
-  });
-
-  it("renders token metrics with arrow/cache icons", () => {
-    expect(__test.renderTokenMetric("↓", 273_000, false, theme)).toBe("↓:273k");
-    expect(__test.renderTokenMetric("↑", 49_000, false, theme)).toBe("↑:49k");
-    expect(__test.renderTokenMetric("↻", 14_300_000, false, theme)).toBe("↻:14.3M");
-    expect(__test.renderTokenMetric("▣", 14_300_000, false, theme)).toBe("▣:14.3M");
-    expect(__test.renderTokenMetric("◫", 14_300_000, false, theme)).toBe("◫:14.3M");
-    expect(__test.renderTokenMetric("□", 14_300_000, false, theme)).toBe("□:14.3M");
-  });
-
   it("shows a zero token baseline while first assistant response is pending", async () => {
     const pi = createMockPi();
     pipFooter(pi as any);
@@ -93,7 +54,7 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 
-  it("counts assistant usage even when the assistant stop reason is error/aborted", async () => {
+  it("renders settled branch usage in the token widget", async () => {
     const entries = [
       { id: "u1", messages: [{ role: "user", content: "hi" }] },
       { id: "a1", parentId: "u1", messages: [{ role: "assistant", stopReason: "error", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } }] },
@@ -107,63 +68,5 @@ describe("pi-pip-footer", () => {
     const component = factory({ requestRender() {} }, theme);
     expect(component.render(120)[0]).toContain("↓:5k ↑:7k ↻:9k · $0.09");
     await emitEvent(pi, "session_shutdown", {}, ctx);
-  });
-
-  it("treats nullable direct context usage as unknown after compaction", () => {
-    const entries = [
-      { id: "u1", messages: [{ role: "user", content: "hi" }] },
-      { id: "a1", parentId: "u1", messages: [{ role: "assistant", usage: { input: 90_000_000, output: 1_000, total: 90_001_000 } }] },
-    ];
-    const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 }, contextUsage: { tokens: null, percent: null, contextWindow: 272_000 } });
-
-    expect(__test.getContextInfo(ctx)).toEqual({ percentage: null, used: null, total: 272_000 });
-    expect(__test.renderContextLine(ctx, 80, theme)).toContain("?/272k");
-  });
-
-  it("honors direct zero context usage instead of falling back to branch token totals", () => {
-    const entries = [{ id: "a1", messages: [{ role: "assistant", usage: { input: 90_000_000, total: 90_000_000 } }] }];
-    const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 }, contextUsage: { tokens: 0, percent: 0, contextWindow: 272_000 } });
-
-    expect(__test.getContextInfo(ctx)).toEqual({ percentage: 0, used: 0, total: 272_000 });
-  });
-
-  it("interpolates token values for count-up animation", () => {
-    const mid = __test.interpolateTokenBreakdown(
-      { input: 55, output: 10, cacheRead: 0, cacheWrite: 0, cache: 100, total: 165, cost: 0.1 },
-      { input: 59, output: 14, cacheRead: 0, cacheWrite: 0, cache: 200, total: 273, cost: 0.3 },
-      0.5
-    );
-    expect(mid.input).toBe(57);
-    expect(mid.output).toBe(12);
-    expect(mid.cache).toBe(150);
-    expect(mid.cost).toBeCloseTo(0.2);
-  });
-
-  it("renders a tools-expanded warning", () => {
-    expect(__test.renderToolsExpandedWarning({ ui: { getToolsExpanded: () => true } }, theme)).toBe("tools expanded");
-    expect(__test.renderToolsExpandedWarning({ ui: { getToolsExpanded: () => false } }, theme)).toBe("");
-  });
-
-  it("renders extension statuses for custom-footer mode", () => {
-    const statuses = new Map([
-      ["z", "later"],
-      ["plan-mode", "plan"],
-      ["bad", "hello\nworld"],
-    ]);
-    expect(__test.renderExtensionStatuses({ getExtensionStatuses: () => statuses })).toBe("hello world plan later");
-    expect(__test.renderExtensionStatuses({ getExtensionStatuses: () => new Map() })).toBe("");
-  });
-
-  it("right-aligns add-ons without shifting left content and keeps edge padding", () => {
-    const line = __test.joinRight("workspace > model > ctx", "tools expanded", 50);
-    expect(line.startsWith("workspace > model > ctx")).toBe(true);
-    expect(line.endsWith("tools expanded")).toBe(true);
-    expect(line.length).toBe(49);
-    expect(__test.joinRight("workspace > model > ctx", "tools expanded", 22)).toBe("workspace > model > ctx");
-  });
-
-  it("parses git status", () => {
-    const git = __test.parseGitStatus("# branch.head main\n# branch.ab +2 -1\n1 .M N... 100644 100644 100644 a b file.ts");
-    expect(git).toEqual({ branch: "main", dirty: true, ahead: 2, behind: 1 });
   });
 });

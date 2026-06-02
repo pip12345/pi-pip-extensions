@@ -10,361 +10,27 @@ import {
   clampPercent,
   detectQuotaProvider,
   fetchQuotaForProvider,
-  formatCost,
-  formatResetTime,
-  formatTokenCount,
-  getWindowLabel,
   installWidgetRestacker,
-  normalizeUsage,
   pipSettings,
-  registerSettingsSection,
-  renderRegisteredFooterItems,
-  setting,
-  stripAnsi,
   truncateToWidth,
   visibleWidth,
   type QuotaProviderSetting,
   type QuotaSnapshot as UsageSnapshot,
-  type QuotaWindow as RateWindow,
 } from "../pip-common/index.ts";
-import { execSync } from "node:child_process";
-import { homedir } from "node:os";
-import { basename } from "node:path";
+import { FOOTER_KEY, FOOTER_SETTINGS_ID, USAGE_REFRESH_INTERVAL, WIDGET_KEY } from "./src/constants.ts";
+import { getContextInfo, renderContextLine } from "./src/context.ts";
+import { type GitState, parseGitStatus, readGitState, renderLocation } from "./src/git.ts";
+import { fitSegment, joinRight, padEndVisible, renderBar, wrapSegments } from "./src/layout.ts";
+import { renderExtensionStatuses, renderModelLine, renderRegisteredFooterItems, renderToolsExpandedWarning } from "./src/model.ts";
+import { renderUsageLine, renderUsageWindow, quotaTestExports, usageCache } from "./src/quota.ts";
+import { registerFooterSettings } from "./src/settings.ts";
+import { interpolateTokenBreakdown } from "./src/token/breakdown.ts";
+import { createTokenController } from "./src/token/controller.ts";
+import { renderTokenMetric } from "./src/token/render.ts";
 
 type ExtensionAPI = any;
 
-const TOKEN_SPINNER = ["◐", "◓", "◑", "◒"];
-const TOKEN_HIGHLIGHT_MS = 1600;
-const TOKEN_RENDER_TICK_MS = 80;
-const TOKEN_SPINNER_FRAME_MS = 140;
-const WIDGET_KEY = "pi-pip-footer-token-counter";
-const FOOTER_KEY = "pi-pip-footer";
-const USAGE_REFRESH_INTERVAL = 5 * 60_000;
-const BAR_FILLED = "━";
-const BAR_EMPTY = "─";
-const FOOTER_SETTINGS_ID = "pi-pip-footer";
-
-interface TokenBreakdown {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cache: number;
-  total: number;
-  cost?: number;
-}
-
-interface GitState {
-  branch: string | null;
-  dirty: boolean;
-  ahead: number;
-  behind: number;
-}
-
-const usageCache = new Map<string, UsageSnapshot>();
-
-registerSettingsSection({
-  id: FOOTER_SETTINGS_ID,
-  title: "Pip Footer",
-  description: "Pip footer with quotas, context, model, and the existing above-editor token counter.",
-  order: 20,
-  settings: {
-    enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Show the pip footer and manage its above-editor token counter." }),
-    quotaProvider: setting.enum({
-      label: "Quota provider",
-      default: "auto",
-      choices: ["auto", "codex", "anthropic", "copilot", "off"] as const,
-      order: 2,
-      description: "Choose which subscription quota source to display, or disable quota checks.",
-    }),
-    showContext: setting.boolean({ label: "Context bar", default: true, order: 3, description: "Show current context-window usage as a compact progress bar." }),
-    showModel: setting.boolean({ label: "Model", default: true, order: 4, description: "Show the active model and thinking level in the lower footer." }),
-    showTokenCounter: setting.boolean({ label: "Above-editor token counter", default: true, order: 5, description: "Show live token burn and settled token totals above the editor." }),
-    showTokenCost: setting.boolean({ label: "Token counter cost", default: true, order: 6, description: "Show estimated cost in the above-editor token counter." }),
-    cacheIcon: setting.enum({ label: "Cache icon", default: "↻", choices: ["↻", "c", "▣", "◫", "□"] as const, order: 7, description: "Glyph used for cache read/write token counts in the token counter." }),
-    showPluginLines: setting.boolean({ label: "Plugin lines", default: true, order: 8, description: "Allow other pip plugins to contribute extra lines to the footer." }),
-    showGit: setting.boolean({ label: "Git", default: false, order: 9, description: "Show the current git branch when one is available." }),
-    showCwd: setting.enum({ label: "CWD", default: "project", choices: ["off", "project", "path"] as const, order: 10, description: "Show no working directory, the project name, or the full path." }),
-  },
-});
-
-function buildSessionContext(entries: any[], leafId: unknown): { messages: any[]; thinkingLevel?: string } {
-  const byId = new Map<unknown, any>();
-  for (const entry of entries ?? []) byId.set(entry?.id, entry);
-
-  const chain: any[] = [];
-  let current = byId.get(leafId) ?? entries?.[entries.length - 1];
-  const seen = new Set<unknown>();
-
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id);
-    chain.push(current);
-    current = byId.get(current.parentId ?? current.parent);
-  }
-
-  const ordered = chain.length ? chain.reverse() : entries ?? [];
-  const messages = ordered.flatMap((entry) => entry?.messages ?? entry?.message ?? []).filter(Boolean);
-  const thinkingLevel = ordered
-    .map((entry) => entry?.thinkingLevel ?? entry?.model?.reasoning?.effort ?? entry?.reasoning?.effort)
-    .filter(Boolean)
-    .pop();
-
-  return { messages, thinkingLevel };
-}
-
-function fitSegment(width: number, variants: string[]): string {
-  const safeWidth = Math.max(1, width);
-  for (const variant of variants) {
-    if (visibleWidth(variant) <= safeWidth) return variant;
-  }
-  return truncateToWidth(variants[variants.length - 1] || "", safeWidth);
-}
-
-function wrapSegments(segments: string[], width: number, sep: string): string[] {
-  const safeWidth = Math.max(1, width);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const segment of segments.filter(Boolean)) {
-    const fitted = truncateToWidth(segment, safeWidth);
-    if (!current) {
-      current = fitted;
-      continue;
-    }
-    const candidate = `${current}${sep}${fitted}`;
-    if (visibleWidth(candidate) <= safeWidth) current = candidate;
-    else {
-      lines.push(truncateToWidth(current, safeWidth));
-      current = fitted;
-    }
-  }
-
-  if (current) lines.push(truncateToWidth(current, safeWidth));
-  return lines;
-}
-
-function padEndVisible(text: string, targetWidth: number): string {
-  const gap = Math.max(0, targetWidth - visibleWidth(text));
-  return `${text}${" ".repeat(gap)}`;
-}
-
-function joinRight(left: string, right: string | undefined, width: number): string {
-  if (!right?.trim()) return left;
-  const leftWidth = visibleWidth(left);
-  if (leftWidth >= width) return left;
-  const minGap = 2;
-  const rightMargin = 1;
-  const availableRight = width - leftWidth - minGap - rightMargin;
-  if (availableRight <= 0) return left;
-  const fittedRight = truncateToWidth(right, availableRight);
-  if (!fittedRight.trim()) return left;
-  const gap = Math.max(minGap, width - rightMargin - leftWidth - visibleWidth(fittedRight));
-  return `${left}${" ".repeat(gap)}${fittedRight}`;
-}
-
-function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): void {
-  total.input += next.input;
-  total.output += next.output;
-  total.cacheRead += next.cacheRead;
-  total.cacheWrite += next.cacheWrite;
-  total.cache += next.cache;
-  total.total += next.total;
-  total.cost = (total.cost ?? 0) + (next.cost ?? 0);
-}
-
-function getBranchTokens(ctx: any): TokenBreakdown | undefined {
-  const entries = ctx.sessionManager.getEntries();
-  const leafId = ctx.sessionManager.getLeafId();
-  const context = buildSessionContext(entries, leafId);
-  const total: TokenBreakdown = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
-  let found = false;
-
-  for (const message of context.messages) {
-    if (message?.role !== "assistant") continue;
-    const usage = normalizeUsage(message.usage);
-    if (!usage) continue;
-    addTokenBreakdown(total, usage);
-    found = true;
-  }
-
-  return found ? total : undefined;
-}
-
-function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: TokenBreakdown): TokenBreakdown | undefined {
-  if (!previous) return next.total > 0 ? { ...next } : undefined;
-
-  const input = Math.max(0, next.input - previous.input);
-  const output = Math.max(0, next.output - previous.output);
-  const cacheRead = Math.max(0, next.cacheRead - previous.cacheRead);
-  const cacheWrite = Math.max(0, next.cacheWrite - previous.cacheWrite);
-  const total = Math.max(0, next.total - previous.total);
-  const cache = cacheRead + cacheWrite;
-  const cost = Math.max(0, (next.cost ?? 0) - (previous.cost ?? 0));
-
-  if (input + output + cache + total + cost <= 0) return undefined;
-  return { input, output, cacheRead, cacheWrite, cache, total, cost };
-}
-
-function renderBar(usedPercent: number, width: number, theme: any, kind: "quota" | "ctx" = "quota"): string {
-  const clamped = clampPercent(usedPercent);
-  const filled = Math.round((clamped / 100) * width);
-  const empty = Math.max(0, width - filled);
-  const color = kind === "ctx" ? (clamped >= 90 ? "error" : clamped >= 70 ? "warning" : "accent") : clamped >= 92 ? "error" : clamped >= 85 ? "warning" : "accent";
-  return theme.fg(color, BAR_FILLED.repeat(filled)) + theme.fg("dim", BAR_EMPTY.repeat(empty));
-}
-
-function renderUsageWindow(window: RateWindow, theme: any, barWidth = 10, includeReset = true): string {
-  const dim = (s: string) => theme.fg("dim", s);
-  const rawLabel = window.label.toLowerCase() === "week" ? "7d" : window.label.toLowerCase();
-  const label = padEndVisible(rawLabel, 3);
-  const reset = includeReset && window.resetsIn ? ` ${dim(`↻ ${window.resetsIn}`)}` : "";
-  return `${dim(label)} ${renderBar(window.usedPercent, barWidth, theme)} ${dim(`${Math.round(window.usedPercent)}%`)}${reset}`;
-}
-
-function renderUsageLine(usage: UsageSnapshot | null, width: number, theme: any, labelWidth = 10, firstWindowWidth = 0): string[] {
-  if (!usage) return [];
-  const sep = "   ";
-  const provider = padEndVisible(theme.fg("accent", usage.provider.toLowerCase()), labelWidth);
-  if (!usage.windows.length) {
-    if (!usage.error) return [];
-    return wrapSegments([provider, theme.fg("warning", "usage offline")], width, sep);
-  }
-  const segments = [provider];
-  for (const [index, window] of usage.windows.entries()) {
-    const segment = fitSegment(width, [
-      renderUsageWindow(window, theme, 10, true),
-      renderUsageWindow(window, theme, 8, true),
-      renderUsageWindow(window, theme, 8, false),
-      renderUsageWindow(window, theme, 5, false),
-    ]);
-    segments.push(index === 0 && firstWindowWidth > 0 ? padEndVisible(segment, firstWindowWidth) : segment);
-  }
-  return wrapSegments(segments, width, sep);
-}
-
-function getContextInfo(ctx: any): { percentage: number | null; used: number | null; total: number } {
-  const direct = ctx.getContextUsage?.();
-  const modelWindow = direct?.contextWindow ?? ctx.model?.contextWindow ?? 0;
-
-  if (direct) {
-    if (!modelWindow) return { percentage: null, used: null, total: 0 };
-    if (typeof direct.tokens !== "number") return { percentage: null, used: null, total: modelWindow };
-    const percentage = typeof direct.percent === "number" ? direct.percent : (direct.tokens / modelWindow) * 100;
-    return { percentage, used: direct.tokens, total: modelWindow };
-  }
-
-  if (!modelWindow) return { percentage: 0, used: 0, total: 0 };
-  const tokens = getBranchTokens(ctx)?.total ?? 0;
-  return { percentage: tokens ? (tokens / modelWindow) * 100 : 0, used: tokens, total: modelWindow };
-}
-
-function renderContextLine(ctx: any, width: number, theme: any): string {
-  const info = getContextInfo(ctx);
-  const label = theme.fg("dim", "ctx ");
-  if (!info.total) return `${label}${theme.fg("dim", "unknown")}`;
-  if (info.used == null || info.percentage == null) {
-    return fitSegment(width, [
-      `${label}${renderBar(0, 10, theme, "ctx")} ${theme.fg("accent", `?/${formatTokenCount(info.total)}`)}`,
-      `${label}${theme.fg("accent", `?/${formatTokenCount(info.total)}`)}`,
-      `${label}${theme.fg("dim", "unknown")}`,
-    ]);
-  }
-  return fitSegment(width, [
-    `${label}${renderBar(info.percentage, 10, theme, "ctx")} ${theme.fg("accent", `${formatTokenCount(info.used)}/${formatTokenCount(info.total)}`)}`,
-    `${label}${renderBar(info.percentage, 10, theme, "ctx")} ${theme.fg("accent", `${Math.round(info.percentage)}%`)}`,
-    `${label}${renderBar(info.percentage, 8, theme, "ctx")}`,
-  ]);
-}
-
-function renderModelLine(ctx: any, theme: any): string {
-  const model = ctx.model;
-  const modelName = model?.id?.split("/").pop() || "no-model";
-  const entries = ctx.sessionManager?.getEntries?.() ?? [];
-  const thinking = buildSessionContext(entries, ctx.sessionManager?.getLeafId?.()).thinkingLevel ?? model?.reasoning?.effort;
-  const base = theme.fg("muted", modelName);
-  return thinking && thinking !== "off" ? `${base}${theme.fg("dim", "/")}${theme.fg("accent", thinking)}` : base;
-}
-
-function renderToolsExpandedWarning(ctx: any, theme: any): string {
-  return ctx.ui?.getToolsExpanded?.() ? theme.fg("warning", "tools expanded") : "";
-}
-
-function renderExtensionStatuses(footerData: any): string {
-  const statuses = footerData?.getExtensionStatuses?.();
-  if (!statuses?.size) return "";
-  return [...statuses.entries()]
-    .sort(([a], [b]) => String(a).localeCompare(String(b)))
-    .map(([, text]) => stripAnsi(String(text ?? "")).replace(/[\r\n\t\x00-\x1f\x7f]/g, " ").trim())
-    .filter(Boolean)
-    .join(" ");
-}
-
-function parseGitStatus(output: string): GitState {
-  let branch: string | null = null;
-  let dirty = false;
-  let ahead = 0;
-  let behind = 0;
-  for (const line of output.split("\n")) {
-    if (line.startsWith("# branch.head ")) branch = line.slice("# branch.head ".length).trim();
-    else if (line.startsWith("# branch.ab ")) {
-      const match = line.match(/^# branch\.ab \+(\d+) -(\d+)$/);
-      if (match) {
-        ahead = Number(match[1]) || 0;
-        behind = Number(match[2]) || 0;
-      }
-    } else if (line && !line.startsWith("# ")) dirty = true;
-  }
-  if (branch === "(detached)") branch = null;
-  return { branch, dirty, ahead, behind };
-}
-
-function readGitState(cwd: string): GitState | null {
-  try {
-    return parseGitStatus(execSync("git status --porcelain=v2 --branch 2>/dev/null", { cwd, encoding: "utf8", timeout: 1000 }).trimEnd());
-  } catch {
-    return null;
-  }
-}
-
-function renderTokenMetric(label: string, value: number, changed: boolean, theme: any): string {
-  const labelColor = (s: string) => theme.fg("dim", s);
-  const valueColor = (s: string) => theme.fg(changed ? "success" : "accent", s);
-  return `${labelColor(`${label}:`)}${valueColor(formatTokenCount(value))}`;
-}
-
-function interpolateTokenBreakdown(from: TokenBreakdown, to: TokenBreakdown, progress: number): TokenBreakdown {
-  const p = Math.max(0, Math.min(1, progress));
-  const lerpRaw = (a: number, b: number) => a + (b - a) * p;
-  const lerp = (a: number, b: number) => Math.round(lerpRaw(a, b));
-  const cache = lerp(from.cache, to.cache);
-  return {
-    input: lerp(from.input, to.input),
-    output: lerp(from.output, to.output),
-    cacheRead: 0,
-    cacheWrite: 0,
-    cache,
-    total: lerp(from.total, to.total),
-    cost: from.cost != null || to.cost != null ? lerpRaw(from.cost ?? 0, to.cost ?? 0) : undefined,
-  };
-}
-
-function renderLocation(ctx: any, theme: any, gitState: GitState | null): string {
-  const cwdSetting = pipSettings.get<"off" | "project" | "path">(`${FOOTER_SETTINGS_ID}.showCwd`);
-  const parts: string[] = [];
-  if (cwdSetting !== "off") {
-    const home = homedir();
-    const cwd = cwdSetting === "project" ? basename(ctx.cwd) : String(ctx.cwd).startsWith(home) ? `~${String(ctx.cwd).slice(home.length)}` : ctx.cwd;
-    parts.push(theme.fg("accent", cwd));
-  }
-  if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showGit`) && gitState?.branch) {
-    let branch = theme.fg(gitState.dirty ? "warning" : "success", gitState.branch);
-    if (gitState.dirty) branch += theme.fg("warning", " *");
-    if (gitState.ahead) branch += theme.fg("success", ` ↑${gitState.ahead}`);
-    if (gitState.behind) branch += theme.fg("error", ` ↓${gitState.behind}`);
-    parts.push(branch);
-  }
-  return parts.join("   ");
-}
+registerFooterSettings();
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: { requestRender: () => void } | null = null;
@@ -376,169 +42,16 @@ export default function (pi: ExtensionAPI) {
   let activeProvider: "codex" | "anthropic" | "copilot" | null = null;
   let latestUsage: UsageSnapshot | null = null;
 
-  let tokenAnimationTimer: ReturnType<typeof setInterval> | null = null;
-  let tokenSettleTimer: ReturnType<typeof setTimeout> | null = null;
-  let tokenDeltaTimer: ReturnType<typeof setTimeout> | null = null;
-  let tokenHighlightTimer: ReturnType<typeof setTimeout> | null = null;
-  let displayPhase: "idle" | "working" | "live" | "settling" = "idle";
-  let isAssistantStreaming = false;
-  let liveOutputVisibleUntil = 0;
-  let tokenDeltaVisibleUntil = 0;
-  let tokenHighlightVisibleUntil = 0;
-  let tokenHighlightedFields = { input: false, output: false, cache: false };
-  let tokenAnimationFrom: TokenBreakdown | undefined;
-  let tokenAnimationTo: TokenBreakdown | undefined;
-  let tokenAnimationStartedAt = 0;
-  let tokenAnimationUntil = 0;
-  let previousRenderedTokens: TokenBreakdown | undefined;
-  let previousSettledTokens: TokenBreakdown | undefined;
-  let pendingSettledTokens: TokenBreakdown | undefined;
-  let latestTokenDelta: TokenBreakdown | undefined;
-  let tokenRunId = 0;
-  let spinnerStartedAt = Date.now();
-  let streamLiveOutputTokens = 0;
-  let streamEstimatedOutputTokens = 0;
-
   function requestTokenRender(): void {
     tuiRef?.requestRender?.();
   }
 
-  function tokenCounterEnabled(): boolean {
-    return pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCounter`);
-  }
-
-  function syncWorkingIndicator(ctx: any): void {
-    if (!ctx?.hasUI) return;
-    if (tokenCounterEnabled()) {
-      ctx.ui.setWorkingVisible?.(false);
-      ctx.ui.setWorkingIndicator?.({ frames: [] });
-      return;
-    }
-    ctx.ui.setWorkingVisible?.(true);
-    ctx.ui.setWorkingIndicator?.();
-  }
-
-  function cacheIcon(): "↻" | "c" | "▣" | "◫" | "□" {
-    return pipSettings.get<"↻" | "c" | "▣" | "◫" | "□">(`${FOOTER_SETTINGS_ID}.cacheIcon`);
-  }
-
-  function tokenValuesChanged(previous: TokenBreakdown | undefined, next: TokenBreakdown | undefined): boolean {
-    if (!previous || !next) return false;
-    return previous.input !== next.input || previous.output !== next.output || previous.cache !== next.cache || (previous.cost ?? 0) !== (next.cost ?? 0);
-  }
-
-  function getDisplayedTokens(now = Date.now()): TokenBreakdown | undefined {
-    if (!tokenAnimationFrom || !tokenAnimationTo) return tokenAnimationTo ?? previousRenderedTokens;
-    if (now >= tokenAnimationUntil) return tokenAnimationTo;
-    const duration = Math.max(1, tokenAnimationUntil - tokenAnimationStartedAt);
-    return interpolateTokenBreakdown(tokenAnimationFrom, tokenAnimationTo, (now - tokenAnimationStartedAt) / duration);
-  }
-
-  function startTokenValueAnimation(from: TokenBreakdown, to: TokenBreakdown, now = Date.now()): void {
-    tokenAnimationFrom = { ...from };
-    tokenAnimationTo = { ...to };
-    tokenAnimationStartedAt = now;
-    tokenAnimationUntil = now + TOKEN_HIGHLIGHT_MS;
-    tokenHighlightVisibleUntil = tokenAnimationUntil;
-    tokenHighlightedFields = {
-      input: from.input !== to.input,
-      output: from.output !== to.output,
-      cache: from.cache !== to.cache,
-    };
-    if (tokenHighlightTimer) clearTimeout(tokenHighlightTimer);
-    tokenHighlightTimer = setTimeout(() => {
-      if (tokenAnimationTo) tokenAnimationFrom = { ...tokenAnimationTo };
-      tokenHighlightedFields = { input: false, output: false, cache: false };
-      tokenHighlightTimer = null;
-      requestTokenRender();
-    }, Math.max(0, tokenAnimationUntil - now));
-    ensureAnimationTimer();
-  }
-
-  function renderTokenBase(tokens: TokenBreakdown | undefined, theme: any): string {
-    if (!tokens) return "";
-    const now = Date.now();
-    const previousTarget = previousRenderedTokens;
-    if (!previousTarget) {
-      tokenAnimationFrom = { ...tokens };
-      tokenAnimationTo = { ...tokens };
-      previousRenderedTokens = { ...tokens };
-    } else if (tokenValuesChanged(previousTarget, tokens)) {
-      startTokenValueAnimation(getDisplayedTokens(now) ?? previousTarget, tokens, now);
-      previousRenderedTokens = { ...tokens };
-    }
-
-    const displayed = getDisplayedTokens(now) ?? tokens;
-    const highlighting = now < tokenHighlightVisibleUntil;
-    const changed = {
-      input: highlighting && tokenHighlightedFields.input,
-      output: highlighting && tokenHighlightedFields.output,
-      cache: highlighting && tokenHighlightedFields.cache,
-    };
-    const parts = [
-      renderTokenMetric("↓", displayed.input, changed.input, theme),
-      renderTokenMetric("↑", displayed.output, changed.output, theme),
-      renderTokenMetric(cacheIcon(), displayed.cache, changed.cache, theme),
-    ];
-    let text = parts.join(" ");
-    if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`)) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", formatCost(displayed.cost ?? 0))}`;
-    return text;
-  }
-
-  function renderTokenSuffix(theme: any): string {
-    const spinner = TOKEN_SPINNER[Math.floor((Date.now() - spinnerStartedAt) / TOKEN_SPINNER_FRAME_MS) % TOKEN_SPINNER.length];
-    if (displayPhase === "working") return theme.fg("accent", spinner);
-
-    const liveDelta = streamLiveOutputTokens > 0 ? streamLiveOutputTokens : streamEstimatedOutputTokens;
-    const showingLiveCounter = liveDelta > 0 && (displayPhase === "live" || displayPhase === "settling");
-    if (showingLiveCounter) {
-      const amount = theme.fg("success", `+${formatTokenCount(liveDelta)}`);
-      return `${theme.fg("accent", spinner)} ${amount} ${theme.fg("dim", "out")}`;
-    }
-
-    const delta = Date.now() < tokenDeltaVisibleUntil ? latestTokenDelta : undefined;
-    if (displayPhase === "idle" && delta) {
-      const dim = (s: string) => theme.fg("dim", s);
-      const parts = [
-        delta.input > 0 ? `${dim("↓+")}${dim(formatTokenCount(delta.input))}` : "",
-        delta.output > 0 ? `${dim("↑+")}${dim(formatTokenCount(delta.output))}` : "",
-        delta.cache > 0 ? `${dim(`${cacheIcon()}+`)}${dim(formatTokenCount(delta.cache))}` : "",
-        pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`) && (delta.cost ?? 0) > 0 ? dim(`+${formatCost(delta.cost ?? 0)}`) : "",
-      ].filter(Boolean);
-      return parts.length ? `${theme.fg("accent", "Δ")} ${parts.join(" ")}` : "";
-    }
-
-    return "";
-  }
-
-  function renderTokenLine(tokens: TokenBreakdown | undefined, theme: any): string[] {
-    const base = renderTokenBase(tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 }, theme);
-    const suffix = renderTokenSuffix(theme);
-    return suffix ? [`${base}  ${suffix}`, base] : [base];
-  }
-
-  function installTokenWidget(ctx: any): void {
-    if (!originalSetWidget || !tokenCounterEnabled()) return;
-    originalSetWidget(WIDGET_KEY, undefined);
-    originalSetWidget(
-      WIDGET_KEY,
-      (tui: any, theme: any) => {
-        tuiRef = tui;
-        return {
-          dispose: () => {
-            tuiRef = null;
-          },
-          invalidate() {},
-          render(width: number): string[] {
-            const tokens = getBranchTokens(ctx) ?? pendingSettledTokens ?? previousSettledTokens;
-            const tokenBlock = fitSegment(width, renderTokenLine(tokens, theme));
-            return [tokenBlock ? truncateToWidth(tokenBlock, width) : " "];
-          },
-        };
-      },
-      { placement: "aboveEditor" }
-    );
-  }
+  const tokenController = createTokenController({
+    requestRender: requestTokenRender,
+    setTui: (tui) => {
+      tuiRef = tui;
+    },
+  });
 
   function installFooter(ctx: any): void {
     if (!ctx.hasUI || !ctx.ui.setFooter || footerInstalled || !pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.enabled`)) return;
@@ -622,145 +135,10 @@ export default function (pi: ExtensionAPI) {
     refreshTimer = setInterval(() => refreshUsageForModel(ctx), USAGE_REFRESH_INTERVAL);
   }
 
-  function hasActiveTokenAnimation(): boolean {
-    const now = Date.now();
-    return displayPhase !== "idle" || now < tokenHighlightVisibleUntil || now < tokenDeltaVisibleUntil;
-  }
-
-  function ensureAnimationTimer(): void {
-    if (tokenAnimationTimer) return;
-    tokenAnimationTimer = setInterval(() => {
-      if (!hasActiveTokenAnimation()) {
-        clearInterval(tokenAnimationTimer!);
-        tokenAnimationTimer = null;
-        return;
-      }
-      requestTokenRender();
-    }, TOKEN_RENDER_TICK_MS);
-  }
-
-  function startTokenAnimation(): void {
-    if (tokenSettleTimer) clearTimeout(tokenSettleTimer);
-    if (tokenDeltaTimer) clearTimeout(tokenDeltaTimer);
-    tokenSettleTimer = null;
-    tokenDeltaTimer = null;
-    tokenRunId += 1;
-    liveOutputVisibleUntil = 0;
-    tokenDeltaVisibleUntil = 0;
-    latestTokenDelta = undefined;
-    displayPhase = "working";
-    isAssistantStreaming = true;
-    spinnerStartedAt = Date.now();
-    streamLiveOutputTokens = 0;
-    streamEstimatedOutputTokens = 0;
-    ensureAnimationTimer();
-    requestTokenRender();
-  }
-
-  function stopTokenAnimation(): void {
-    if (!isAssistantStreaming && !tokenAnimationTimer) return;
-    isAssistantStreaming = false;
-    if (streamLiveOutputTokens <= 0 && streamEstimatedOutputTokens <= 0) liveOutputVisibleUntil = 0;
-    requestTokenRender();
-  }
-
-  function disposeTokenAnimation(): void {
-    if (tokenSettleTimer) clearTimeout(tokenSettleTimer);
-    if (tokenDeltaTimer) clearTimeout(tokenDeltaTimer);
-    if (tokenHighlightTimer) clearTimeout(tokenHighlightTimer);
-    if (tokenAnimationTimer) clearInterval(tokenAnimationTimer);
-    if (refreshTimer) clearInterval(refreshTimer);
-    tokenSettleTimer = null;
-    tokenDeltaTimer = null;
-    tokenHighlightTimer = null;
-    tokenAnimationTimer = null;
-    refreshTimer = null;
-    displayPhase = "idle";
-    isAssistantStreaming = false;
-    liveOutputVisibleUntil = 0;
-    tokenDeltaVisibleUntil = 0;
-    tokenHighlightVisibleUntil = 0;
-    tokenHighlightedFields = { input: false, output: false, cache: false };
-    tokenAnimationFrom = undefined;
-    tokenAnimationTo = undefined;
-    tokenAnimationStartedAt = 0;
-    tokenAnimationUntil = 0;
-    previousRenderedTokens = undefined;
-    pendingSettledTokens = undefined;
-    latestTokenDelta = undefined;
-    streamLiveOutputTokens = 0;
-    streamEstimatedOutputTokens = 0;
-  }
-
-  function updateTokenBurnFromEvent(event: any): void {
-    const assistantEvent = event?.assistantMessageEvent;
-    if (!assistantEvent) return;
-    let sawOutput = false;
-    const live = normalizeUsage(assistantEvent.partial?.usage)?.output;
-    if (typeof live === "number" && live > 0) {
-      streamLiveOutputTokens = Math.max(streamLiveOutputTokens, live);
-      sawOutput = true;
-    }
-    if (assistantEvent.type === "text_delta" && assistantEvent.delta) {
-      streamEstimatedOutputTokens += Math.max(1, Math.ceil(String(assistantEvent.delta).length / 4));
-      sawOutput = true;
-    }
-    if (sawOutput) {
-      displayPhase = "live";
-      liveOutputVisibleUntil = Date.now() + 3000;
-      ensureAnimationTimer();
-    }
-    requestTokenRender();
-  }
-
-  function scheduleSettleTokenBreakdown(tokens: TokenBreakdown | undefined, options: { showDeltaReceipt: boolean }): void {
-    const runId = tokenRunId;
-    const revealInMs = Math.max(0, liveOutputVisibleUntil - Date.now());
-    displayPhase = "settling";
-    if (tokenSettleTimer) clearTimeout(tokenSettleTimer);
-    tokenSettleTimer = setTimeout(() => {
-      if (runId !== tokenRunId) return;
-      liveOutputVisibleUntil = 0;
-      tokenSettleTimer = null;
-      settleTokenBreakdown(tokens, options);
-    }, revealInMs);
-    requestTokenRender();
-  }
-
-  function settleTokenBreakdown(tokens: TokenBreakdown | undefined, options: { showDeltaReceipt: boolean }): void {
-    displayPhase = "idle";
-    if (!tokens) return requestTokenRender();
-
-    if (!options.showDeltaReceipt) {
-      latestTokenDelta = undefined;
-      tokenDeltaVisibleUntil = 0;
-      return requestTokenRender();
-    }
-
-    latestTokenDelta = diffTokenBreakdown(previousSettledTokens, tokens);
-    previousSettledTokens = tokens;
-    if (tokenDeltaTimer) clearTimeout(tokenDeltaTimer);
-    tokenDeltaTimer = null;
-    if (!latestTokenDelta) {
-      tokenDeltaVisibleUntil = 0;
-      return requestTokenRender();
-    }
-    tokenDeltaVisibleUntil = Date.now() + 7000;
-    const runId = tokenRunId;
-    tokenDeltaTimer = setTimeout(() => {
-      if (runId !== tokenRunId) return;
-      latestTokenDelta = undefined;
-      tokenDeltaVisibleUntil = 0;
-      tokenDeltaTimer = null;
-      requestTokenRender();
-    }, Math.max(0, tokenDeltaVisibleUntil - Date.now()));
-    requestTokenRender();
-  }
-
   pi.on("session_start", async (_event: any, ctx: any) => {
-    previousSettledTokens = getBranchTokens(ctx);
+    tokenController.resetSession(ctx);
     gitState = readGitState(ctx.cwd);
-    syncWorkingIndicator(ctx);
+    tokenController.syncWorkingIndicator(ctx);
 
     if (ctx.hasUI) {
       originalSetWidget = ctx.ui.setWidget?.bind(ctx.ui);
@@ -768,9 +146,9 @@ export default function (pi: ExtensionAPI) {
         restoreWidgetRestacker = installWidgetRestacker(ctx, {
           ignoredKey: WIDGET_KEY,
           watchedPlacement: "aboveEditor",
-          restack: () => installTokenWidget(ctx),
+          restack: () => tokenController.installWidget(originalSetWidget, ctx),
         });
-        installTokenWidget(ctx);
+        tokenController.installWidget(originalSetWidget, ctx);
       }
     }
 
@@ -780,36 +158,25 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_start", async (_event: any, ctx: any) => {
-    syncWorkingIndicator(ctx);
-    if (tokenCounterEnabled()) startTokenAnimation();
+    tokenController.syncWorkingIndicator(ctx);
+    if (tokenController.enabled()) tokenController.start();
   });
 
   pi.on("turn_start", async (_event: any, ctx: any) => {
-    syncWorkingIndicator(ctx);
-    if (tokenCounterEnabled()) startTokenAnimation();
+    tokenController.syncWorkingIndicator(ctx);
+    if (tokenController.enabled()) tokenController.start();
   });
 
   pi.on("message_start", async (event: any) => {
-    if (event.message?.role === "assistant" && tokenCounterEnabled()) startTokenAnimation();
+    if (event.message?.role === "assistant" && tokenController.enabled()) tokenController.start();
   });
 
   pi.on("message_update", async (event: any) => {
-    if (event.message?.role !== "user" || event.assistantMessageEvent) updateTokenBurnFromEvent(event);
+    if (event.message?.role !== "user" || event.assistantMessageEvent) tokenController.updateBurnFromEvent(event);
   });
 
   pi.on("message_end", async (event: any, ctx: any) => {
-    if (event.message?.role === "user") return;
-    const messageTokens = normalizeUsage(event.message?.usage);
-    if (messageTokens?.output && streamLiveOutputTokens <= 0 && streamEstimatedOutputTokens <= 0) {
-      streamLiveOutputTokens = messageTokens.output;
-      liveOutputVisibleUntil = Date.now() + 3000;
-      ensureAnimationTimer();
-    }
-    const branchTokens = getBranchTokens(ctx);
-    pendingSettledTokens = branchTokens ?? (messageTokens && previousSettledTokens ? { ...previousSettledTokens } : pendingSettledTokens);
-    if (!branchTokens && messageTokens && pendingSettledTokens) addTokenBreakdown(pendingSettledTokens, messageTokens);
-    else if (!branchTokens && messageTokens) pendingSettledTokens = messageTokens;
-    requestTokenRender();
+    tokenController.onMessageEnd(event, ctx);
   });
 
   pi.on("turn_end", async (_event: any, ctx: any) => {
@@ -818,11 +185,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (_event: any, ctx: any) => {
-    stopTokenAnimation();
-    const branchTokens = getBranchTokens(ctx);
-    const tokens = pendingSettledTokens && (!branchTokens || pendingSettledTokens.total >= branchTokens.total) ? pendingSettledTokens : branchTokens;
-    pendingSettledTokens = undefined;
-    scheduleSettleTokenBreakdown(tokens, { showDeltaReceipt: true });
+    tokenController.onAgentEnd(ctx);
   });
 
   const shutdown = async (_event: any, ctx: any) => {
@@ -831,7 +194,9 @@ export default function (pi: ExtensionAPI) {
     ctx?.ui?.setWorkingIndicator?.();
     if (originalSetWidget) originalSetWidget(WIDGET_KEY, undefined);
     restoreWidgetRestacker?.();
-    disposeTokenAnimation();
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = null;
+    tokenController.dispose();
     footerInstalled = false;
     tuiRef = null;
     originalSetWidget = undefined;
@@ -849,9 +214,9 @@ export default function (pi: ExtensionAPI) {
 export const __test = {
   clampPercent,
   detectProvider: detectQuotaProvider,
-  formatResetTime,
+  formatResetTime: quotaTestExports.formatResetTime,
   getContextInfo,
-  getWindowLabel,
+  getWindowLabel: quotaTestExports.getWindowLabel,
   joinRight,
   parseGitStatus,
   renderBar,

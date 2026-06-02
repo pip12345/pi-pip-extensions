@@ -1,0 +1,10 @@
+export const TOKEN_SPINNER = ["◐", "◓", "◑", "◒"];
+export const TOKEN_HIGHLIGHT_MS = 1600;
+export const TOKEN_RENDER_TICK_MS = 80;
+export const TOKEN_SPINNER_FRAME_MS = 140;
+export const WIDGET_KEY = "pi-pip-footer-token-counter";
+export const FOOTER_KEY = "pi-pip-footer";
+export const USAGE_REFRESH_INTERVAL = 5 * 60_000;
+export const BAR_FILLED = "━";
+export const BAR_EMPTY = "─";
+export const FOOTER_SETTINGS_ID = "pi-pip-footer";
