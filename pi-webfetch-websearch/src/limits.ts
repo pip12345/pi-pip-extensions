@@ -8,6 +8,12 @@ export function formatBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
+export function formatChars(chars: number): string {
+  if (chars >= 1_000_000) return `${(chars / 1_000_000).toFixed(chars % 1_000_000 === 0 ? 0 : 1)}M chars`;
+  if (chars >= 1000) return `${(chars / 1000).toFixed(chars % 1000 === 0 ? 0 : 1)}K chars`;
+  return `${chars} chars`;
+}
+
 export function truncateContent(text: string, maxChars: number): { text: string; truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false };
   const notice = `\n\n[Truncated: showing ${maxChars} of ${text.length} chars]`;

@@ -9,6 +9,8 @@ export type MaxCharsSetting = "10000" | "20000" | "40000" | "80000";
 export type TimeoutSetting = "10" | "15" | "25" | "30" | "40" | "60";
 export type SearchResultsSetting = "5" | "8" | "10";
 export type SearchContextSetting = "5000" | "10000" | "20000";
+export type ArtifactTtlSetting = "1" | "6" | "24" | "72" | "168";
+export type ArtifactMaxSetting = "1" | "10" | "25" | "50" | "100";
 
 export function registerWebSettings(): void {
   registerSettingsSection({
@@ -30,6 +32,8 @@ export function registerWebSettings(): void {
       searchResults: setting.enum({ label: "Search results", default: "8", choices: ["5", "8", "10"] as const, order: 11, description: "Default number of websearch results requested when supported by the provider." }),
       searchContext: setting.enum({ label: "Search context", default: "10000", choices: ["5000", "10000", "20000"] as const, order: 12, description: "Default maximum characters returned by websearch." }),
       searchTimeout: setting.enum({ label: "Search timeout", default: "25", choices: ["15", "25", "40"] as const, order: 13, description: "Default websearch provider timeout in seconds." }),
+      artifactTtlHours: setting.enum({ label: "Artifact TTL", default: "24", choices: ["1", "6", "24", "72", "168"] as const, order: 14, description: "Hours to retain saved webfetch/websearch artifact files per session." }),
+      artifactMaxPerSession: setting.enum({ label: "Max artifacts", default: "50", choices: ["1", "10", "25", "50", "100"] as const, order: 15, description: "Maximum saved web artifacts retained per session before deleting oldest unpinned files." }),
     },
   });
 }
