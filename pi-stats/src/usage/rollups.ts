@@ -20,6 +20,55 @@ export function bucketKey(day: string, provider: string, model: string): string 
   return `${day}|${provider}|${model}`;
 }
 
+function finiteNonNegative(value: any): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function validDay(value: any): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+export function normalizeUsageBucket(value: any): UsageBucket | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if (!validDay(value.day)) return undefined;
+  if (typeof value.provider !== "string" || !value.provider) return undefined;
+  if (typeof value.model !== "string" || !value.model) return undefined;
+  if (!finiteNonNegative(value.turns) || !Number.isInteger(value.turns) || value.turns <= 0) return undefined;
+  for (const key of ["input", "output", "cacheRead", "cacheWrite", "cache", "total", "cost", "firstTs", "lastTs"]) {
+    if (!finiteNonNegative(value[key])) return undefined;
+  }
+  if (value.lastTs < value.firstTs) return undefined;
+  return {
+    day: value.day,
+    provider: value.provider,
+    model: value.model,
+    turns: value.turns,
+    input: value.input,
+    output: value.output,
+    cacheRead: value.cacheRead,
+    cacheWrite: value.cacheWrite,
+    cache: value.cache,
+    total: value.total,
+    cost: value.cost,
+    firstTs: value.firstTs,
+    lastTs: value.lastTs,
+  };
+}
+
+export function normalizeUsageRollups(value: any): UsageRollups {
+  const rollups = emptyRollups();
+  if (!value || value.version !== 1 || !value.buckets || typeof value.buckets !== "object") return rollups;
+  for (const bucket of Object.values(value.buckets)) {
+    const normalized = normalizeUsageBucket(bucket);
+    if (!normalized) continue;
+    rollups.buckets[bucketKey(normalized.day, normalized.provider, normalized.model)] = normalized;
+  }
+  if (Array.isArray(value.compactedEventSources)) rollups.compactedEventSources = value.compactedEventSources.filter((source: any) => typeof source === "string" && source);
+  if (Array.isArray(value.migratedLegacySources)) rollups.migratedLegacySources = value.migratedLegacySources.filter((source: any) => typeof source === "string" && source);
+  rollups.updatedAt = finiteNonNegative(value.updatedAt) ? value.updatedAt : 0;
+  return rollups;
+}
+
 export function addEventToRollups(rollups: UsageRollups, event: GlobalUsageEvent): void {
   const provider = event.provider || "unknown";
   const model = event.model || "unknown";

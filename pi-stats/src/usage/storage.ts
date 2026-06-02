@@ -1,43 +1,47 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { pipPath } from "../../../pip-common/index.ts";
+import { compactPastEventDays } from "./compaction.ts";
+import { readAllDailyUsage } from "./daily.ts";
+import { appendUsageEvent, readAllEventUsage } from "./events.ts";
 import { migrateLegacyUsage } from "./compatibility.ts";
-import { addEventToRollups, emptyRollups } from "./rollups.ts";
+import { emptyRollups, mergeRollups } from "./rollups.ts";
 import type { GlobalUsageEvent, UsageRollups } from "./types.ts";
 
-export const GLOBAL_USAGE_PATH = pipPath("usage", "token-usage.json");
-
-export function readRollupsFile(): UsageRollups {
-  if (!existsSync(GLOBAL_USAGE_PATH)) return emptyRollups();
-  try {
-    const parsed = JSON.parse(readFileSync(GLOBAL_USAGE_PATH, "utf8"));
-    if (parsed?.version === 1 && parsed?.buckets && typeof parsed.buckets === "object") return parsed;
-  } catch {}
-  return emptyRollups();
+export function initializeUsageStorage(): void {
+  migrateLegacyUsage();
+  compactPastEventDays();
 }
-
-export function writeRollupsFile(rollups: UsageRollups): void {
-  mkdirSync(dirname(GLOBAL_USAGE_PATH), { recursive: true });
-  rollups.updatedAt = Date.now();
-  const tmp = `${GLOBAL_USAGE_PATH}.tmp`;
-  writeFileSync(tmp, JSON.stringify(rollups, null, 2) + "\n", "utf8");
-  renameSync(tmp, GLOBAL_USAGE_PATH);
-}
-
-const migrationStore = { readRollupsFile, writeRollupsFile };
 
 export function migrateUsageStorage(): void {
-  migrateLegacyUsage(migrationStore);
+  migrateLegacyUsage();
+}
+
+function sourceMarkerKey(rollups: UsageRollups): string {
+  return JSON.stringify([...(rollups.compactedEventSources ?? [])].sort());
+}
+
+function combineRollups(daily: UsageRollups): UsageRollups {
+  const rollups = emptyRollups();
+  mergeRollups(rollups, daily);
+  mergeRollups(rollups, readAllEventUsage(new Set(daily.compactedEventSources ?? [])));
+  rollups.updatedAt = Date.now();
+  return rollups;
+}
+
+export function readRollupsFile(): UsageRollups {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const before = readAllDailyUsage();
+    const combined = combineRollups(before);
+    const after = readAllDailyUsage();
+    if (sourceMarkerKey(before) === sourceMarkerKey(after)) return combined;
+  }
+  return combineRollups(readAllDailyUsage());
 }
 
 export function readRollups(): UsageRollups {
   migrateUsageStorage();
+  compactPastEventDays();
   return readRollupsFile();
 }
 
 export function updateRollups(event: GlobalUsageEvent): void {
-  migrateUsageStorage();
-  const rollups = readRollupsFile();
-  addEventToRollups(rollups, event);
-  writeRollupsFile(rollups);
+  appendUsageEvent(event);
 }

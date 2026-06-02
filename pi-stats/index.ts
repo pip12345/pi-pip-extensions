@@ -5,6 +5,7 @@ import {
   boxLines,
   emptyUsage as emptyTokens,
   normalizeUsage,
+  applyTemporaryLiveModelsDevCostFallback,
   padAnsi,
   padLeftAnsi,
   PipCustomComponent,
@@ -13,7 +14,7 @@ import {
   type TokenUsage as Tokens,
 } from "../pip-common/index.ts";
 import { groupGlobal } from "./src/usage/rollups.ts";
-import { migrateUsageStorage, readRollups, updateRollups } from "./src/usage/storage.ts";
+import { initializeUsageStorage, readRollups, updateRollups } from "./src/usage/storage.ts";
 import type { GroupBy, RangeKey } from "./src/usage/types.ts";
 
 type ExtensionAPI = any;
@@ -361,12 +362,13 @@ class TokenInspector extends PipCustomComponent<void> {
 }
 
 export default function (pi: ExtensionAPI) {
-  migrateUsageStorage();
+  initializeUsageStorage();
   const seen = new Set<string>();
 
   pi.on("message_end", async (event: any, ctx: any) => {
     const msg = event.message;
     if (msg?.role !== "assistant" || msg.stopReason === "aborted" || msg.stopReason === "error") return;
+    await applyTemporaryLiveModelsDevCostFallback(msg);
     const tokens = normalizeUsage(msg.usage);
     if (!tokens) return;
     const id = hashId([ctx.sessionManager.getSessionFile?.(), msg.timestamp, msg.provider, msg.model, tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, tokens.total]);

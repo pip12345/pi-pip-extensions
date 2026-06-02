@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,8 +9,8 @@ async function loadStats() {
   return (await import("./index.ts")).default;
 }
 
-function usagePath(home: string) {
-  return join(home, ".pi", "agent", "pip", "usage", "token-usage.json");
+async function loadStorage() {
+  return await import("./src/usage/storage.ts");
 }
 
 describe("pi-stats", () => {
@@ -19,9 +19,12 @@ describe("pi-stats", () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "pi-stats-"));
     vi.stubEnv("HOME", home);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 1, 12)));
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   });
@@ -34,7 +37,7 @@ describe("pi-stats", () => {
     expect(pi.handlers.has("message_end")).toBe(true);
   });
 
-  it("records assistant message usage through the global rollup storage", async () => {
+  it("records assistant message usage through global usage storage", async () => {
     const stats = await loadStats();
     const pi = createMockPi();
     stats(pi as any);
@@ -54,7 +57,8 @@ describe("pi-stats", () => {
       createMockCtx({ cwd: "/workspace" })
     );
 
-    const saved = JSON.parse(readFileSync(usagePath(home), "utf8"));
+    const { readRollups } = await loadStorage();
+    const saved = readRollups();
     expect(saved.buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({
       turns: 1,
       input: 10,

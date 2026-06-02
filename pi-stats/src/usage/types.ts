@@ -25,6 +25,8 @@ export interface UsageRollups {
   version: 1;
   updatedAt: number;
   buckets: Record<string, UsageBucket>;
+  compactedEventSources?: string[];
+  migratedLegacySources?: string[];
 }
 
 export interface GlobalRow extends Tokens {
