@@ -16,6 +16,20 @@ function packageDirs() {
 }
 
 describe("pi package manifests", () => {
+  it("top-level git package manifest is npm-compatible and lists literal extension entrypoints", () => {
+    const manifest = readJson(join(repoRoot, "package.json"));
+    const extensionPaths = manifest.pi?.extensions ?? [];
+    const expectedPiExtensions = packageDirs().map((dir) => `${dir.slice(repoRoot.length + 1)}/index.ts`).sort();
+
+    expect(manifest.name).toBe("pi-pip-extensions");
+    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+/);
+    expect(extensionPaths).toEqual(["pip-common/index.ts", ...expectedPiExtensions]);
+    for (const extensionPath of extensionPaths) {
+      expect(extensionPath).not.toMatch(/[?*]/);
+      expect(existsSync(join(repoRoot, extensionPath)), `top-level extension exists: ${extensionPath}`).toBe(true);
+    }
+  });
+
   it("each pi-* package declares existing extension entrypoints with default factories", async () => {
     for (const dir of packageDirs()) {
       const manifestPath = join(dir, "package.json");

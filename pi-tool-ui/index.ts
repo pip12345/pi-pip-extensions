@@ -3,7 +3,7 @@ import { createEditTool, createEditToolDefinition, createFindTool, createGrepToo
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { createLifecycle, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg } from "../pip-common/index.ts";
-import { renderSplitEditDiff } from "./src/split-diff.ts";
+import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 
 const HOME = homedir();
 const SETTINGS_ID = "tool-ui";
@@ -118,7 +118,7 @@ function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefi
         const split = renderSplitEditDiff(diff, width, theme, { maxLines });
         if (split) return split;
       }
-      return textLines(diff, theme).render(width);
+      return renderUnifiedEditDiff(diff, theme, { maxLines });
     },
     invalidate() {},
   };

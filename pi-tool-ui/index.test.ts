@@ -8,6 +8,7 @@ import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
+const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${name}>`, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
 
 beforeEach(() => {
   initTheme("dark", false);
@@ -125,14 +126,14 @@ describe("pi-tool-ui", () => {
     expect(callRendered).toContain("│");
   });
 
-  it("falls back to unified edit diffs on narrow terminals", () => {
+  it("falls back to colored unified edit diffs on narrow terminals", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
-    const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: true }, theme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(80).join("\n");
-    expect(rendered).toContain("-2 old value");
-    expect(rendered).toContain("+2 new value");
+    const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: true }, markedTheme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(80).join("\n");
+    expect(rendered).toContain("<toolDiffRemoved>-2 old value</toolDiffRemoved>");
+    expect(rendered).toContain("<toolDiffAdded>+2 new value</toolDiffAdded>");
     expect(rendered).not.toContain("│");
   });
 

@@ -16,7 +16,7 @@ Recommended: install this repo as a git Pi package:
 pi install git:github.com/pip12345/pi-pip-extensions
 ```
 
-Pi reads the top-level package manifest and loads each `pi-*/index.ts` as its own extension. `pip-common` is the shared helper package used by those extensions; it is not loaded as an extension from the top-level manifest.
+Pi reads the top-level package manifest and loads `pip-common/index.ts` plus each `pi-*/index.ts`. `pip-common` registers shared commands such as `/pip-settings` and exposes helper APIs used by the other extensions.
 
 When the remote git branch moves, Pi warns at startup that package updates are available. Update with:
 
@@ -40,7 +40,7 @@ Relative paths are resolved from the settings file location. So if your settings
 
 ## What gets loaded
 
-Pi scans this folder one level deep. Each `pi-*` folder is its own extension.
+Pi reads the top-level `pi.extensions` manifest. `pip-common` loads first for shared commands/settings, then each `pi-*` folder loads as its own extension.
 
 This collection includes:
 

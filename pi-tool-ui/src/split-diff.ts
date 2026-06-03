@@ -85,6 +85,22 @@ function summaryLine(rows: SplitDiffRow[], theme: any): string {
   return `${themeFg(theme, "muted", "diff")} ${themeFg(theme, "toolDiffAdded", `+${added}`)} ${themeFg(theme, "toolDiffRemoved", `-${removed}`)}`;
 }
 
+function colorForUnifiedPrefix(prefix: string): string {
+  if (prefix === "+") return "toolDiffAdded";
+  if (prefix === "-") return "toolDiffRemoved";
+  return "toolDiffContext";
+}
+
+export function renderUnifiedEditDiff(diff: string, theme: any, options: { maxLines?: number } = {}): string[] {
+  const lines = diff.split("\n");
+  const maxLines = options.maxLines && options.maxLines > 0 ? options.maxLines : lines.length;
+  const visibleLines = lines.slice(0, maxLines);
+  const rendered = visibleLines.map((line) => themeFg(theme, colorForUnifiedPrefix(line[0] ?? " "), line));
+  const hidden = lines.length - visibleLines.length;
+  if (hidden > 0) rendered.push(themeFg(theme, "muted", `... ${hidden} more diff lines`));
+  return rendered;
+}
+
 export function renderSplitEditDiff(diff: string, width: number, theme: any, options: { maxLines?: number } = {}): string[] | undefined {
   const rows = parseEditDisplayDiff(diff);
   if (!rows) return undefined;

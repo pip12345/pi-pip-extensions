@@ -1,5 +1,6 @@
 {
-  "name": "extensions-pip-workspace",
+  "name": "pi-pip-extensions",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "keywords": [
@@ -7,7 +8,19 @@
   ],
   "pi": {
     "extensions": [
-      "pi-*/index.ts"
+      "pip-common/index.ts",
+      "pi-pip-footer/index.ts",
+      "pi-plan-mode/index.ts",
+      "pi-prompt-profiles/index.ts",
+      "pi-question/index.ts",
+      "pi-stats/index.ts",
+      "pi-subagents/index.ts",
+      "pi-tiny-mcp/index.ts",
+      "pi-todo/index.ts",
+      "pi-tool-ui/index.ts",
+      "pi-tree-edit/index.ts",
+      "pi-undo-redo/index.ts",
+      "pi-webfetch-websearch/index.ts"
     ]
   },
   "workspaces": [
