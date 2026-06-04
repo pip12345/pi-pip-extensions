@@ -77,10 +77,12 @@ describe("pi-webfetch-websearch", () => {
     expect(result.text).toContain("First excerpt");
   });
 
-  it("registers the webfetch tool", () => {
+  it("registers the webfetch tool without exposing output mode selection", () => {
     const pi = createMockPi();
     extension(pi as any);
-    expect(getRegisteredTool(pi, "webfetch")).toBeTruthy();
+    const tool = getRegisteredTool(pi, "webfetch");
+    expect(tool).toBeTruthy();
+    expect((tool.parameters as any).properties.mode).toBeUndefined();
   });
 
   it("rejects invalid protocols", async () => {
@@ -106,7 +108,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/file.txt`, format: "text", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/file.txt`, format: "text" });
       expect(result.content[0].text).toBe("hello from webfetch");
       expect(result.details.contentType).toContain("text/plain");
     });
@@ -119,7 +121,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/page`, format: "text", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/page`, format: "text" });
       expect(result.content[0].text).toBe("Hello world");
     });
   });
@@ -131,17 +133,17 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/docs`, format: "markdown", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/docs`, format: "markdown" });
       expect(result.content[0].text).toContain("# Docs");
       expect(result.content[0].text).toContain(`[the guide](${base}/guide)`);
       expect(result.content[0].text).toContain("- One");
     });
   });
 
-  it("saves webfetch output to a session artifact file by default", async () => {
+  it("saves large webfetch output to a session artifact file automatically", async () => {
     await withServer((_req, res) => {
       res.setHeader("content-type", "text/html");
-      res.end("<article><h1>Docs</h1><h2>Install</h2><p>npm install thing</p><h2>Usage</h2><p>run it</p></article>");
+      res.end(`<article><h1>Docs</h1><h2>Install</h2><p>npm install thing</p><h2>Usage</h2><p>${"run it ".repeat(1500)}</p></article>`);
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
@@ -150,6 +152,7 @@ describe("pi-webfetch-websearch", () => {
       expect(result.content[0].text).toContain("Outline:");
       expect(result.content[0].text).toContain("Install");
       expect(result.content[0].text).not.toContain("npm install thing");
+      expect(result.details.mode).toBe("file");
       expect(result.details.artifact.path).toContain(".pi/agent/pip/webfetch-websearch/sessions");
       expect(existsSync(result.details.artifact.path)).toBe(true);
       expect(readFileSync(result.details.artifact.path, "utf8")).toContain("npm install thing");
@@ -158,10 +161,24 @@ describe("pi-webfetch-websearch", () => {
     });
   });
 
+  it("returns small webfetch output inline automatically", async () => {
+    await withServer((_req, res) => {
+      res.setHeader("content-type", "text/plain");
+      res.end("small inline fetch");
+    }, async (base) => {
+      const pi = createMockPi();
+      extension(pi as any);
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/small`, format: "text" });
+      expect(result.content[0].text).toBe("small inline fetch");
+      expect(result.details.mode).toBe("inline");
+      expect(result.details.artifact).toBeUndefined();
+    });
+  });
+
   it("keeps multiple saved artifacts below the per-session limit", async () => {
     await withServer((req, res) => {
       res.setHeader("content-type", "text/plain");
-      res.end(req.url === "/one" ? "first artifact" : "second artifact");
+      res.end(req.url === "/one" ? "first artifact ".repeat(800) : "second artifact ".repeat(800));
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
@@ -170,8 +187,8 @@ describe("pi-webfetch-websearch", () => {
       const second = await exec(tool, { url: `${base}/two`, format: "text" });
       expect(existsSync(first.details.artifact.path)).toBe(true);
       expect(existsSync(second.details.artifact.path)).toBe(true);
-      expect(readFileSync(first.details.artifact.path, "utf8")).toBe("first artifact");
-      expect(readFileSync(second.details.artifact.path, "utf8")).toBe("second artifact");
+      expect(readFileSync(first.details.artifact.path, "utf8")).toContain("first artifact");
+      expect(readFileSync(second.details.artifact.path, "utf8")).toContain("second artifact");
       rmSync(dirname(dirname(second.details.artifact.path)), { recursive: true, force: true });
     });
   });
@@ -180,7 +197,7 @@ describe("pi-webfetch-websearch", () => {
     pipSettings.set("webfetch-websearch.artifactMaxPerSession", "1");
     await withServer((req, res) => {
       res.setHeader("content-type", "text/plain");
-      res.end(req.url === "/old" ? "old artifact" : "new artifact");
+      res.end(req.url === "/old" ? "old artifact ".repeat(800) : "new artifact ".repeat(800));
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
@@ -202,7 +219,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/article`, format: "markdown", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/article`, format: "markdown" });
       expect(result.content[0].text).toContain("# Real Article");
       expect(result.content[0].text).not.toContain("Alpha");
     });
@@ -215,7 +232,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/article`, format: "markdown", extract: "nav", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/article`, format: "markdown", extract: "nav" });
       expect(result.content[0].text).toContain("[Alpha]");
       expect(result.content[0].text).not.toContain("Real Article");
     });
@@ -228,7 +245,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/raw`, format: "html", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/raw`, format: "html" });
       expect(result.content[0].text).toContain("<main><h1>Raw</h1></main>");
     });
   });
@@ -240,7 +257,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/long`, maxChars: 1200, mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/long`, maxChars: 1200 });
       expect(result.content[0].text.length).toBeLessThanOrEqual(1200);
       expect(result.content[0].text).toContain("[Truncated:");
       expect(result.details.truncated).toBe(true);
@@ -267,7 +284,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/image.png`, mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/image.png` });
       expect(result.content[0].text).toContain("Binary body omitted");
       expect(result.content[0].text).not.toContain("base64");
     });
@@ -296,10 +313,12 @@ describe("pi-webfetch-websearch", () => {
     expect(rewriteGitHubUrl(new URL("https://github.com/owner/repo/issues/1"))).toBeUndefined();
   });
 
-  it("registers the websearch tool", () => {
+  it("registers the websearch tool without exposing output mode selection", () => {
     const pi = createMockPi();
     extension(pi as any);
-    expect(getRegisteredTool(pi, "websearch")).toBeTruthy();
+    const tool = getRegisteredTool(pi, "websearch");
+    expect(tool).toBeTruthy();
+    expect((tool.parameters as any).properties.mode).toBeUndefined();
   });
 
   it("parses plain and SSE MCP responses", () => {
@@ -323,14 +342,14 @@ describe("pi-webfetch-websearch", () => {
       process.env.PIP_WEBSEARCH_EXA_URL = `${base}/mcp`;
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "websearch"), { query: "pi coding agent", provider: "exa", contextMaxCharacters: 1200, mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "websearch"), { query: "pi coding agent", provider: "exa", contextMaxCharacters: 1200 });
       expect(result.details.provider).toBe("exa");
       expect(result.content[0].text.length).toBeLessThanOrEqual(1200);
       expect(result.content[0].text).toContain("[Truncated:");
     });
   });
 
-  it("saves websearch output to a session artifact file by default", async () => {
+  it("returns compact websearch output inline while saving the formatted artifact", async () => {
     await withServer((req, res) => {
       req.resume();
       req.on("end", () => {
@@ -343,17 +362,40 @@ describe("pi-webfetch-websearch", () => {
       const pi = createMockPi();
       extension(pi as any);
       const result = await exec(getRegisteredTool(pi, "websearch"), { query: "artifact search", provider: "exa" });
-      expect(result.content[0].text).toContain("Saved websearch result");
-      expect(result.content[0].text).toContain("Outline:");
       expect(result.content[0].text).toContain("# Web search: artifact search");
       expect(result.content[0].text).toContain("## 1. First result");
-      expect(result.content[0].text).not.toContain("Snippet text");
+      expect(result.content[0].text).toContain("Snippet text");
+      expect(result.details.mode).toBe("inline+artifact");
       expect(existsSync(result.details.artifact.path)).toBe(true);
       const saved = readFileSync(result.details.artifact.path, "utf8");
       expect(saved).toContain("# Web search: artifact search");
       expect(saved).toContain("## 1. First result");
       expect(saved).toContain("Snippet text");
       expect(pi.entries.at(-1)?.customType).toBe("pip.webfetchWebsearch.artifact");
+      rmSync(dirname(dirname(result.details.artifact.path)), { recursive: true, force: true });
+    });
+  });
+
+  it("saves large websearch output and returns an artifact summary", async () => {
+    await withServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        const providerText = JSON.stringify({ search_id: "s2", results: [{ url: "https://example.com/large", title: "Large result", publish_date: null, excerpts: ["Large snippet ".repeat(900)] }] });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: providerText }] } }));
+      });
+    }, async (base) => {
+      process.env.PIP_WEBSEARCH_EXA_URL = `${base}/mcp`;
+      const pi = createMockPi();
+      extension(pi as any);
+      const result = await exec(getRegisteredTool(pi, "websearch"), { query: "large search", provider: "exa" });
+      expect(result.content[0].text).toContain("Saved websearch result");
+      expect(result.content[0].text).toContain("Outline:");
+      expect(result.content[0].text).toContain("Large result");
+      expect(result.content[0].text).not.toContain("Large snippet Large snippet");
+      expect(result.details.mode).toBe("file");
+      expect(existsSync(result.details.artifact.path)).toBe(true);
+      expect(readFileSync(result.details.artifact.path, "utf8")).toContain("Large snippet");
       rmSync(dirname(dirname(result.details.artifact.path)), { recursive: true, force: true });
     });
   });
@@ -377,10 +419,11 @@ describe("pi-webfetch-websearch", () => {
       process.env.PIP_WEBSEARCH_EXA_URL = `${base}/exa`;
       const pi = createMockPi();
       extension(pi as any);
-      const result = await exec(getRegisteredTool(pi, "websearch"), { query: "fallback test", mode: "inline" });
+      const result = await exec(getRegisteredTool(pi, "websearch"), { query: "fallback test" });
       expect(result.details.provider).toBe("exa");
       expect(result.details.fallbackUsed).toBe(true);
       expect(result.content[0].text).toBe("exa fallback result");
+      rmSync(dirname(dirname(result.details.artifact.path)), { recursive: true, force: true });
     });
   });
 });
