@@ -1,10 +1,11 @@
 import { createEditToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import toolUi from "./index.ts";
+import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
-import { flushPipTools, pipSettings, resetPipToolsForTests } from "../pip-common/index.ts";
+import { flushPipTools, pipSettings, resetPipToolsForTests, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
@@ -108,6 +109,18 @@ describe("pi-tool-ui", () => {
     expect(rendered).toContain("│");
   });
 
+  it("never renders edit diff lines wider than the provided width", () => {
+    const longOld = "old " + "x".repeat(200);
+    const longNew = "new " + "界".repeat(100);
+    const diff = ` 1 same\n-2 ${longOld}\n+2 ${longNew}\n 3 tail`;
+    const split = renderSplitEditDiff(diff, 117, theme, { maxLines: 80 });
+    const unified = renderUnifiedEditDiff(diff, 117, theme, { maxLines: 80 });
+
+    expect(split?.join("\n")).toContain("│");
+    expect(split?.every((line: string) => visibleWidth(line) <= 117)).toBe(true);
+    expect(unified.every((line: string) => visibleWidth(line) <= 117)).toBe(true);
+  });
+
   it("renders split edit diffs in the built-in call preview without duplicate result output", () => {
     const pi = createMockPi();
     toolUi(pi as any);
@@ -129,6 +142,7 @@ describe("pi-tool-ui", () => {
   it("falls back to colored unified edit diffs on narrow terminals", () => {
     const pi = createMockPi();
     toolUi(pi as any);
+    pipSettings.set("tool-ui.diffLayout", "auto");
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
     const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: true }, markedTheme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(80).join("\n");

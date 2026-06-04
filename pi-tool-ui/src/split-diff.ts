@@ -91,14 +91,18 @@ function colorForUnifiedPrefix(prefix: string): string {
   return "toolDiffContext";
 }
 
-export function renderUnifiedEditDiff(diff: string, theme: any, options: { maxLines?: number } = {}): string[] {
+function capRenderedLines(lines: string[], width: number): string[] {
+  return lines.map((line) => truncateToWidth(line, width));
+}
+
+export function renderUnifiedEditDiff(diff: string, width: number, theme: any, options: { maxLines?: number } = {}): string[] {
   const lines = diff.split("\n");
   const maxLines = options.maxLines && options.maxLines > 0 ? options.maxLines : lines.length;
   const visibleLines = lines.slice(0, maxLines);
   const rendered = visibleLines.map((line) => themeFg(theme, colorForUnifiedPrefix(line[0] ?? " "), line));
   const hidden = lines.length - visibleLines.length;
   if (hidden > 0) rendered.push(themeFg(theme, "muted", `... ${hidden} more diff lines`));
-  return rendered;
+  return capRenderedLines(rendered, width);
 }
 
 export function renderSplitEditDiff(diff: string, width: number, theme: any, options: { maxLines?: number } = {}): string[] | undefined {
@@ -107,7 +111,7 @@ export function renderSplitEditDiff(diff: string, width: number, theme: any, opt
   const gutterWidth = lineNoWidth(rows);
   const separator = themeFg(theme, "border", " │ ");
   const minContentWidth = 8;
-  const available = Math.max(20, width - visibleWidth(separator) - (gutterWidth + 1) * 2);
+  const available = width - visibleWidth(separator) - (gutterWidth + 1) * 2;
   const contentWidth = Math.floor(available / 2);
   if (contentWidth < minContentWidth) return undefined;
 
@@ -120,5 +124,5 @@ export function renderSplitEditDiff(diff: string, width: number, theme: any, opt
   })];
   const hidden = rows.length - visibleRows.length;
   if (hidden > 0) rendered.push(themeFg(theme, "muted", `... ${hidden} more diff lines`));
-  return rendered;
+  return capRenderedLines(rendered, width);
 }

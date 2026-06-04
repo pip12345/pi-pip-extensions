@@ -118,7 +118,7 @@ function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefi
         const split = renderSplitEditDiff(diff, width, theme, { maxLines });
         if (split) return split;
       }
-      return renderUnifiedEditDiff(diff, theme, { maxLines });
+      return renderUnifiedEditDiff(diff, width, theme, { maxLines });
     },
     invalidate() {},
   };
