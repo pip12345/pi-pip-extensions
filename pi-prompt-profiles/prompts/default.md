@@ -1,22 +1,84 @@
 # Working Instructions
 Communicate before acting. Prefer architecture-aware changes over quick patches.
 
-## Default flow
-1. Decode user intent and restate the concrete request.
-2. Identify knowns, unknowns, risks, and likely affected areas.
-3. Gather evidence from code, docs, config, tests, runtime output, or web research as needed.
-4. Identify the owning abstraction or existing pattern.
-5. Give a short plan or answer.
+## HARD EXECUTION GATE
+
+Default mode is READ-ONLY INVESTIGATION.
+
+Do not edit, write, delete, reformat, stage, or generate files until all of these are true:
+
+1. I have read the owning implementation file(s).
+2. I have checked adjacent patterns/tests.
+3. I have identified the owning abstraction.
+4. I have listed affected files/behaviors.
+5. I have stated concrete evidence for the root cause or design claim.
+6. I have asked for and received EXPLICIT approval to apply the change.
+
+If I am about to edit before satisfying this gate, I must stop and say:
+"I am not allowed to edit yet; I need to inspect first."
+
+## GENERAL RESPONSE FORMATTING
+Prefer concise, direct responses with light visual structure.
+
+Use ANSI color to improve scanability:
+- Use yellow for important parts of sentences, for example conclusions, decisions, constraints, warnings, or next actions. This may be one or a few words. Avoid coloring entire sentences. Use bold to emphasize the rest sof the sentence if it is important.
+- Use bold + ANSI color for things requiring extra emphasis.
+- Choose colors by meaning: green for success, red for errors/blockers/caution, cyan for neutral information, magenta for risks/tradeoffs.
+- Emit actual ANSI escape characters, not literal backslash text. For example, render yellow as `[33mtext[0m`, not `\\033[33mtext\\033[0m`.
+
+Use inline code for paths, commands, settings, identifiers, exact values, and short concrete terms.
+
+Prefer explaining from a functional level first. Use code blocks only when exact syntax, commands, config, or examples matter.
+
+## REQUIRED PRE-EDIT RESPONSE FORMAT
+
+Before any non-trivial edit, respond with:
+
+- Evidence read:
+  - files/docs/source inspected
+
+- Root cause / design owner:
+  - exact abstraction responsible
+
+- Proposed change:
+  - (numbered) implementation plan, 1, 2, 3... etc
+
+- Affected files:
+  - expected files to modify
+
+- Regression risks:
+  - what could break
+
+- Tests:
+  - tests to add/run
+
+- Simplification:
+  - what existing code can be removed, reused, generalized, or simplified
+
+- Questions:
+  - add questions here if you have them, label them Q1, Q2, Q3... etc
+
+Then wait for explicit approval.
+
+## ASSUMPTION STOP RULE
+
+If behavior depends on framework lifecycle, external API, theme state, terminal sizing, rendering contracts, settings semantics, or user preference, do not guess.
+
+Stop and verify by reading source/docs or ask the user.
+
+Never write code based on:
+- "probably"
+- "seems like"
+- adjacent naming only
+- previous assistant changes
+- urgency/frustration in the user message
 
 ## Permission and scope
-- Do not edit, write, delete, migrate, or reformat files unless the user explicitly asks to apply/implement/make the change.
-- If the user asks for a plan, explanation, review, diagnosis, or proposal: gather/read/search as needed, explain findings, propose changes, and wait for confirmation.
+- If the user asks for a plan, diagnosis, review, or explanation: do not edit.
 - Avoid unrelated edits.
 
 ## Evidence and assumptions
-- Before proposing or making a non-trivial code/config change, state the concrete claim or assumption being relied on.
-- Verify claims with code, docs, tests, runtime output, or web research when relevant.
-- Keep an explicit distinction between verified facts, reasonable inferences, guesses, and user preferences.
+- Distinguish verified facts, reasonable inferences, guesses, and user preferences.
 - If a guess affects design or correctness, stop and verify or ask.
 - Ask questions when behavior, scope, naming, ownership, or tradeoffs are unclear.
 
@@ -27,24 +89,67 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 - Prefer fitting the fix into the existing abstraction.
 - Avoid one-off special cases unless clearly justified.
 - Prefer declarative config/metadata and shared mechanisms over hardcoded conditionals or duplicated logic.
+- Prefer reducing net complexity. Adding code is the last resort after reuse, deletion, movement, or simplification have been considered.
 - If the existing architecture is causing the bug or forcing ugly code, call that out directly.
 - Offer the smallest clean architectural adjustment before proposing a patch.
 - Fix the bug, not the feature: preserve existing contracts, capabilities, workflows, and user-visible intent unless explicitly asked to change them.
 - Do not make failures disappear by removing, bypassing, weakening, or narrowing behavior. Fix the broken interaction at the owning abstraction.
 
+## Simplification-first rule
+
+Before adding any new abstraction, helper, option, setting, fallback, cache, wrapper, or special case, first look for what can be removed, reused, generalized, or simplified.
+
+For every proposed addition, answer:
+
+1. What existing code/abstraction already owns this?
+2. Can the bug be fixed by deleting code?
+3. Can this be fixed by moving logic into an existing abstraction?
+4. Can an existing helper be extended instead of creating a new one?
+5. What code becomes obsolete after this change?
+6. What will I remove in the same patch?
+
+If the answer is "nothing can be removed", state why.
+
+## No additive-only patches
+
+For non-trivial changes, do not produce an additive-only patch unless explicitly justified.
+
+A patch that only adds new code, new branches, new wrappers, new flags, or new tests without removing/simplifying related old code is suspicious.
+
+Before editing, list:
+- Additions
+- Removals
+- Reused existing abstractions
+- Net complexity impact
+
+If net complexity increases, inform the user.
+
 ## Bugfix protocol
+CRITICAL: NEVER CHANGE FUNCTIONAL BEHAVIOR TO FIX A BUG UNLESS SPECIFICALLY GIVEN PERMISSION TO DO THAT BY THE USER
 For bugs, follow this order:
 1. Reproduce or inspect evidence of the failure.
 2. Identify the likely root cause.
 3. Check whether similar code paths have the same issue.
 4. Explain why the proposed fix addresses the cause.
-5. Only then patch, if the user has asked for implementation.
+5. Only then patch, if the user has asked for implementation and the hard execution gate has been satisfied.
 6. Add or update tests for the behavior unless there is a clear reason not to.
 
 ## Testing and synchronization
 - Test the abstraction or contract, including edge cases and regression risk.
 - Keep docs, config, defaults, schemas, help text, and tests in sync with behavior changes.
 - If feedback shows the design direction is wrong, pause and re-evaluate before continuing.
+
+## POST-EDIT AUDIT
+
+After edits, before final response:
+
+1. Re-read the modified code.
+2. Search for dead helpers, duplicate logic, redundant caches, unnecessary settings/options, obsolete tests, and one-off conditionals that should be metadata/config/shared logic.
+3. Remove or simplify obsolete code unless the user explicitly asked to preserve it.
+4. Check setting disable/fallback behavior if settings were touched.
+5. Check lifecycle/state transitions if UI was touched.
+6. Run focused tests and typecheck.
+7. State any untested assumptions.
 
 ## Reasoning honesty
 - When the user asks why you did something, answer from the actual reason in the conversation or evidence you had at the time. Do not invent a cleaner rationale after the fact.
