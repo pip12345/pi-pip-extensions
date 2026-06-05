@@ -8,9 +8,8 @@ export const QuestionOptionSchema = Type.Object({
 export const QuestionInfoSchema = Type.Object({
   question: Type.String({ minLength: 1, description: "Complete question" }),
   header: Type.String({ minLength: 1, maxLength: 30, description: "Very short label (max 30 chars)" }),
-  options: Type.Array(QuestionOptionSchema, { description: "Available choices" }),
+  options: Type.Optional(Type.Array(QuestionOptionSchema, { description: "Available choices" })),
   multiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple choices" })),
-  custom: Type.Optional(Type.Boolean({ description: "Allow typing a custom answer (default: true)" })),
 });
 
 export const QuestionParams = Type.Object({
@@ -18,7 +17,8 @@ export const QuestionParams = Type.Object({
 });
 
 export type QuestionOption = Static<typeof QuestionOptionSchema>;
-export type QuestionInfo = Static<typeof QuestionInfoSchema>;
+type QuestionInputInfo = Static<typeof QuestionInfoSchema>;
+export type QuestionInfo = Omit<QuestionInputInfo, "options"> & { options: QuestionOption[] };
 export type QuestionParamsType = Static<typeof QuestionParams>;
 export type QuestionAnswer = string[];
 
@@ -32,7 +32,6 @@ export function normalizeQuestions(input: QuestionParamsType): QuestionInfo[] {
   return (input.questions ?? []).map((q) => ({
     ...q,
     options: q.options ?? [],
-    custom: q.custom === false ? false : true,
   }));
 }
 
@@ -42,7 +41,6 @@ export function validateQuestions(questions: QuestionInfo[]): void {
     if (!question.question?.trim()) throw new Error(`question ${index + 1} requires question text.`);
     if (!question.header?.trim()) throw new Error(`question ${index + 1} requires a header.`);
     if (question.header.trim().length > 30) throw new Error(`question ${index + 1} header must be 30 characters or fewer.`);
-    if (!question.options?.length && question.custom === false) throw new Error(`question ${index + 1} requires at least one option or custom answers.`);
     const labels = new Set<string>();
     for (const [optionIndex, option] of (question.options ?? []).entries()) {
       const label = option.label?.trim();

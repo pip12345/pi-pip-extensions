@@ -15,13 +15,12 @@ Interactive opencode-style `question` tool for pi.
       { label: "Small extension", description: "No core changes" },
       { label: "Core change", description: "Requires maintaining behavior in pi itself" }
     ],
-    multiple: false,
-    custom: true
+    multiple: false
   }]
 }
 ```
 
-Answers are returned as `string[][]`, one answer array per question. `multiple: true` allows multiple selected labels. `custom !== false` enables a typed answer option.
+Answers are returned as `string[][]`, one answer array per question. `multiple: true` allows multiple selected labels. A typed custom answer option is always available.
 
 ## UI keys
 

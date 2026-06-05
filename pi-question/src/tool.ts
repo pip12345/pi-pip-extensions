@@ -5,7 +5,7 @@ import { askQuestions } from "./ui.ts";
 import { formatAnsweredOutput, formatRejectedOutput } from "./format.ts";
 import { renderQuestionCall, renderQuestionResult } from "./render.ts";
 
-const DESCRIPTION = "Ask the user questions during execution. Supports multiple questions, single or multiple choice, and optional custom answers.";
+const DESCRIPTION = "Ask the user questions during execution. Supports multiple questions, single or multiple choice, and typed custom answers.";
 
 export function registerQuestionTool(pi: ExtensionAPI): void {
   registerPipTool(pi, {
@@ -17,7 +17,7 @@ export function registerQuestionTool(pi: ExtensionAPI): void {
       promptGuidelines: [
         "Use question when you need user clarification, preferences, or decisions before continuing.",
         "Keep question options short and mutually exclusive; put the recommended option first and label it Recommended when useful.",
-        "Do not include an Other option when question custom answers are enabled; the tool adds custom answer support automatically.",
+        "Do not include an Other option; the tool always adds custom typed answer support automatically.",
       ],
       parameters: QuestionParams,
       async execute(_id: string, params: any, _signal: AbortSignal | undefined, _onUpdate: any, ctx: any) {

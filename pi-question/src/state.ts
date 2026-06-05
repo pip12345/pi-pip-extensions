@@ -33,23 +33,19 @@ export function questionInfo(questions: readonly QuestionInfo[], state: Question
   return questions[state.tab];
 }
 
-export function questionCustom(questions: readonly QuestionInfo[], state: QuestionState): boolean {
-  return questionInfo(questions, state)?.custom !== false;
-}
-
 export function questionInput(state: QuestionState): string {
   return state.custom[state.tab] ?? "";
 }
 
 export function questionOther(questions: readonly QuestionInfo[], state: QuestionState): boolean {
   const info = questionInfo(questions, state);
-  return Boolean(info && info.custom !== false && state.selected === info.options.length);
+  return Boolean(info && state.selected === info.options.length);
 }
 
 export function questionTotal(questions: readonly QuestionInfo[], state: QuestionState): number {
   const info = questionInfo(questions, state);
   if (!info) return 0;
-  return info.options.length + (info.custom !== false ? 1 : 0);
+  return info.options.length + 1;
 }
 
 export function questionAnswers(state: QuestionState, count: number): QuestionAnswer[] {

@@ -3,7 +3,6 @@ import type { QuestionAnswer, QuestionInfo } from "./schema.ts";
 import {
   createQuestionState,
   questionConfirm,
-  questionCustom,
   questionInfo,
   questionInput,
   questionMove,
@@ -137,7 +136,7 @@ class QuestionComponent extends PipCustomComponent<AskQuestionResult> {
     lines.push(themeFg(this.theme, "text", info.question + (info.multiple ? " (select all that apply)" : "")));
     lines.push("");
     for (const [index, option] of info.options.entries()) this.renderOption(lines, width, index, option.label, option.description, false);
-    if (questionCustom(this.questions, this.state)) this.renderOption(lines, width, info.options.length, "Type your own answer", questionInput(this.state), true);
+    this.renderOption(lines, width, info.options.length, "Type your own answer", questionInput(this.state), true);
   }
 
   private renderOption(lines: string[], width: number, index: number, label: string, description = "", custom: boolean): void {

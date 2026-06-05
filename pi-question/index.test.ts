@@ -16,7 +16,6 @@ const questions: QuestionInfo[] = [
       { label: "Yes", description: "Generate it" },
       { label: "No", description: "Skip it" },
     ],
-    custom: true,
   },
   {
     question: "Which checks?",
@@ -26,7 +25,6 @@ const questions: QuestionInfo[] = [
       { label: "E2E", description: "End-to-end tests" },
     ],
     multiple: true,
-    custom: true,
   },
 ];
 
@@ -103,6 +101,17 @@ describe("pi-question", () => {
   it("validates duplicate and empty option labels", () => {
     expect(() => validateQuestions([{ ...questions[0], options: [{ label: "", description: "Nope" }] }])).toThrow(/requires a label/);
     expect(() => validateQuestions([{ ...questions[0], options: [{ label: "Same", description: "One" }, { label: "same", description: "Two" }] }])).toThrow(/duplicate/);
+  });
+
+  it("allows questions with only a typed custom answer", async () => {
+    expect(() => validateQuestions([{ question: "What path?", header: "Path", options: [] }])).not.toThrow();
+
+    const pi = createMockPi();
+    extension(pi as any);
+    flushPipTools(pi as any);
+    const result = await exec(getRegisteredTool(pi, "question"), { questions: [{ question: "What path?", header: "Path" }] }, { ui: { custom: async () => ({ answers: [["/tmp/a"]], rejected: false }) } });
+    expect(result.details.questions[0].options).toEqual([]);
+    expect(result.details.answers).toEqual([["/tmp/a"]]);
   });
 
   it("single select submits immediately", () => {
