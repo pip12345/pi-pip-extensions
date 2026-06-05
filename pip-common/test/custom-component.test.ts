@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PipCustomComponent } from "../src/custom-component.ts";
+import { PipCustomComponent, type OverlayRowBudgetOptions } from "../src/custom-component.ts";
 
 class TestComponent extends PipCustomComponent<string> {
   keys: string[] = [];
@@ -9,6 +9,9 @@ class TestComponent extends PipCustomComponent<string> {
   protected handleKey(key: string): void {
     this.keys.push(key);
     if (key === "x") this.close("x-done");
+  }
+  rowBudget(options: OverlayRowBudgetOptions): number {
+    return this.overlayRowBudget(options);
   }
 }
 
@@ -26,5 +29,10 @@ describe("PipCustomComponent", () => {
       component.handleInput(key);
       expect(closed).toBe(true);
     }
+  });
+
+  it("calculates overlay row budgets from terminal height", () => {
+    const component = new TestComponent({ terminal: { rows: 24 }, requestRender() {} }, {}, () => undefined);
+    expect(component.rowBudget({ maxRows: 30, minRows: 8, reservedRows: 8, maxHeightRatio: 0.85 })).toBe(12);
   });
 });

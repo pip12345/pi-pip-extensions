@@ -301,6 +301,53 @@ describe("pi-tree-edit", () => {
     }
   });
 
+  it("sizes visible tree rows from terminal height", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-height-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const lines = [JSON.stringify({ type: "session", id: "session-test" })];
+    for (let i = 0; i < 60; i++) {
+      lines.push(JSON.stringify({
+        type: "message",
+        id: `e${i}`,
+        parentId: i === 0 ? null : `e${i - 1}`,
+        timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+        message: { role: i % 2 === 0 ? "user" : "assistant", content: [{ type: "text", text: `message ${i}` }] },
+      }));
+    }
+    writeFileSync(sessionFile, lines.join("\n") + "\n");
+
+    async function renderedMessageRows(terminalRows: number): Promise<number> {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      let count = 0;
+      const ctx: any = {
+        model: { provider: "test", modelId: "test-model", contextWindow: 200000 },
+        waitForIdle: async () => undefined,
+        sessionManager: { getSessionFile: () => sessionFile, getLeafId: () => "e59" },
+        ui: {
+          custom: async (factory: any) => {
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {}, terminal: { rows: terminalRows } }, theme, undefined, (value: any) => { result = value; }) as any;
+            count = component.render(120).filter((line: string) => /message \d+/.test(line)).length;
+            component.handleInput("q");
+            return result;
+          },
+          select: async () => "Cancel",
+          notify: () => undefined,
+        },
+      };
+      await runCommand(pi, "tree-edit", "", ctx);
+      return count;
+    }
+
+    try {
+      expect(await renderedMessageRows(24)).toBeLessThan(await renderedMessageRows(80));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("opens deep linear sessions without overflowing the call stack", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tree-edit-deep-"));
     const sessionFile = join(dir, "session.jsonl");
@@ -332,7 +379,7 @@ describe("pi-tree-edit", () => {
           custom: async (factory: any) => {
             let result: any;
             const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
-            const component = factory({ requestRender() {}, terminal: { height: 30 } }, theme, undefined, (value: any) => { result = value; }) as any;
+            const component = factory({ requestRender() {}, terminal: { rows: 30 } }, theme, undefined, (value: any) => { result = value; }) as any;
             expect(component.render(120).join("\n")).toContain("tree-edit");
             component.handleInput("q");
             return result;

@@ -30,7 +30,10 @@ function applySettingsValues(registry: SettingsRegistry, values: Record<string, 
   }
 }
 
-const VISIBLE_SETTING_ROWS = 10;
+const MAX_VISIBLE_SETTING_ROWS = 30;
+const MIN_VISIBLE_SETTING_ROWS = 8;
+const SETTINGS_OVERLAY_MAX_HEIGHT_RATIO = 0.85;
+const SETTINGS_CHROME_LINES = 8;
 
 type SettingsDisplayRow = { kind: "section"; section: ReturnType<SettingsRegistry["sections"]>[number] } | { kind: "setting"; row: SettingRow };
 
@@ -101,11 +104,21 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
     return false;
   }
 
+  private visibleSettingRows(): number {
+    return this.overlayRowBudget({
+      maxRows: MAX_VISIBLE_SETTING_ROWS,
+      minRows: MIN_VISIBLE_SETTING_ROWS,
+      reservedRows: SETTINGS_CHROME_LINES,
+      maxHeightRatio: SETTINGS_OVERLAY_MAX_HEIGHT_RATIO,
+    });
+  }
+
   private move(delta: number): void {
     const count = buildDisplayRows(this.registry).length;
+    const visibleSettingRows = this.visibleSettingRows();
     this.selected = Math.max(0, Math.min(Math.max(0, count - 1), this.selected + delta));
     if (this.selected < this.scroll) this.scroll = this.selected;
-    if (this.selected >= this.scroll + VISIBLE_SETTING_ROWS) this.scroll = this.selected - VISIBLE_SETTING_ROWS + 1;
+    if (this.selected >= this.scroll + visibleSettingRows) this.scroll = this.selected - visibleSettingRows + 1;
   }
 
   render(width: number): string[] {
@@ -133,7 +146,8 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
     }
     lines.push("");
 
-    const visibleRows = displayRows.slice(this.scroll, this.scroll + VISIBLE_SETTING_ROWS);
+    const visibleSettingRows = this.visibleSettingRows();
+    const visibleRows = displayRows.slice(this.scroll, this.scroll + visibleSettingRows);
     for (const [offset, item] of visibleRows.entries()) {
       const realIndex = this.scroll + offset;
       const selected = realIndex === this.selected;
@@ -151,7 +165,7 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
       lines.push(truncateToWidth(rendered, bodyWidth - 2));
     }
 
-    if (displayRows.length > VISIBLE_SETTING_ROWS) lines.push(themeFg(theme, "dim", `${this.selected + 1}/${displayRows.length}`));
+    if (displayRows.length > visibleSettingRows) lines.push(themeFg(theme, "dim", `${this.selected + 1}/${displayRows.length}`));
     return boxLines(lines, bodyWidth, theme);
   }
 }

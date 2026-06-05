@@ -6,6 +6,13 @@ export interface CustomComponentOptions {
   closeKeys?: readonly string[];
 }
 
+export interface OverlayRowBudgetOptions {
+  maxRows: number;
+  minRows?: number;
+  reservedRows?: number;
+  maxHeightRatio?: number;
+}
+
 /**
  * Base class for pi custom/overlay components.
  *
@@ -44,5 +51,20 @@ export abstract class PipCustomComponent<Result = void> {
 
   protected requestRender(): void {
     this.tui?.requestRender?.();
+  }
+
+  protected terminalRows(): number | undefined {
+    const rows = Number(this.tui?.terminal?.rows);
+    return Number.isFinite(rows) && rows > 0 ? rows : undefined;
+  }
+
+  protected overlayRowBudget(options: OverlayRowBudgetOptions): number {
+    const terminalRows = this.terminalRows();
+    if (terminalRows === undefined) return options.maxRows;
+    const minRows = options.minRows ?? 1;
+    const reservedRows = options.reservedRows ?? 0;
+    const maxHeightRatio = options.maxHeightRatio ?? 1;
+    const overlayRows = Math.floor(terminalRows * maxHeightRatio);
+    return Math.max(minRows, Math.min(options.maxRows, overlayRows - reservedRows));
   }
 }

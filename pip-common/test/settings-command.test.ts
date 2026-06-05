@@ -57,6 +57,37 @@ describe("pip settings command", () => {
     expect(visibleWidth(lines[0].trimEnd())).toBe(140);
   });
 
+  it("shows a taller settings list", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({
+      id: "x",
+      title: "X",
+      settings: Object.fromEntries(Array.from({ length: 34 }, (_, index) => [`setting${index}`, setting.boolean({ label: `Setting ${index}`, default: true, order: index })])),
+    });
+    const component = createPipSettingsComponent({ terminal: { rows: 60 }, requestRender() {} }, { fg: (_name: string, text: string) => text }, () => undefined, registry) as any;
+
+    const rendered = component.render(100).join("\n");
+    const visibleSettingRows = rendered.split("\n").filter((line: string) => /Setting \d+:/.test(line));
+
+    expect(visibleSettingRows.length).toBeGreaterThan(20);
+    expect(visibleSettingRows.length).toBe(29);
+  });
+
+  it("reduces settings rows on short terminals", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({
+      id: "x",
+      title: "X",
+      settings: Object.fromEntries(Array.from({ length: 34 }, (_, index) => [`setting${index}`, setting.boolean({ label: `Setting ${index}`, default: true, order: index })])),
+    });
+    const component = createPipSettingsComponent({ terminal: { rows: 24 }, requestRender() {} }, { fg: (_name: string, text: string) => text }, () => undefined, registry) as any;
+
+    const rendered = component.render(100).join("\n");
+    const visibleSettingRows = rendered.split("\n").filter((line: string) => /Setting \d+:/.test(line));
+
+    expect(visibleSettingRows.length).toBe(11);
+  });
+
   it("keeps settings rows stable when selected description appears or disappears", () => {
     const registry = createSettingsRegistry({}, { persistPath: false });
     registry.registerSection({

@@ -29,6 +29,11 @@ function box(lines: string[], width: number, title: string, theme: Theme): strin
   return boxLines(lines, Math.max(40, width), theme, { title });
 }
 
+const TREE_EDIT_MAX_ROWS = 40;
+const TREE_EDIT_MIN_ROWS = 8;
+const TREE_EDIT_RESERVED_ROWS = 12;
+const TREE_EDIT_OVERLAY_MAX_HEIGHT_RATIO = 0.9;
+
 class TreeEditComponent extends PipCustomComponent<ExitResult> {
   private draft: DraftSession;
   private ctx: Ctx;
@@ -283,9 +288,12 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   }
 
   private pageSize(): number {
-    const terminalHeight = this.tui?.terminal?.height ?? this.tui?.height ?? 40;
-    // overlay margin is 1 top/bottom, box border is 2 rows, plus header/help/status rows.
-    return Math.max(5, terminalHeight - 12);
+    return this.overlayRowBudget({
+      maxRows: TREE_EDIT_MAX_ROWS,
+      minRows: TREE_EDIT_MIN_ROWS,
+      reservedRows: TREE_EDIT_RESERVED_ROWS,
+      maxHeightRatio: TREE_EDIT_OVERLAY_MAX_HEIGHT_RATIO,
+    });
   }
 
   private filterLabel(mode: FilterMode): string {
