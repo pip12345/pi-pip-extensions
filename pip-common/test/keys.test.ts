@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeInputKey, printableInput, visibleWidth } from "../src/keys.ts";
+import { normalizeInputKey, printableInput, truncateToWidth, truncateWithEllipsis, visibleWidth } from "../src/keys.ts";
 import { expandTabs, safePadToWidth, safeTruncateToWidth } from "../src/text-width.ts";
 
 describe("key normalization", () => {
@@ -27,5 +27,18 @@ describe("key normalization", () => {
     expect(expandTabs("a\tb")).toBe("a    b");
     expect(visibleWidth(safeTruncateToWidth("a\tb", 3))).toBe(3);
     expect(visibleWidth(safePadToWidth("a\tb", 10))).toBe(10);
+  });
+
+  it("hard-clips shared truncation by default without generated resets", () => {
+    const rendered = truncateToWidth("abcdef", 4);
+    expect(rendered).toBe("abcd");
+    expect(rendered).not.toContain("\x1b[0m");
+    expect(visibleWidth(rendered)).toBeLessThanOrEqual(4);
+  });
+
+  it("supports explicit ellipsis truncation", () => {
+    const rendered = truncateWithEllipsis("abcdef", 4);
+    expect(rendered).toContain("…");
+    expect(visibleWidth(rendered)).toBeLessThanOrEqual(4);
   });
 });

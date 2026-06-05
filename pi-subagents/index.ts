@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { registerPipTool } from "../pip-common/index.ts";
+import { hasTuiCustom, registerPipTool } from "../pip-common/index.ts";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
 import { getManager, resetManagerForTests, shutdownGlobalManager, type SubagentManager } from "./src/manager.ts";
 import { RealRunner } from "./src/runner.ts";
@@ -98,7 +98,7 @@ function contextInfo(manager: SubagentManager, key: string, run?: SubagentRun): 
 }
 
 async function showSubagentView(ctx: any, manager: SubagentManager, run: SubagentRun): Promise<void> {
-  if (ctx.ui?.custom) {
+  if (hasTuiCustom(ctx)) {
     await ctx.ui.custom((tui: any, theme: any, _kb: any, done: () => void) => new SubagentViewer(tui, theme, done, ctx, manager, run.id), {
       overlay: true,
       overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", margin: 0, minWidth: 70 },

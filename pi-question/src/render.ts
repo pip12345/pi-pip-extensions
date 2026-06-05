@@ -1,12 +1,7 @@
 import { Text } from "@earendil-works/pi-tui";
-import { themeFg, truncateToWidth } from "../../pip-common/index.ts";
+import { firstResultText, themeFg, truncateToWidth } from "../../pip-common/index.ts";
 import { compactAnswers } from "./format.ts";
 import type { QuestionInfo, QuestionResultDetails } from "./schema.ts";
-
-function textResult(result: any): string {
-  const block = result?.content?.find?.((item: any) => item?.type === "text");
-  return block?.type === "text" ? block.text ?? "" : "";
-}
 
 export function renderQuestionCall(args: any, theme: any): Text {
   const questions = (args?.questions ?? []) as QuestionInfo[];
@@ -19,7 +14,7 @@ export function renderQuestionCall(args: any, theme: any): Text {
 
 export function renderQuestionResult(result: any, _options: any, theme: any): Text {
   const details = result?.details as QuestionResultDetails | undefined;
-  if (!details) return new Text(themeFg(theme, "muted", textResult(result)), 0, 0);
+  if (!details) return new Text(themeFg(theme, "muted", firstResultText(result)), 0, 0);
   if (details.rejected) return new Text(themeFg(theme, "warning", "Dismissed"), 0, 0);
   return new Text(themeFg(theme, "success", "✓ ") + themeFg(theme, "muted", compactAnswers(details.questions, details.answers)), 0, 0);
 }

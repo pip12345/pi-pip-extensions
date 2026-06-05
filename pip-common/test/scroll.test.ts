@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampScrollOffset, maxScrollOffset, scrollBy, scrollForKey, scrollWindow } from "../src/scroll.ts";
+import { clampScrollOffset, clampSelectedIndex, maxScrollOffset, moveSelection, scrollBy, scrollForKey, scrollWindow, selectionOffset, selectionWindow } from "../src/scroll.ts";
 
 describe("scroll helpers", () => {
   it("clamps offsets to the valid range", () => {
@@ -34,5 +34,13 @@ describe("scroll helpers", () => {
   it("returns a bounded visible window", () => {
     const result = scrollWindow(["a", "b", "c", "d"], 3, 2);
     expect(result).toEqual({ offset: 2, end: 4, items: ["c", "d"], maxOffset: 2 });
+  });
+
+  it("keeps selected list rows visible", () => {
+    expect(clampSelectedIndex(99, 4)).toBe(3);
+    expect(moveSelection(1, 2, 4)).toBe(3);
+    expect(selectionOffset(4, 0, 10, 3)).toBe(2);
+    expect(selectionOffset(1, 5, 10, 3)).toBe(1);
+    expect(selectionWindow(["a", "b", "c", "d"], 3, 0, 2)).toEqual({ selected: 3, offset: 2, end: 4, items: ["c", "d"], maxOffset: 2 });
   });
 });

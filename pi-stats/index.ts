@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
   addUsage as addTokens,
   boxLines,
   emptyUsage as emptyTokens,
   normalizeUsage,
   applyTemporaryLiveModelsDevCostFallback,
+  hasTuiCustom,
   padAnsi,
   padLeftAnsi,
+  moveSelection,
   PipCustomComponent,
   printableInput,
+  selectionOffset,
   textFromContent,
+  truncateToWidth,
   type TokenUsage as Tokens,
 } from "../pip-common/index.ts";
 import { groupGlobal } from "./src/usage/rollups.ts";
@@ -86,10 +89,6 @@ function tokenDetailRow(label: string, tokens: Tokens, compact: boolean): string
     cell("cache write", fmt(tokens.cacheWrite, compact), 19),
     cell("cost", money(tokens.cost), 12),
   ].join("  ");
-}
-
-function box(lines: string[], width: number, title: string, theme: Theme): string[] {
-  return boxLines(lines, width, theme, { title });
 }
 
 function emptySessionRow(modelWindow: number, prompt: string, timestamp: number): SessionRow {
@@ -270,10 +269,9 @@ class TokenInspector extends PipCustomComponent<void> {
 
   private move(delta: number): void {
     const count = this.rowCount();
-    this.selected = Math.max(0, Math.min(Math.max(0, count - 1), this.selected + delta));
     const pageSize = this.pageSize();
-    if (this.selected < this.scroll) this.scroll = this.selected;
-    if (this.selected >= this.scroll + pageSize) this.scroll = this.selected - pageSize + 1;
+    this.selected = moveSelection(this.selected, delta, count);
+    this.scroll = selectionOffset(this.selected, this.scroll, count, pageSize);
   }
 
   private jump(target: "top" | "bottom"): void {
@@ -291,7 +289,7 @@ class TokenInspector extends PipCustomComponent<void> {
   render(width: number): string[] {
     const bodyWidth = Math.max(1, width);
     const lines = this.page === "session" ? this.renderSession(bodyWidth) : this.renderGlobal(bodyWidth);
-    return box(lines, bodyWidth, " Stats ", this.theme);
+    return boxLines(lines, bodyWidth, this.theme, { title: " Stats " });
   }
 
   private renderHeader(): string[] {
@@ -410,6 +408,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("stats", {
     description: "Open token usage inspector (session and global pages)",
     handler: async (_args: string, ctx: any) => {
+      if (!hasTuiCustom(ctx)) {
+        ctx.ui?.notify?.("/stats requires interactive TUI", "warning");
+        return;
+      }
       await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: () => void) => new TokenInspector(tui, ctx, theme, done), {
         overlay: true,
         overlayOptions: { anchor: "center", width: "92%", maxHeight: "85%", minWidth: 90 },

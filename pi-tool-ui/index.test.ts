@@ -2,6 +2,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import toolUi from "./index.ts";
 import { parseEditDisplayDiff, renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
+import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
@@ -26,6 +27,15 @@ beforeEach(() => {
 });
 
 describe("pi-tool-ui", () => {
+  it("keeps shell background through padding after clipped ANSI content", () => {
+    const bgTheme = { bg: (_name: string, text: string) => `\x1b[44m${text}\x1b[0m` } as any;
+    const component = toolShellComponent({ render: () => ["\x1b[31mabcdefghi"], invalidate() {} }, bgTheme, { paddingX: 2 });
+    const contentLine = component.render(10)[1];
+    expect(contentLine).toContain("\x1b[44m");
+    expect(contentLine).toMatch(/  \x1b\[0m$/);
+    expect(contentLine).not.toContain("\x1b[0m  ");
+  });
+
   it("registers built-in tool ui overrides", () => {
     const pi = createMockPi();
     toolUi(pi as any);

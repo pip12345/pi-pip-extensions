@@ -1,5 +1,7 @@
 import { PipCustomComponent } from "./custom-component.ts";
+import { hasTuiCustom } from "./pi-api.ts";
 import { truncateToWidth } from "./keys.ts";
+import { moveSelection, selectionOffset } from "./scroll.ts";
 import { createSettingsRegistry, pipSettings, type SettingsRegistry, type SettingRow } from "./settings.ts";
 import { boxLines, padAnsi, themeFg, wrapAnsi } from "./tui.ts";
 
@@ -116,9 +118,8 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   private move(delta: number): void {
     const count = buildDisplayRows(this.registry).length;
     const visibleSettingRows = this.visibleSettingRows();
-    this.selected = Math.max(0, Math.min(Math.max(0, count - 1), this.selected + delta));
-    if (this.selected < this.scroll) this.scroll = this.selected;
-    if (this.selected >= this.scroll + visibleSettingRows) this.scroll = this.selected - visibleSettingRows + 1;
+    this.selected = moveSelection(this.selected, delta, count);
+    this.scroll = selectionOffset(this.selected, this.scroll, count, visibleSettingRows);
   }
 
   render(width: number): string[] {
@@ -178,7 +179,7 @@ export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry =
   pi.registerCommand("pip-settings", {
     description: "Configure pip extension settings",
     handler: async (_args: string, ctx: any) => {
-      if (!ctx.ui?.custom) {
+      if (!hasTuiCustom(ctx)) {
         ctx.ui?.notify?.("/pip-settings requires interactive UI", "warning");
         return;
       }

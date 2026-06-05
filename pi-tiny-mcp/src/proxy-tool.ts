@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { registerPipTool } from "../../pip-common/index.ts";
+import { firstResultText, registerPipTool } from "../../pip-common/index.ts";
 import { resultLimit } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
 import type { VisibleToolInfo } from "./types.ts";
@@ -58,8 +58,8 @@ export function registerTinyMcpTool(pi: any): void {
       display: {
         kind: "command",
         call: (args: any) => args?.tool ? args.tool : args?.search ? `search ${args.search}` : args?.connect ? `connect ${args.connect}` : "status",
-        result: (result: any) => firstText(result).split("\n")[0],
-        expandedResult: firstText,
+        result: (result: any) => firstResultText(result).split("\n")[0],
+        expandedResult: firstResultText,
       },
     },
   });
@@ -156,6 +156,3 @@ function textResult(text: string) {
   return { content: [{ type: "text" as const, text }], details: { text } };
 }
 
-function firstText(result: any): string {
-  return result?.content?.find?.((item: any) => item?.type === "text")?.text ?? "";
-}

@@ -1,4 +1,4 @@
-import { boxLines, PipCustomComponent, printableInput, themeFg, truncateToWidth } from "../../pip-common/index.ts";
+import { boxLines, hasTuiCustom, PipCustomComponent, printableInput, themeFg, truncateToWidth } from "../../pip-common/index.ts";
 import type { QuestionAnswer, QuestionInfo } from "./schema.ts";
 import {
   createQuestionState,
@@ -170,7 +170,7 @@ class QuestionComponent extends PipCustomComponent<AskQuestionResult> {
 }
 
 export async function askQuestions(ctx: any, questions: QuestionInfo[]): Promise<AskQuestionResult> {
-  if (!ctx?.hasUI || !ctx?.ui?.custom) throw new Error("question requires interactive UI.");
+  if (!hasTuiCustom(ctx)) throw new Error("question requires interactive UI.");
   const result = await ctx.ui.custom((tui: any, theme: any, _kb: any, done: (result?: AskQuestionResult) => void) => new QuestionComponent(tui, theme, done, questions));
   return result ?? { answers: [], rejected: true };
 }

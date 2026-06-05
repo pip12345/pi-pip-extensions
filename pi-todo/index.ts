@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { boxLines, branchEntries, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
+import { boxLines, branchEntries, firstResultText, hasTuiCustom, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
 
 export type TodoStatus = "pending" | "active" | "done";
 
@@ -310,11 +310,6 @@ const TodoUpdateParams = Type.Object({
   ),
 });
 
-function textResult(result: any): string {
-  const block = result?.content?.find?.((item: any) => item?.type === "text");
-  return block?.type === "text" ? block.text ?? "" : "";
-}
-
 function normalTodoWriteCall(args: any, theme: any): Text {
   return new Text(themeFg(theme, "toolTitle", `todo_write`) + themeFg(theme, "muted", ` ${(args.todos ?? []).length} todos`), 0, 0);
 }
@@ -328,12 +323,12 @@ function normalTodoReadCall(theme: any): Text {
 }
 
 function normalTodoSuccessResult(result: any, theme: any): Text {
-  return new Text(themeFg(theme, "success", "✓ ") + themeFg(theme, "muted", textResult(result) || "todos updated"), 0, 0);
+  return new Text(themeFg(theme, "success", "✓ ") + themeFg(theme, "muted", firstResultText(result) || "todos updated"), 0, 0);
 }
 
 function normalTodoUpdateResult(result: any, theme: any): Text {
   const errors = result?.details?.errors?.length;
-  return new Text(themeFg(theme, errors ? "warning" : "success", errors ? "⚠ " : "✓ ") + themeFg(theme, "muted", textResult(result) || "todos updated"), 0, 0);
+  return new Text(themeFg(theme, errors ? "warning" : "success", errors ? "⚠ " : "✓ ") + themeFg(theme, "muted", firstResultText(result) || "todos updated"), 0, 0);
 }
 
 function normalTodoReadResult(state: TodoState, theme: any): Text {
@@ -445,7 +440,7 @@ export default function todoExtension(pi: ExtensionAPI) {
       display: {
         kind: "mutation",
         call: (args) => `${args?.updates?.length ?? 0} updates`,
-        result: (result) => (result?.details?.errors?.length ? textResult(result) : undefined),
+        result: (result) => (result?.details?.errors?.length ? firstResultText(result) : undefined),
         expandedResult: (result) => compactList(result?.details?.todos ?? []),
         hideSuccessfulResult: true,
       },
@@ -506,7 +501,7 @@ export default function todoExtension(pi: ExtensionAPI) {
       else if (cmd === "clear-done") persist({ ...state, todos: state.todos.filter((todo) => todo.status !== "done"), updatedAt: Date.now() }, ctx);
       else if (cmd === "clear") persist(emptyState(), ctx);
       else if (cmd) ctx.ui?.notify?.(`Unknown /todo command: ${cmd}`, "warning");
-      else if (ctx.ui?.custom) {
+      else if (hasTuiCustom(ctx)) {
         await ctx.ui.custom((tui: any, theme: any, _kb: any, done: () => void) => new TodoInspector(tui, theme, done, () => state, (next) => persist(next, ctx)), {
           overlay: true,
           overlayOptions: { anchor: "center", width: "70%", maxHeight: "80%", minWidth: 50 },

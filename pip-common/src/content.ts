@@ -7,6 +7,21 @@ export function textFromContent(content: any, separator = " "): string {
     .join(separator);
 }
 
+export function firstTextBlock(content: any): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const block = content.find((item) => item?.type === "text");
+  return block?.type === "text" ? String(block.text ?? "") : "";
+}
+
+export function resultText(result: any, separator = " "): string {
+  return textFromContent(result?.content, separator);
+}
+
+export function firstResultText(result: any): string {
+  return firstTextBlock(result?.content);
+}
+
 export function setTextContent(message: any, text: string): boolean {
   if (!message) return false;
   if (typeof message.content === "string") {

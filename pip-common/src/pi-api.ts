@@ -40,6 +40,10 @@ export function sessionKey(ctx: ExtensionContextLike | undefined, fallback = "un
   return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.getSessionId?.() ?? fallback;
 }
 
+export function hasTuiCustom(ctx: ExtensionContextLike | undefined): boolean {
+  return typeof ctx?.ui?.custom === "function" && !["rpc", "json", "print"].includes(String(ctx.mode ?? "tui"));
+}
+
 export function restoreLatestCustomState<T>(entries: any[] | undefined, customType: string, normalize: (data: any) => T, empty: () => T): T {
   let state = empty();
   for (const entry of entries ?? []) {

@@ -1,11 +1,7 @@
 import { Text } from "@earendil-works/pi-tui";
-import { formatCompactUsage, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
+import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
 import { settingValue } from "./settings.ts";
 import type { SubagentEvent, SubagentSnapshot } from "./types.ts";
-
-function firstText(result: any): string {
-  return result?.content?.find?.((item: any) => item?.type === "text")?.text ?? "";
-}
 
 function runFromResult(result: any): SubagentSnapshot | undefined {
   return result?.details?.run;
@@ -73,7 +69,7 @@ export function renderSubagentCall(args: any, theme: any, context: any) {
 
 export function renderSubagentResult(result: any, options: any, theme: any) {
   const run = runFromResult(result);
-  if (!run) return new Text(firstText(result), 0, 0);
+  if (!run) return new Text(firstResultText(result), 0, 0);
   const statusColor = run.status === "error" ? "error" : run.status === "completed" ? "success" : run.status === "cancelled" ? "warning" : "accent";
   const toolCount = run.events.filter((event) => event.type === "tool_start").length;
   const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true) });

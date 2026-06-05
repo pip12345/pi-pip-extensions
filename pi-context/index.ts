@@ -4,6 +4,7 @@ import {
   normalizeUsage,
   padAnsi,
   padLeftAnsi,
+  hasTuiCustom,
   PipCustomComponent,
   scrollForKey,
   scrollWindow,
@@ -389,7 +390,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("context", {
     description: "Open context usage and prompt inspector",
     handler: async (_args: string, ctx: any) => {
-      if (!ctx.hasUI || typeof ctx.ui?.custom !== "function") {
+      if (!hasTuiCustom(ctx)) {
         ctx.ui?.notify?.("/context requires interactive UI", "error");
         return;
       }

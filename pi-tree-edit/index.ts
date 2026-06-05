@@ -1,7 +1,6 @@
 import { copyFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { boxLines, PipCustomComponent, pipSettings, registerSettingsSection, setting, stripAnsi } from "../pip-common/index.ts";
+import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, pipSettings, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "../pip-common/index.ts";
 import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type SnapshotToolResults, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
 import { parseSessionFile, timestampForFile, validateDraft } from "./session.ts";
@@ -23,10 +22,6 @@ function wrapHelp(items: string[], width: number, theme: Theme): string[] {
   }
   if (line) lines.push(line);
   return lines;
-}
-
-function box(lines: string[], width: number, title: string, theme: Theme): string[] {
-  return boxLines(lines, Math.max(40, width), theme, { title });
 }
 
 const TREE_EDIT_MAX_ROWS = 40;
@@ -258,10 +253,9 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
 
   private clampSelection(): void {
     const count = this.visibleRows().length;
-    this.selected = Math.max(0, Math.min(Math.max(0, count - 1), this.selected));
+    this.selected = clampSelectedIndex(this.selected, count);
     const pageSize = this.pageSize();
-    if (this.selected < this.scroll) this.scroll = this.selected;
-    if (this.selected >= this.scroll + pageSize) this.scroll = Math.max(0, this.selected - pageSize + 1);
+    this.scroll = selectionOffset(this.selected, this.scroll, count, pageSize);
     this.draft.viewSelectedId = this.visibleRows()[this.selected]?.entry.id ?? null;
   }
 
@@ -422,7 +416,7 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     const highlightStatus = this.draft.highlightEntryIds.length ? `${this.draft.highlightKind ?? "highlight"}: ${this.draft.highlightEntryIds.length} · ` : "";
     const exitHint = this.draft.dirty ? "q/Esc prompts to save or discard" : "q/Esc quits";
     lines.push(th.fg("dim", `(${rows.length ? this.selected + 1 : 0}/${rows.length}) [${this.filterLabel(this.filterMode)}] ${highlightStatus}${allCount !== rows.length ? `${allCount - rows.length} hidden · ` : ""}${exitHint}`));
-    return box(lines, bodyWidth, " tree-edit ", th);
+    return boxLines(lines, Math.max(40, bodyWidth), th, { title: " tree-edit " });
   }
 }
 
@@ -481,6 +475,11 @@ export default function (pi: ExtensionAPI) {
       const sessionFile = ctx.sessionManager.getSessionFile?.();
       if (!sessionFile) {
         ctx.ui.notify("tree-edit requires a persisted session", "warning");
+        return;
+      }
+
+      if (!hasTuiCustom(ctx)) {
+        ctx.ui.notify("tree-edit requires interactive TUI", "warning");
         return;
       }
 

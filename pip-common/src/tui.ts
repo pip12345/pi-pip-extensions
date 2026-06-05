@@ -1,9 +1,18 @@
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "./keys.ts";
 
-export type ThemeLike = { fg?: (name: string, text: string) => string };
+export type ThemeLike = { fg?: (name: string, text: string) => string; bg?: (name: string, text: string) => string; bold?: (text: string) => string };
 
 export function themeFg(theme: ThemeLike | undefined, name: string, text: string): string {
   return theme?.fg ? theme.fg(name, text) : text;
+}
+
+export function themeBg(theme: ThemeLike | undefined, name: string, text: string): string {
+  return theme?.bg ? theme.bg(name, text) : text;
+}
+
+export function themeBold(theme: ThemeLike | undefined, text: string): string {
+  return theme?.bold ? theme.bold(text) : text;
 }
 
 export function padAnsi(value: string, width: number): string {
@@ -15,20 +24,7 @@ export function padLeftAnsi(value: string, width: number): string {
 }
 
 export function wrapAnsi(value: string, width: number): string[] {
-  const words = value.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && visibleWidth(candidate) > width) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [""];
+  return wrapTextWithAnsi(value, Math.max(1, width));
 }
 
 export interface BoxOptions {

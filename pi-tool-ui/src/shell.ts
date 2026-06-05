@@ -1,20 +1,10 @@
 import type { Component } from "@earendil-works/pi-tui";
-import { safePadToWidth, safeTruncateToWidth } from "../../pip-common/index.ts";
+import { safePadToWidth, safeTruncateToWidth, themeBg, themeBold } from "../../pip-common/index.ts";
 
 const SAFE_CACHED = Symbol("tool-ui.safeCachedComponent");
 
-export type ThemeLike = {
-  bg?: (name: string, text: string) => string;
-  bold?: (text: string) => string;
-};
-
-export function themeBg(theme: ThemeLike | undefined, name: string, text: string): string {
-  return theme?.bg ? theme.bg(name, text) : text;
-}
-
-export function themeBold(theme: ThemeLike | undefined, text: string): string {
-  return theme?.bold ? theme.bold(text) : text;
-}
+export type ThemeLike = Parameters<typeof themeBg>[0];
+export { themeBg, themeBold };
 
 export function blockLine(theme: ThemeLike | undefined, bg: string, line: string, width: number): string {
   return themeBg(theme, bg, safePadToWidth(line, width));

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { createLifecycle, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth } from "../pip-common/index.ts";
+import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth } from "../pip-common/index.ts";
 import { blockLine, safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 
@@ -50,11 +50,6 @@ function shortenPath(path: unknown, fallback = "."): string {
   return raw.startsWith(HOME) ? `~${raw.slice(HOME.length)}` : raw;
 }
 
-function firstText(result: any): string {
-  const block = result?.content?.find?.((item: any) => item?.type === "text");
-  return block?.type === "text" ? block.text ?? "" : "";
-}
-
 const EMPTY_COMPONENT: Component = { render: () => [], invalidate: () => {} };
 const EDIT_DIFF_COMPONENT = Symbol("tool-ui.editDiffComponent");
 const EDIT_DIFF_SOURCE = Symbol("tool-ui.editDiffSource");
@@ -65,7 +60,7 @@ function textLines(text: string, theme: any): Component {
 }
 
 function expandedOutput(result: any, theme: any): Component {
-  return textLines(firstText(result), theme);
+  return textLines(firstResultText(result), theme);
 }
 
 function toolLine(theme: any, label: string, rest = "", context?: any): Text {
@@ -92,7 +87,7 @@ function builtinForContext(name: BuiltinName, context: any): ToolDefinition<any,
 }
 
 function renderErrorIfCollapsed(result: any, theme: any): Component {
-  const text = firstText(result).trim();
+  const text = firstResultText(result).trim();
   if (/^(error|access denied|failed)\b/i.test(text)) return new Text(themeFg(theme, "error", text.split("\n")[0] ?? text), 0, 0);
   return EMPTY_COMPONENT;
 }
@@ -216,7 +211,7 @@ function renderDisplayPipResult(display: any) {
   return (result: any, options: any, theme: any) => {
     const resultText = display.result?.(result);
     if (options?.expanded) {
-      const expanded = display.expandedResult?.(result) ?? resultText ?? firstText(result);
+      const expanded = display.expandedResult?.(result) ?? resultText ?? firstResultText(result);
       return textLines(expanded, theme);
     }
     if (resultText?.trim()) return new Text(themeFg(theme, "warning", "⚠ ") + themeFg(theme, "muted", resultText), 0, 0);
