@@ -89,6 +89,7 @@ export function createMockCtx(options: any = {}) {
       setEditorText(value: string) {
         this.editorText = value;
       },
+      custom: options.custom ?? (async () => undefined),
     },
     isIdle: () => options.idle ?? true,
     abort: () => undefined,
@@ -104,6 +105,7 @@ export function createMockCtx(options: any = {}) {
     },
     getContextUsage: () => options.contextUsage,
     getSystemPrompt: () => options.systemPrompt ?? "",
+    getSystemPromptOptions: options.systemPromptOptions === undefined ? undefined : () => options.systemPromptOptions,
   };
   return ctx;
 }

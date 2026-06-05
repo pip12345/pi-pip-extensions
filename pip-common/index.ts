@@ -21,6 +21,7 @@ export * from "./src/settings.ts";
 export * from "./src/settings-command.ts";
 export * from "./src/settings-scope.ts";
 export * from "./src/session-file.ts";
+export * from "./src/scroll.ts";
 export * from "./src/pi-api.ts";
 export * from "./src/status.ts";
 export * from "./src/tui.ts";
