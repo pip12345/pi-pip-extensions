@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createEditTool, createEditToolDefinition, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
+import { createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { createLifecycle, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg } from "../pip-common/index.ts";
+import { createLifecycle, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth } from "../pip-common/index.ts";
+import { blockLine, safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 
 const HOME = homedir();
@@ -55,6 +56,8 @@ function firstText(result: any): string {
 }
 
 const EMPTY_COMPONENT: Component = { render: () => [], invalidate: () => {} };
+const EDIT_DIFF_COMPONENT = Symbol("tool-ui.editDiffComponent");
+const EDIT_DIFF_SOURCE = Symbol("tool-ui.editDiffSource");
 
 function textLines(text: string, theme: any): Component {
   if (!text.trim()) return EMPTY_COMPONENT;
@@ -108,7 +111,7 @@ function quietResult(tool: BuiltinName) {
 
 function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefined {
   if (typeof diff !== "string" || !diff.trim()) return undefined;
-  return {
+  const component: Component = {
     render(width: number) {
       const layout = scopedSettings.get<string>("diffLayout", "auto");
       const minWidth = Number(scopedSettings.get("diffSplitMinWidth", 120));
@@ -122,19 +125,32 @@ function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefi
     },
     invalidate() {},
   };
+  (component as any)[EDIT_DIFF_COMPONENT] = true;
+  (component as any)[EDIT_DIFF_SOURCE] = diff;
+  return component;
 }
 
-function editDiffComponent(result: any, theme: any): Component | undefined {
-  return editDiffComponentForDiff(result?.details?.diff, theme);
+function reusableEditResultComponent(result: any, theme: any, lastComponent?: Component): Component | undefined {
+  const diff = result?.details?.diff;
+  if (typeof diff !== "string" || !diff.trim()) return undefined;
+  const last = lastComponent as any;
+  if (last?.[EDIT_DIFF_COMPONENT] && last?.[EDIT_DIFF_SOURCE] === diff) return lastComponent;
+  const split = editDiffComponentForDiff(diff, theme);
+  return split ? toolShellComponent(split, theme, { bg: "toolSuccessBg", role: "joinedResult" }) : undefined;
 }
 
-function replaceEditCallDiff(context: any, component: Component): boolean {
-  const callComponent = context?.state?.callComponent as any;
-  const children = callComponent?.children;
-  if (!Array.isArray(children) || children.length < 3) return false;
-  children[children.length - 1] = component;
-  callComponent.invalidate?.();
-  return true;
+function toolShellStatus(context: any): "pending" | "success" | "error" {
+  if (context?.isError) return "error";
+  return context?.isPartial === false ? "success" : "pending";
+}
+
+function editCallComponent(args: any, theme: any, context?: any): Component {
+  const path = shortenPath(args?.path, "");
+  const count = Array.isArray(args?.edits) ? args.edits.length : undefined;
+  const countText = count === undefined ? "" : ` ${themeFg(theme, "muted", `${count} edit${count === 1 ? "" : "s"}`)}`;
+  const pathText = path ? ` ${themeFg(theme, "muted", path)}` : "";
+  const line = `${themeFg(theme, "toolTitle", themeBold(theme, "edit"))}${pathText}${countText}`;
+  return toolShellComponent({ render: (width: number) => [safeTruncateToWidth(line, width)], invalidate() {} }, theme, { role: "call", status: toolShellStatus(context) });
 }
 
 function makeQuietAdapter(tool: BuiltinName, label: string, summarize: (args: any) => string): SlotAdapter {
@@ -147,10 +163,12 @@ function makeQuietAdapter(tool: BuiltinName, label: string, summarize: (args: an
     settingDescription: `Use compact rendering for ${tool} tool calls.`,
     shell: "self",
     renderCall(args, theme, context) {
-      if (!adapterEnabled(key)) return builtinRenderFallback(tool, "renderCall", [args, theme, context], toolLine(theme, tool, "", context));
-      return quietCall(tool, summarize)(args, theme, context);
+      if (!adapterEnabled(key)) return safeCachedComponent(builtinRenderFallback(tool, "renderCall", [args, theme, context], toolLine(theme, tool, "", context)));
+      return safeCachedComponent(quietCall(tool, summarize)(args, theme, context));
     },
-    renderResult: quietResult(tool),
+    renderResult(result, options, theme, context) {
+      return safeCachedComponent(quietResult(tool)(result, options, theme, context));
+    },
   };
 }
 
@@ -176,28 +194,16 @@ const BUILTIN_ADAPTERS: SlotAdapter[] = [
     tool: "edit",
     label: "Edit diff",
     settingKey: "editDiff",
-    settingDescription: "Render edit results with Tool UI split diffs while preserving Pi's built-in edit call/preview renderer.",
+    settingDescription: "Render edit results with Tool UI-owned split diffs using renderShell:self instead of patching Pi's built-in edit preview internals.",
+    shell: "self",
     renderCall(args, theme, context) {
-      const builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderCall?.(args as any, theme, context as any) ?? EMPTY_COMPONENT;
-      if (!adapterEnabled("editDiff")) return builtin;
-      const split = editDiffComponentForDiff(context?.state?.callComponent?.preview?.diff, theme);
-      if (split) replaceEditCallDiff(context, split);
-      return builtin;
+      if (!adapterEnabled("editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderCall", [args, theme, context], toolLine(theme, "edit", shortenPath((args as any)?.path, ""), context)));
+      return editCallComponent(args, theme, context);
     },
     renderResult(result, options, theme, context) {
-      let builtin = EMPTY_COMPONENT;
-      try {
-        builtin = createEditToolDefinition(context?.cwd ?? process.cwd()).renderResult?.(result as any, options, theme, context as any) ?? EMPTY_COMPONENT;
-      } catch {
-        builtin = EMPTY_COMPONENT;
-      }
-      if (!adapterEnabled("editDiff")) return builtin;
-      const split = editDiffComponent(result, theme);
-      if (!split) return builtin;
-      // Pi's built-in edit renderer owns the live call preview and updates it with
-      // the final diff in renderResult. Replace that preview body with the split
-      // renderer instead of rendering a second diff in the result slot.
-      return replaceEditCallDiff(context, split) ? builtin : split;
+      if (!adapterEnabled("editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderResult", [result, options, theme, context], expandedOutput(result, theme)));
+      const renderedDiff = reusableEditResultComponent(result, theme, context?.lastComponent);
+      return renderedDiff ?? safeCachedComponent(renderErrorIfCollapsed(result, theme));
     },
   },
 ];

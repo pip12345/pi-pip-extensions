@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { normalizeInputKey, printableInput } from "../src/keys.ts";
+import { normalizeInputKey, printableInput, visibleWidth } from "../src/keys.ts";
+import { expandTabs, safePadToWidth, safeTruncateToWidth } from "../src/text-width.ts";
 
 describe("key normalization", () => {
   it("normalizes raw critical exit keys", () => {
@@ -20,5 +21,11 @@ describe("key normalization", () => {
     expect(printableInput("a")).toBe("a");
     expect(printableInput(" ")).toBe(" ");
     expect(printableInput("\u001b")).toBeUndefined();
+  });
+
+  it("normalizes tabs before safe width operations", () => {
+    expect(expandTabs("a\tb")).toBe("a    b");
+    expect(visibleWidth(safeTruncateToWidth("a\tb", 3))).toBe(3);
+    expect(visibleWidth(safePadToWidth("a\tb", 10))).toBe(10);
   });
 });

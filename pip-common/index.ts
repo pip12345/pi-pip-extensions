@@ -26,4 +26,5 @@ export * from "./src/status.ts";
 export * from "./src/tui.ts";
 export * from "./src/usage.ts";
 export * from "./src/temporary-live-models-dev-pricing.ts";
+export * from "./src/text-width.ts";
 export * from "./src/widget-restacker.ts";

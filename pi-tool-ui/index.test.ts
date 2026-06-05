@@ -1,4 +1,4 @@
-import { createEditToolDefinition, initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import toolUi from "./index.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
@@ -9,10 +9,19 @@ import { flushPipTools, pipSettings, resetPipToolsForTests, visibleWidth } from 
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
-const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${name}>`, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
+const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${name}>`, bg: (name: string, text: string) => `<bg:${name}>${text}</bg:${name}>`, bold: (text: string) => text } as any;
 
 beforeEach(() => {
   initTheme("dark", false);
+  resetPipToolsForTests();
+  // Tests should not depend on the developer's persisted /pip-settings state.
+  toolUi(createMockPi() as any);
+  pipSettings.set("tool-ui.enabled", true);
+  pipSettings.set("tool-ui.read", true);
+  pipSettings.set("tool-ui.grep", true);
+  pipSettings.set("tool-ui.find", true);
+  pipSettings.set("tool-ui.ls", true);
+  pipSettings.set("tool-ui.editDiff", true);
   resetPipToolsForTests();
 });
 
@@ -46,7 +55,7 @@ describe("pi-tool-ui", () => {
     expect(read.renderCall).toBeTypeOf("function");
     expect(edit.promptSnippet).toBeUndefined();
     expect(edit.promptGuidelines).toBeUndefined();
-    expect(edit.renderShell).toBeUndefined();
+    expect(edit.renderShell).toBe("self");
     expect(edit.renderCall).toBeTypeOf("function");
     expect(edit.renderResult).toBeTypeOf("function");
   });
@@ -68,32 +77,55 @@ describe("pi-tool-ui", () => {
     expect(grep.renderResult({ content: [{ type: "text", text: "Error: nope\nmore" }] }, { expanded: false }, theme).render(80).join("\n")).toContain("Error: nope");
   });
 
-  it("wraps edit call rendering so previews can be split without replacing the built-in shell", () => {
+  it("uses renderShell:self for edit instead of patching the built-in preview shell", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
-    expect(edit.renderShell).toBeUndefined();
+    expect(edit.renderShell).toBe("self");
     expect(edit.renderCall).toBeTypeOf("function");
     expect(edit.renderResult).toBeTypeOf("function");
     expect(edit.prepareArguments).toBeTypeOf("function");
+    const rendered = edit.renderCall({ path: "a.ts", edits: [{ oldText: "a", newText: "b" }] }, theme, {}).render(80).join("\n");
+    expect(rendered).toContain("edit a.ts 1 edit");
+    expect(rendered).not.toContain("›");
   });
 
-  it("renders split edit diffs in the call preview as soon as the built-in preview exists", () => {
+  it("renders the edit header as a colored tool title", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
-    const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
-    const args = { path: "a.ts", edits: [] };
-    const state = {};
-    const context = { state, args, cwd: process.cwd(), isError: false, argsComplete: false, invalidate: () => {} };
-    edit.renderCall(args, theme, context);
-    (state as any).callComponent.preview = { diff, firstChangedLine: 2 };
+    const rendered = edit.renderCall({ path: "a.ts", edits: [] }, markedTheme, { isPartial: true }).render(80).join("\n");
 
-    const callComponent = edit.renderCall(args, theme, context);
-    const rendered = callComponent.render(140).join("\n");
+    expect(rendered).toContain("<bg:toolPendingBg>");
+    expect(rendered).not.toContain("<bg:toolSuccessBg>");
+    expect(rendered).toContain("<toolTitle>edit</toolTitle>");
+    expect(rendered).toContain("<muted>a.ts</muted>");
+  });
 
-    expect(rendered).toContain("new value");
-    expect(rendered).toContain("│");
+  it("updates edit header background after completion", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+
+    const success = edit.renderCall({ path: "a.ts", edits: [] }, markedTheme, { isPartial: false, isError: false }).render(80).join("\n");
+    const error = edit.renderCall({ path: "a.ts", edits: [] }, markedTheme, { isPartial: false, isError: true }).render(80).join("\n");
+
+    expect(success).toContain("<bg:toolSuccessBg>");
+    expect(success).not.toContain("<bg:toolPendingBg>");
+    expect(error).toContain("<bg:toolErrorBg>");
+  });
+
+  it("uses the default edit shell and renderer when edit diff is disabled", () => {
+    resetPipToolsForTests();
+    pipSettings.set("tool-ui.enabled", true);
+    pipSettings.set("tool-ui.editDiff", false);
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const rendered = edit.renderCall({ path: "a.ts", edits: [] }, markedTheme, { cwd: process.cwd() }).render(80).join("\n");
+
+    expect(edit.renderShell).toBe("default");
+    expect(rendered).not.toContain("<bg:toolSuccessBg>");
   });
 
   it("renders split edit diffs as result output without depending on call component internals", () => {
@@ -102,7 +134,9 @@ describe("pi-tool-ui", () => {
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
     const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false });
-    const rendered = resultComponent.render(140).join("\n");
+    const lines = resultComponent.render(140);
+    const rendered = lines.join("\n");
+    expect(lines[0]).toContain("diff +1 -1");
     expect(rendered).toContain("diff +1 -1");
     expect(rendered).toContain("old value");
     expect(rendered).toContain("new value");
@@ -121,22 +155,91 @@ describe("pi-tool-ui", () => {
     expect(unified.every((line: string) => visibleWidth(line) <= 117)).toBe(true);
   });
 
-  it("renders split edit diffs in the built-in call preview without duplicate result output", () => {
+  it("expands tabs before edit diff width calculations", () => {
+    const diff = [
+      " 52 \topenCmd := newOpenCommand(app)",
+      " 53 \tvar shorthandContinue bool",
+      " 54 \tvar shorthandProfile string",
+      "+55 \tvar shorthandRebuild bool",
+      " 56 \troot := &cobra.Command{",
+      " 57 \t\tUse:           \"devbox [folder]\",",
+      " 58 \t\tShort:         \"Run coding harnesses in managed Docker containers\",",
+    ].join("\n");
+    const split = renderSplitEditDiff(diff, 186, theme, { maxLines: 80 });
+    const unified = renderUnifiedEditDiff(diff, 186, theme, { maxLines: 80 });
+
+    expect(split?.every((line: string) => visibleWidth(line) <= 186)).toBe(true);
+    expect(unified.every((line: string) => visibleWidth(line) <= 186)).toBe(true);
+  });
+
+  it("caches final edit result shell renders by width until invalidated", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
-    const args = { path: "a.ts", edits: [] };
-    const state = {};
-    const context = { state, args, cwd: process.cwd(), isError: false };
-    createEditToolDefinition(process.cwd()).renderCall?.(args, theme, { ...context, argsComplete: false, invalidate: () => {} } as any);
+    const component = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false });
 
-    const resultComponent = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, context);
+    const first = component.render(140);
+    const second = component.render(140);
+    const differentWidth = component.render(100);
+    component.invalidate?.();
+    const afterInvalidate = component.render(140);
 
-    expect(resultComponent.render(140)).toEqual([]);
-    const callRendered = (state as any).callComponent.render(140).join("\n");
-    expect(callRendered).toContain("new value");
-    expect(callRendered).toContain("│");
+    expect(second).toBe(first);
+    expect(differentWidth).not.toBe(first);
+    expect(afterInvalidate).not.toBe(first);
+    expect(afterInvalidate.every((line: string) => visibleWidth(line) <= 140)).toBe(true);
+  });
+
+  it("reuses edit result components through context.lastComponent", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
+    const result = { content: [], details: { diff } };
+    const context: any = { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false, lastComponent: undefined };
+
+    const first = edit.renderResult(result, { expanded: false }, theme, context);
+    context.lastComponent = first;
+    const second = edit.renderResult(result, { expanded: false }, theme, context);
+    const firstLines = second.render(140);
+    const secondLines = second.render(140);
+
+    expect(second).toBe(first);
+    expect(secondLines).toBe(firstLines);
+    expect(secondLines.every((line: string) => visibleWidth(line) <= 140)).toBe(true);
+  });
+
+  it("renders self-owned split edit diffs within the provided width", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const diff = [
+      " 51 openCmd := newOpenCommand(app)",
+      " 52 var shorthandContinue bool",
+      " 53 var shorthandProfile string",
+      "+55 var shorthandRebuild bool",
+      " 56 root := &cobra.Command{",
+      " 57 Use:           \"devbox [folder]\",",
+      " 58 Short:         \"Run coding harnesses in managed Docker containers\",",
+      " 73 }",
+      " 74 if shorthandProfile != \"\" {",
+      " 75 openArgs = append(openArgs, \"--profile\", shorthandProfile)",
+      " 76 }",
+      "+78 if shorthandRebuild {",
+      "+79 openArgs = append(openArgs, \"--rebuild\")",
+      "+80 }",
+      " 77 openCmd.SetContext(cmd.Context())",
+      " 78 openCmd.SetArgs(openArgs)",
+      " 79 if err := openCmd.ParseFlags(openArgs); err != nil {",
+      " 80 return err",
+      " 107 root.Flags().BoolVarP(&shorthandContinue, \"continue\", \"c\", false, \"Continue the last harness session\")",
+    ].join("\n");
+
+    const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: false }, theme, { state: {}, args: { path: "internal/cli/app.go", edits: [] }, cwd: process.cwd(), isError: false }).render(190);
+
+    expect(rendered.join("\n")).toContain("│");
+    expect(rendered.every((line: string) => visibleWidth(line) <= 190)).toBe(true);
   });
 
   it("falls back to colored unified edit diffs on narrow terminals", () => {
@@ -146,6 +249,7 @@ describe("pi-tool-ui", () => {
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
     const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: true }, markedTheme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(80).join("\n");
+    expect(rendered).toContain("<bg:toolSuccessBg>");
     expect(rendered).toContain("<toolDiffRemoved>-2 old value</toolDiffRemoved>");
     expect(rendered).toContain("<toolDiffAdded>+2 new value</toolDiffAdded>");
     expect(rendered).not.toContain("│");

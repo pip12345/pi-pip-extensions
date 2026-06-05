@@ -1,4 +1,4 @@
-import { padAnsi, themeFg, truncateToWidth, visibleWidth } from "../../pip-common/index.ts";
+import { padAnsi, safeTruncateToWidth, themeFg, visibleWidth } from "../../pip-common/index.ts";
 
 type Prefix = " " | "+" | "-";
 
@@ -75,7 +75,7 @@ function colorForSide(row: SplitDiffRow, side: "old" | "new"): string {
 
 function renderCell(no: string | undefined, text: string | undefined, gutterWidth: number, contentWidth: number, theme: any, color: string): string {
   const gutter = padAnsi(no ?? "", gutterWidth);
-  const body = truncateToWidth(text ?? "", contentWidth);
+  const body = safeTruncateToWidth(text ?? "", contentWidth);
   return themeFg(theme, color, `${gutter} ${padAnsi(body, contentWidth)}`);
 }
 
@@ -92,7 +92,7 @@ function colorForUnifiedPrefix(prefix: string): string {
 }
 
 function capRenderedLines(lines: string[], width: number): string[] {
-  return lines.map((line) => truncateToWidth(line, width));
+  return lines.map((line) => safeTruncateToWidth(line, width));
 }
 
 export function renderUnifiedEditDiff(diff: string, width: number, theme: any, options: { maxLines?: number } = {}): string[] {
