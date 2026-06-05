@@ -22,16 +22,95 @@ function parseDiffLine(line: string): ParsedDiffLine | undefined {
   return { prefix: match[1] as Prefix, lineNo: match[2].trim(), content: match[3] ?? "" };
 }
 
+function numericLineNo(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+function hasLineNumberGap(previous: SplitDiffRow, next: SplitDiffRow): boolean {
+  if (previous.kind === "skip" || next.kind === "skip") return false;
+  const previousOld = numericLineNo(previous.oldNo);
+  const nextOld = numericLineNo(next.oldNo);
+  if (previousOld !== undefined && nextOld !== undefined && nextOld > previousOld + 1) return true;
+  const previousNew = numericLineNo(previous.newNo);
+  const nextNew = numericLineNo(next.newNo);
+  return previousNew !== undefined && nextNew !== undefined && nextNew > previousNew + 1;
+}
+
+function insertImplicitSkipRows(rows: SplitDiffRow[]): SplitDiffRow[] {
+  const rendered: SplitDiffRow[] = [];
+  for (const row of rows) {
+    const previous = rendered[rendered.length - 1];
+    if (previous && hasLineNumberGap(previous, row)) rendered.push({ kind: "skip", oldText: "...", newText: "..." });
+    rendered.push(row);
+  }
+  return rendered;
+}
+
+function lineNumberText(value: number): string {
+  return String(value);
+}
+
 export function parseEditDisplayDiff(diff: string): SplitDiffRow[] | undefined {
   const parsed = diff.split("\n").map(parseDiffLine);
   if (!parsed.length || parsed.some((line) => !line)) return undefined;
   const lines = parsed as ParsedDiffLine[];
   const rows: SplitDiffRow[] = [];
+  let oldLine: number | undefined;
+  let newLine: number | undefined;
+
+  const syncOldLine = (line: ParsedDiffLine): number | undefined => {
+    const parsedLineNo = numericLineNo(line.lineNo);
+    if (parsedLineNo === undefined) return oldLine;
+    if (oldLine === undefined) {
+      oldLine = parsedLineNo;
+      if (newLine === undefined) newLine = parsedLineNo;
+      return oldLine;
+    }
+    if (newLine !== undefined) newLine += parsedLineNo - oldLine;
+    oldLine = parsedLineNo;
+    return oldLine;
+  };
+
+  const syncNewLine = (line: ParsedDiffLine): number | undefined => {
+    const parsedLineNo = numericLineNo(line.lineNo);
+    if (parsedLineNo === undefined) return newLine;
+    if (newLine === undefined) {
+      newLine = parsedLineNo;
+      if (oldLine === undefined) oldLine = parsedLineNo;
+      return newLine;
+    }
+    if (oldLine !== undefined) oldLine += parsedLineNo - newLine;
+    newLine = parsedLineNo;
+    return newLine;
+  };
+
+  const pushContext = (line: ParsedDiffLine): void => {
+    const oldNo = syncOldLine(line);
+    const newNo = newLine;
+    rows.push({ kind: "context", oldNo: oldNo === undefined ? line.lineNo : lineNumberText(oldNo), newNo: newNo === undefined ? line.lineNo : lineNumberText(newNo), oldText: line.content, newText: line.content });
+    if (oldLine !== undefined) oldLine++;
+    if (newLine !== undefined) newLine++;
+  };
+
+  const pushRemove = (line: ParsedDiffLine): void => {
+    const oldNo = syncOldLine(line);
+    rows.push({ kind: "remove", oldNo: oldNo === undefined ? line.lineNo : lineNumberText(oldNo), oldText: line.content });
+    if (oldLine !== undefined) oldLine++;
+  };
+
+  const pushAdd = (line: ParsedDiffLine): void => {
+    const newNo = syncNewLine(line);
+    rows.push({ kind: "add", newNo: newNo === undefined ? line.lineNo : lineNumberText(newNo), newText: line.content });
+    if (newLine !== undefined) newLine++;
+  };
 
   for (let i = 0; i < lines.length;) {
     const line = lines[i];
     if (line.prefix === " ") {
-      rows.push(line.content === "..." ? { kind: "skip", oldText: "...", newText: "..." } : { kind: "context", oldNo: line.lineNo, newNo: line.lineNo, oldText: line.content, newText: line.content });
+      if (line.content === "...") rows.push({ kind: "skip", oldText: "...", newText: "..." });
+      else pushContext(line);
       i++;
       continue;
     }
@@ -43,20 +122,25 @@ export function parseEditDisplayDiff(diff: string): SplitDiffRow[] | undefined {
       while (lines[i]?.prefix === "+") added.push(lines[i++]);
       const count = Math.max(removed.length, added.length);
       for (let index = 0; index < count; index++) {
-        const oldLine = removed[index];
-        const newLine = added[index];
-        if (oldLine && newLine) rows.push({ kind: "change", oldNo: oldLine.lineNo, newNo: newLine.lineNo, oldText: oldLine.content, newText: newLine.content });
-        else if (oldLine) rows.push({ kind: "remove", oldNo: oldLine.lineNo, oldText: oldLine.content });
-        else if (newLine) rows.push({ kind: "add", newNo: newLine.lineNo, newText: newLine.content });
+        const oldLineData = removed[index];
+        const newLineData = added[index];
+        if (oldLineData && newLineData) {
+          const oldNo = syncOldLine(oldLineData);
+          const newNo = syncNewLine(newLineData);
+          rows.push({ kind: "change", oldNo: oldNo === undefined ? oldLineData.lineNo : lineNumberText(oldNo), newNo: newNo === undefined ? newLineData.lineNo : lineNumberText(newNo), oldText: oldLineData.content, newText: newLineData.content });
+          if (oldLine !== undefined) oldLine++;
+          if (newLine !== undefined) newLine++;
+        } else if (oldLineData) pushRemove(oldLineData);
+        else if (newLineData) pushAdd(newLineData);
       }
       continue;
     }
 
-    rows.push({ kind: "add", newNo: line.lineNo, newText: line.content });
+    pushAdd(line);
     i++;
   }
 
-  return rows;
+  return insertImplicitSkipRows(rows);
 }
 
 function lineNoWidth(rows: SplitDiffRow[]): number {

@@ -1,7 +1,7 @@
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 import toolUi from "./index.ts";
-import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
+import { parseEditDisplayDiff, renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
@@ -170,6 +170,45 @@ describe("pi-tool-ui", () => {
 
     expect(split?.every((line: string) => visibleWidth(line) <= 186)).toBe(true);
     expect(unified.every((line: string) => visibleWidth(line) <= 186)).toBe(true);
+  });
+
+  it("marks implicit gaps when displayed edit diff line numbers jump", () => {
+    const diff = [
+      " 25 before",
+      " 26 before",
+      " 27 before",
+      " 30 after-gap",
+      " 31 after-gap",
+      " 35 later-gap",
+    ].join("\n");
+    const rendered = renderSplitEditDiff(diff, 120, theme, { maxLines: 80 });
+    const gapRows = rendered?.filter((line) => line.includes("..."));
+
+    expect(gapRows).toHaveLength(2);
+  });
+
+  it("tracks new-side line numbers after insertion blocks", () => {
+    const rows = parseEditDisplayDiff([
+      " 21 before",
+      " 22 before",
+      "+23 inserted-a",
+      "+24 inserted-b",
+      " 23 shifted-context",
+    ].join("\n"));
+
+    expect(rows?.at(-1)).toMatchObject({ kind: "context", oldNo: "23", newNo: "25" });
+  });
+
+  it("tracks new-side line numbers after deletion blocks", () => {
+    const rows = parseEditDisplayDiff([
+      " 21 before",
+      " 22 before",
+      "-23 deleted-a",
+      "-24 deleted-b",
+      " 25 shifted-context",
+    ].join("\n"));
+
+    expect(rows?.at(-1)).toMatchObject({ kind: "context", oldNo: "25", newNo: "23" });
   });
 
   it("caches final edit result shell renders by width until invalidated", () => {
