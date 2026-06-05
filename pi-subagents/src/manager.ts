@@ -78,6 +78,12 @@ export class SubagentManager {
     this.flushPending(key);
   }
 
+  deactivateParent(key?: string): void {
+    if (key && this.activeParentSessionKey !== key) return;
+    this.activeParentSessionKey = undefined;
+    this.inject = undefined;
+  }
+
   private aliasKey(parentSessionKey: string, name: string): string {
     return `${parentSessionKey}\0${name}`;
   }

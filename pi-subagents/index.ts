@@ -123,9 +123,12 @@ export interface SubagentsExtensionOptions {
 export function createSubagentsExtension(options: SubagentsExtensionOptions = {}) {
   return function subagentsExtension(pi: ExtensionAPI) {
     const runner = options.runner ?? new RealRunner();
-    const manager = options.manager ?? getManager({ runner, inject: (_key, message) => pi.sendUserMessage(message, { deliverAs: "followUp" }) });
+    const manager = options.manager ?? getManager({ runner });
 
-    const activate = (ctx: any) => manager.setActiveParent(parentKey(ctx), parentFile(ctx), parentBranchIds(ctx));
+    const activate = (ctx: any) => {
+      manager.configure({ inject: (_key, message) => pi.sendUserMessage(message, { deliverAs: "followUp" }) });
+      manager.setActiveParent(parentKey(ctx), parentFile(ctx), parentBranchIds(ctx));
+    };
 
     pi.on("session_start", async (_event: any, ctx: any) => activate(ctx));
     pi.on("session_tree", async (_event: any, ctx: any) => activate(ctx));
@@ -135,10 +138,13 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
       if (!block) return;
       return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${block}`.trim() };
     });
-    pi.on("session_shutdown", async (event: any) => {
-      if (event?.reason !== "quit" && event?.reason !== "reload") return;
-      if (options.manager) await manager.shutdown();
-      else await shutdownGlobalManager();
+    pi.on("session_shutdown", async (event: any, ctx: any) => {
+      if (event?.reason === "quit" || event?.reason === "reload") {
+        if (options.manager) await manager.shutdown();
+        else await shutdownGlobalManager();
+        return;
+      }
+      if (event?.reason === "resume" || event?.reason === "new" || event?.reason === "fork") manager.deactivateParent(parentKey(ctx));
     });
 
     pi.registerShortcut?.(Key.ctrlShift("b"), {

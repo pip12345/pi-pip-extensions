@@ -647,6 +647,38 @@ describe("pi-subagents", () => {
     expect(pi.userMessages.at(-1)?.message).toContain("Background subagent completed");
   });
 
+  it("does not let nested factory loading steal background injection", async () => {
+    const childPi = createMockPi();
+    class NestedFactoryRunner extends FakeRunner {
+      async launch(input: any, run: SubagentRun): Promise<SubagentRun> {
+        createSubagentsExtension({ runner: new FakeRunner() })(childPi as any);
+        return super.launch(input, run);
+      }
+    }
+    const { pi, tool } = setup(new NestedFactoryRunner());
+    const ctx = createMockCtx();
+    await emitEvent(pi, "session_start", {}, ctx);
+    await tool.execute("1", { agent: "explore", prompt: "bg", background: true }, undefined, undefined, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pi.userMessages.at(-1)?.message).toContain("Background subagent completed");
+    expect(childPi.userMessages).toEqual([]);
+  });
+
+  it("queues background completion during session replacement and flushes after resume", async () => {
+    const runner = new FakeRunner();
+    runner.delay = 20;
+    const { pi, tool } = setup(runner);
+    const ctx = createMockCtx();
+    await emitEvent(pi, "session_start", {}, ctx);
+    await tool.execute("1", { agent: "explore", prompt: "bg", background: true }, undefined, undefined, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await emitEvent(pi, "session_shutdown", { reason: "resume", targetSessionFile: "/tmp/resumed.jsonl" }, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(pi.userMessages.some((message) => message.message.includes("Background subagent completed"))).toBe(false);
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
+    expect(pi.userMessages.at(-1)?.message).toContain("Background subagent completed");
+  });
+
   it("does not forward live updates for initially backgrounded runs", async () => {
     const runner = {
       async launch(_input: any, run: SubagentRun) {
