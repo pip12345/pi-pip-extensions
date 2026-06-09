@@ -30,7 +30,9 @@ describe("pi-pip-footer token breakdown", () => {
       { id: "a2", parentId: "a1", messages: [{ role: "assistant", stopReason: "aborted", usage: { input: 4000, output: 5000, cacheWrite: 6000, cost: { total: 0.05 } } }] },
     ];
     const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 } });
-    expect(getBranchTokens(ctx)).toMatchObject({ input: 5000, output: 7000, cache: 9000, cost: 0.09 });
+    const tokens = getBranchTokens(ctx);
+    expect(tokens).toMatchObject({ input: 5000, output: 7000, cache: 9000, cost: 0.09 });
+    expect(tokens?.latestCacheHitRate).toBe(0);
   });
 
   it("counts historical parent and linked subagent usage from the usage ledger", async () => {
@@ -41,8 +43,8 @@ describe("pi-pip-footer token breakdown", () => {
     writeFileSync(
       join(usageDir, "events.jsonl"),
       [
-        JSON.stringify({ id: "parent", ts: Date.UTC(2026, 5, 2), sessionFile: parentSession, provider: "openai", model: "gpt", input: 10, output: 5, cacheRead: 2, cacheWrite: 0, cache: 2, total: 17, cost: 0.01 }),
-        JSON.stringify({ id: "child", ts: Date.UTC(2026, 5, 2), sessionFile: childSession, provider: "openai", model: "gpt", input: 20, output: 6, cacheRead: 3, cacheWrite: 0, cache: 3, total: 29, cost: 0.02 }),
+        JSON.stringify({ id: "parent", ts: Date.UTC(2026, 5, 2, 13), sessionFile: parentSession, provider: "openai", model: "gpt", input: 10, output: 5, cacheRead: 2, cacheWrite: 0, cache: 2, total: 17, cost: 0.01 }),
+        JSON.stringify({ id: "child", ts: Date.UTC(2026, 5, 2, 12), sessionFile: childSession, provider: "openai", model: "gpt", input: 20, output: 6, cacheRead: 3, cacheWrite: 0, cache: 3, total: 29, cost: 0.02 }),
       ].join("\n") + "\n",
       "utf8"
     );
@@ -51,7 +53,16 @@ describe("pi-pip-footer token breakdown", () => {
     writeFileSync(join(parentsDir, "runs.json"), JSON.stringify({ parentSessionFile: parentSession, runs: [{ sessionFile: childSession }] }), "utf8");
     const { getHistoricalSessionTokens } = await loadBreakdown();
     const ctx = createMockCtx({ sessionManager: { getSessionFile: () => parentSession } });
-    expect(getHistoricalSessionTokens(ctx)).toMatchObject({ input: 30, output: 11, cache: 5, cost: 0.03 });
+    const tokens = getHistoricalSessionTokens(ctx);
+    expect(tokens).toMatchObject({ input: 30, output: 11, cache: 5, cost: 0.03 });
+    expect(tokens?.latestCacheHitRate).toBeCloseTo((2 / 12) * 100);
+  });
+
+  it("computes cache hit rate from latest prompt cache reads", async () => {
+    const { cacheHitRate, tokenBreakdownFromUsage } = await loadBreakdown();
+    expect(cacheHitRate({ input: 1000, cacheRead: 3000, cacheWrite: 0 })).toBe(75);
+    expect(cacheHitRate({ input: 0, cacheRead: 0, cacheWrite: 0 })).toBeUndefined();
+    expect(tokenBreakdownFromUsage({ input: 1000, output: 10, cacheRead: 3000 })?.latestCacheHitRate).toBe(75);
   });
 
   it("interpolates token values for count-up animation", async () => {

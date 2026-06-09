@@ -55,6 +55,26 @@ function money(n: number): string {
   return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
 }
 
+function cacheHitRate(tokens: Pick<Tokens, "input" | "cacheRead" | "cacheWrite">): number | undefined {
+  const promptTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite;
+  return promptTokens > 0 ? (tokens.cacheRead / promptTokens) * 100 : undefined;
+}
+
+function formatCacheHit(tokens: Tokens): string {
+  const hit = cacheHitRate(tokens);
+  return tokens.cache > 0 && hit !== undefined ? `${Math.round(hit)}%` : "-";
+}
+
+function formatCacheWithHit(tokens: Tokens, compact: boolean, theme?: Theme, cacheWidth = 0, hitWidth = 0): string {
+  const cache = fmt(tokens.cache, compact);
+  const cacheText = cacheWidth > 0 ? cache.padStart(cacheWidth) : cache;
+  const hit = cacheHitRate(tokens);
+  if (tokens.cache <= 0 || hit === undefined) return hitWidth > 0 ? cacheText.padEnd(cacheText.length + hitWidth) : cacheText;
+  const suffix = `/${Math.round(hit)}%`;
+  const suffixText = hitWidth > 0 ? suffix.padEnd(hitWidth) : suffix;
+  return `${cacheText}${theme ? theme.fg("dim", suffixText) : suffixText}`;
+}
+
 function hashId(parts: unknown[]): string {
   return createHash("sha1").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
 }
@@ -87,6 +107,7 @@ function tokenDetailRow(label: string, tokens: Tokens, compact: boolean): string
     cell("output", fmt(tokens.output, compact), 14),
     cell("cache read", fmt(tokens.cacheRead, compact), 18),
     cell("cache write", fmt(tokens.cacheWrite, compact), 19),
+    cell("hit", formatCacheHit(tokens), 10),
     cell("cost", money(tokens.cost), 12),
   ].join("  ");
 }
@@ -326,6 +347,8 @@ class TokenInspector extends PipCustomComponent<void> {
       )
     );
     const visible = rows.slice(this.scroll, this.scroll + 14);
+    const cacheValueW = Math.max(1, ...visible.map((r) => fmt(r.cache, this.compact).length));
+    const cacheHitW = Math.max(0, ...visible.map((r) => (r.cache > 0 ? `/${Math.round(cacheHitRate(r) ?? 0)}%`.length : 0)));
     visible.forEach((r, i) => {
       const realIndex = this.scroll + i;
       const sel = realIndex === this.selected;
@@ -336,7 +359,7 @@ class TokenInspector extends PipCustomComponent<void> {
       const ctxCell = `${padAnsi(ctxText, 9)} ${contextBar(r.contextPercent, 10, th)}`;
       const inCell = `${padLeftAnsi(fmt(r.input, this.compact), 8)} ${bar(r.input, maxIn, 6, th)}`;
       const outCell = `${padLeftAnsi(fmt(r.output, this.compact), 9)} ${bar(r.output, maxOut, 5, th)}`;
-      const cacheCell = `${padLeftAnsi(fmt(r.cache, this.compact), 8)} ${bar(r.cache, maxCache, 7, th)}`;
+      const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheValueW, cacheHitW)} ${bar(r.cache, maxCache, 7, th)}`;
       lines.push(
         `${padAnsi(idx, 3)} ${padAnsi(prompt, promptW)} ${padAnsi(ctxCell, ctxW)} ${padAnsi(inCell, inW)} ${padAnsi(outCell, outW)} ${padAnsi(cacheCell, cacheW)}`
       );
@@ -367,6 +390,8 @@ class TokenInspector extends PipCustomComponent<void> {
     lines.push("");
     lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Turns", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Input", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", 9)} ${padLeftAnsi("Cost", 8)}`));
     const visible = rows.slice(this.scroll, this.scroll + 16);
+    const cacheValueW = Math.max(1, ...visible.map((r) => fmt(r.cache, this.compact).length));
+    const cacheHitW = Math.max(0, ...visible.map((r) => (r.cache > 0 ? `/${Math.round(cacheHitRate(r) ?? 0)}%`.length : 0)));
     visible.forEach((r, i) => {
       const realIndex = this.scroll + i;
       const sel = realIndex === this.selected;
@@ -376,14 +401,14 @@ class TokenInspector extends PipCustomComponent<void> {
       lines.push(`${prefix}${padAnsi(key, 34)} ${padLeftAnsi(String(r.turns), 5)}   ${padAnsi(totalCell, 22)} ${padLeftAnsi(
         fmt(r.input, this.compact),
         9
-      )} ${padLeftAnsi(fmt(r.output, this.compact), 9)} ${padLeftAnsi(fmt(r.cache, this.compact), 9)} ${padLeftAnsi(money(r.cost), 8)}`);
+      )} ${padLeftAnsi(fmt(r.output, this.compact), 9)} ${padLeftAnsi(formatCacheWithHit(r, this.compact, th, cacheValueW, cacheHitW), 9)} ${padLeftAnsi(money(r.cost), 8)}`);
     });
     if (rows.length > 0) lines.push(scrollIndicator(this.selected, rows.length, 24, th));
     const selected = rows[this.selected];
     if (selected) {
       lines.push("");
       lines.push(th.fg("accent", selected.key));
-      lines.push(`turns ${selected.turns}   input ${fmt(selected.input, false)}   output ${fmt(selected.output, false)}   cache ${fmt(selected.cache, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
+      lines.push(`turns ${selected.turns}   input ${fmt(selected.input, false)}   output ${fmt(selected.output, false)}   cache ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
     }
     return lines;
   }
@@ -420,4 +445,4 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-export const __test = { buildSessionRows, subagentUsagesFromToolResult };
+export const __test = { buildSessionRows, cacheHitRate, formatCacheHit, formatCacheWithHit, subagentUsagesFromToolResult };

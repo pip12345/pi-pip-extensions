@@ -12,4 +12,8 @@ describe("pi-pip-footer token rendering", () => {
     expect(renderTokenMetric("◫", 14_300_000, false, theme)).toBe("◫:14.3M");
     expect(renderTokenMetric("□", 14_300_000, false, theme)).toBe("□:14.3M");
   });
+
+  it("renders dim secondary suffixes on token metrics", () => {
+    expect(renderTokenMetric("↻", 28_000, false, theme, "/75%")).toBe("↻:28k/75%");
+  });
 });

@@ -12,6 +12,17 @@ export interface TokenBreakdown {
   cache: number;
   total: number;
   cost?: number;
+  latestCacheHitRate?: number;
+}
+
+export function cacheHitRate(tokens: Pick<TokenBreakdown, "input" | "cacheRead" | "cacheWrite">): number | undefined {
+  const promptTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite;
+  return promptTokens > 0 ? (tokens.cacheRead / promptTokens) * 100 : undefined;
+}
+
+export function tokenBreakdownFromUsage(usage: any): TokenBreakdown | undefined {
+  const tokens = normalizeUsage(usage);
+  return tokens ? { ...tokens, latestCacheHitRate: cacheHitRate(tokens) } : undefined;
 }
 
 export function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): void {
@@ -22,6 +33,7 @@ export function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): 
   total.cache += next.cache;
   total.total += next.total;
   total.cost = (total.cost ?? 0) + (next.cost ?? 0);
+  if (next.latestCacheHitRate !== undefined) total.latestCacheHitRate = next.latestCacheHitRate;
 }
 
 export function getBranchTokens(ctx: any): TokenBreakdown | undefined {
@@ -33,7 +45,7 @@ export function getBranchTokens(ctx: any): TokenBreakdown | undefined {
 
   for (const message of context.messages) {
     if (message?.role !== "assistant") continue;
-    const usage = normalizeUsage(message.usage);
+    const usage = tokenBreakdownFromUsage(message.usage);
     if (!usage) continue;
     addTokenBreakdown(total, usage);
     found = true;
@@ -90,6 +102,8 @@ export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean 
   const total = emptyBreakdown();
   const seen = new Set<string>();
   let found = false;
+  let latestTs = -Infinity;
+  let latestCacheHitRate: number | undefined;
   for (const day of eventDays()) {
     const dayDir = pipPath("usage", "events", day);
     for (const file of readdirSync(dayDir, { withFileTypes: true })) {
@@ -103,9 +117,17 @@ export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean 
           const dedupe = typeof event.id === "string" && event.id ? event.id : createHash("sha1").update(line).digest("hex");
           if (seen.has(dedupe)) continue;
           seen.add(dedupe);
-          const usage = normalizeUsage(event);
+          const usage = tokenBreakdownFromUsage(event);
           if (!usage) continue;
+          const candidateTs = typeof event.ts === "number" && Number.isFinite(event.ts) ? event.ts : -Infinity;
+          const candidateCacheHitRate = usage.latestCacheHitRate;
           addTokenBreakdown(total, usage);
+          if (candidateCacheHitRate !== undefined && candidateTs >= latestTs) {
+            latestTs = candidateTs;
+            latestCacheHitRate = candidateCacheHitRate;
+          }
+          if (latestCacheHitRate !== undefined) total.latestCacheHitRate = latestCacheHitRate;
+          else delete total.latestCacheHitRate;
           found = true;
         } catch {}
       }
@@ -144,5 +166,6 @@ export function interpolateTokenBreakdown(from: TokenBreakdown, to: TokenBreakdo
     cache,
     total: lerp(from.total, to.total),
     cost: from.cost != null || to.cost != null ? lerpRaw(from.cost ?? 0, to.cost ?? 0) : undefined,
+    latestCacheHitRate: to.latestCacheHitRate,
   };
 }

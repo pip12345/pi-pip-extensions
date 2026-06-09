@@ -58,6 +58,19 @@ describe("pi-stats", () => {
     expect(rows[0]).toMatchObject({ input: 30, output: 11, cache: 5, cost: 0.03, subagentCount: 1 });
     expect(rows[0].parent).toMatchObject({ input: 10, output: 5, cache: 2, cost: 0.01 });
     expect(rows[0].subagents).toMatchObject({ input: 20, output: 6, cache: 3, cost: 0.02 });
+    expect(__test.formatCacheWithHit(rows[0], true)).toBe("5/14%");
+    expect(__test.formatCacheHit(rows[0].parent)).toBe("17%");
+    expect(__test.formatCacheHit(rows[0].subagents)).toBe("13%");
+  });
+
+  it("formats cache hit rate from prompt-side cache reads", async () => {
+    const { __test } = await loadStatsModule();
+    expect(__test.cacheHitRate({ input: 1000, cacheRead: 3000, cacheWrite: 0 })).toBe(75);
+    expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true)).toBe("3k/75%");
+    expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, { fg: (name: string, text: string) => `<${name}>${text}</${name}>` })).toBe("3k<dim>/75%</dim>");
+    expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, undefined, 4)).toBe("  3k/75%");
+    expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, undefined, 4, 5)).toBe("  3k/75% ");
+    expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 0, cacheWrite: 0, cache: 0, total: 1010, cost: 0 }, true)).toBe("0");
   });
 
   it("records assistant message usage through global usage storage", async () => {

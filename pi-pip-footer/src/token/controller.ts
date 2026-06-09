@@ -1,7 +1,7 @@
 import { formatCost, formatTokenCount, normalizeUsage, pipSettings, truncateToWidth } from "../../../pip-common/index.ts";
 import { FOOTER_SETTINGS_ID, TOKEN_HIGHLIGHT_MS, TOKEN_RENDER_TICK_MS, TOKEN_SPINNER, TOKEN_SPINNER_FRAME_MS, WIDGET_KEY } from "../constants.ts";
 import { fitSegment } from "../layout.ts";
-import { addTokenBreakdown, diffTokenBreakdown, getHistoricalSessionTokens, interpolateTokenBreakdown, type TokenBreakdown } from "./breakdown.ts";
+import { addTokenBreakdown, diffTokenBreakdown, getHistoricalSessionTokens, interpolateTokenBreakdown, tokenBreakdownFromUsage, type TokenBreakdown } from "./breakdown.ts";
 import { renderTokenMetric } from "./render.ts";
 
 export interface TokenControllerDeps {
@@ -67,7 +67,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
 
   function tokenValuesChanged(previous: TokenBreakdown | undefined, next: TokenBreakdown | undefined): boolean {
     if (!previous || !next) return false;
-    return previous.input !== next.input || previous.output !== next.output || previous.cache !== next.cache || (previous.cost ?? 0) !== (next.cost ?? 0);
+    return previous.input !== next.input || previous.output !== next.output || previous.cache !== next.cache || previous.latestCacheHitRate !== next.latestCacheHitRate || (previous.cost ?? 0) !== (next.cost ?? 0);
   }
 
   function getDisplayedTokens(now = Date.now()): TokenBreakdown | undefined {
@@ -118,10 +118,11 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
       output: highlighting && tokenHighlightedFields.output,
       cache: highlighting && tokenHighlightedFields.cache,
     };
+    const cacheHitRateSuffix = pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showCacheHitRate`) && displayed.cache > 0 && displayed.latestCacheHitRate !== undefined ? `/${Math.round(displayed.latestCacheHitRate)}%` : "";
     const parts = [
       renderTokenMetric("↓", displayed.input, changed.input, theme),
       renderTokenMetric("↑", displayed.output, changed.output, theme),
-      renderTokenMetric(cacheIcon(), displayed.cache, changed.cache, theme),
+      renderTokenMetric(cacheIcon(), displayed.cache, changed.cache, theme, cacheHitRateSuffix),
     ];
     let text = parts.join(" ");
     if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`)) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", formatCost(displayed.cost ?? 0))}`;
@@ -316,7 +317,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
 
   function onMessageEnd(event: any, ctx: any): void {
     if (event.message?.role === "user") return;
-    const messageTokens = normalizeUsage(event.message?.usage);
+    const messageTokens = tokenBreakdownFromUsage(event.message?.usage);
     if (messageTokens?.output && streamLiveOutputTokens <= 0 && streamEstimatedOutputTokens <= 0) {
       streamLiveOutputTokens = messageTokens.output;
       liveOutputVisibleUntil = Date.now() + 3000;

@@ -62,7 +62,21 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } } }, ctx);
     const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
     const component = factory({ requestRender() {} }, theme);
+    expect(component.render(120)[0]).toContain("↓:1k ↑:2k ↻:3k/75% · $0.04");
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("can hide token counter cache hit rate", async () => {
+    pipSettings.set("pi-pip-footer.showCacheHitRate", false);
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const ctx = createMockCtx({ model: { contextWindow: 272_000 } });
+    await emitEvent(pi, "session_start", {}, ctx);
+    await emitEvent(pi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } } }, ctx);
+    const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
+    const component = factory({ requestRender() {} }, theme);
     expect(component.render(120)[0]).toContain("↓:1k ↑:2k ↻:3k · $0.04");
+    pipSettings.set("pi-pip-footer.showCacheHitRate", true);
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 });
