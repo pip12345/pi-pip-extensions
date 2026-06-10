@@ -1,0 +1,30 @@
+{
+  "name": "pi-gitignore-guard",
+  "version": "0.1.0",
+  "description": "Block Pi tool access to files matched by .gitignore",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "gitignore",
+    "guard"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts"
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  }
+}

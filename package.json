@@ -10,6 +10,7 @@
     "extensions": [
       "pip-common/index.ts",
       "pi-context/index.ts",
+      "pi-gitignore-guard/index.ts",
       "pi-pip-footer/index.ts",
       "pi-plan-mode/index.ts",
       "pi-prompt-profiles/index.ts",

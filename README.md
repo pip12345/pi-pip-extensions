@@ -44,6 +44,7 @@ Pi reads the top-level `pi.extensions` manifest. `pip-common` loads first for sh
 
 This collection includes:
 
+- `pi-gitignore-guard` - blocks tool access to paths matched by `.gitignore`
 - `pi-pip-footer` - richer footer with token/context/model/quota info
 - `pi-plan-mode` - read-only planning mode
 - `pi-prompt-profiles` - switchable prompt profile overlays
