@@ -82,6 +82,13 @@ describe("pi-plan-mode", () => {
     const [result] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, ctx);
     expect(result.systemPrompt).toContain("base");
     expect(result.systemPrompt).toContain("read-only planning mode");
+    expect(result.systemPrompt).toContain("Evidence read");
+    expect(result.systemPrompt).toContain("Root cause / design owner");
+    expect(result.systemPrompt).toContain("Questions, if any, labeled Q1, Q2, Q3");
+    expect(result.systemPrompt).toContain("Before finishing the plan, make sure");
+    expect(result.systemPrompt).toContain("You have read the owning implementation file(s)");
+    expect(result.systemPrompt).toContain("If any evidence item is missing, say what is missing");
+    expect(result.systemPrompt).toContain("End with a clear next-step question");
   });
 
   it("classifies tools without name heuristics", () => {

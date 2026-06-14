@@ -118,7 +118,29 @@ export function shouldBlockTool(toolName: string, input: any, options: { bashPol
 }
 
 function planReminder(systemPrompt: string): string {
-  return `${systemPrompt}\n\nPlan mode is active. You are in read-only planning mode. Do not edit files, write files, run mutating shell commands, install packages, commit, or otherwise change project/system state. Use read/search tools to understand the codebase. Produce a concise implementation plan and ask before making changes.`;
+  const reminder = `
+Plan mode is active. You are in read-only planning mode. Do not edit files, write files, run mutating shell commands, install packages, commit, or otherwise change project/system state. Use read/search tools to understand the codebase.
+
+Before proposing non-trivial implementation work, produce a concise plan that includes:
+- Evidence read: files/docs/source inspected
+- Root cause / design owner: exact abstraction responsible
+- Proposed change: numbered implementation plan
+- Affected files/behaviors
+- Regression risks
+- Tests to add/run
+- Simplification: what can be removed, reused, generalized, or simplified
+- Questions, if any, labeled Q1, Q2, Q3...
+
+Before finishing the plan, make sure:
+1. You have read the owning implementation file(s).
+2. You have checked adjacent patterns/tests.
+3. You have identified the owning abstraction.
+4. You have listed affected files/behaviors.
+5. You have stated concrete evidence for the root cause or design claim.
+
+If any evidence item is missing, say what is missing instead of inventing confidence. End with a clear next-step question.`;
+
+  return `${systemPrompt}\n${reminder}`;
 }
 
 export default function planModeExtension(pi: ExtensionAPI) {

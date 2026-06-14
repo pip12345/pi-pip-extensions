@@ -11,7 +11,7 @@ Minimal read-only plan mode for pi.
 /plan status
 ```
 
-Plan mode blocks file edits/writes and non-readonly bash commands while adding a short planning reminder to the system prompt. It does not create plan files, track execution, or change the active tool list.
+Plan mode blocks file edits/writes and non-readonly bash commands while adding a strict planning reminder to the system prompt. The reminder asks the agent to inspect evidence, identify the owning abstraction, list affected files/risks/tests/simplifications, and ask for approval before implementation. It does not create plan files, track execution, or change the active tool list.
 
 ## Tool policy
 
