@@ -1,4 +1,4 @@
-import { boxLines, hasTuiCustom, PipCustomComponent, printableInput, themeFg, truncateToWidth } from "../../pip-common/index.ts";
+import { boxLines, hasTuiCustom, PipCustomComponent, printableInput, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
 import type { QuestionAnswer, QuestionInfo } from "./schema.ts";
 import {
   createQuestionState,
@@ -133,7 +133,8 @@ class QuestionComponent extends PipCustomComponent<AskQuestionResult> {
   private renderQuestion(lines: string[], width: number): void {
     const info = questionInfo(this.questions, this.state);
     if (!info) return;
-    lines.push(themeFg(this.theme, "text", info.question + (info.multiple ? " (select all that apply)" : "")));
+    const question = themeFg(this.theme, "text", info.question + (info.multiple ? " (select all that apply)" : ""));
+    lines.push(...wrapAnsi(question, width));
     lines.push("");
     for (const [index, option] of info.options.entries()) this.renderOption(lines, width, index, option.label, option.description, false);
     this.renderOption(lines, width, info.options.length, "Type your own answer", questionInput(this.state), true);
@@ -147,7 +148,9 @@ class QuestionComponent extends PipCustomComponent<AskQuestionResult> {
     const check = info?.multiple ? `[${picked ? "✓" : " "}] ` : picked ? "✓ " : "";
     const text = `${prefix} ${index + 1}. ${check}${label}${custom && this.state.editing ? " ✎" : ""}`;
     lines.push(truncateToWidth(selected ? themeFg(this.theme, "accent", text) : themeFg(this.theme, picked ? "success" : "text", text), width));
-    if (description) lines.push(truncateToWidth(`    ${themeFg(this.theme, "muted", description)}`, width));
+    if (description) {
+      for (const line of wrapAnsi(themeFg(this.theme, "muted", description), Math.max(1, width - 4))) lines.push(`    ${line}`);
+    }
   }
 
   private renderConfirm(lines: string[], width: number): void {

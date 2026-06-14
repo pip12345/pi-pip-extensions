@@ -5,7 +5,7 @@ import { formatAnsweredOutput } from "./src/format.ts";
 import { createQuestionState, questionSaveCustom, questionSelect, questionSetTab, questionStoreCustom, questionSubmit } from "./src/state.ts";
 import { validateQuestions, type QuestionInfo } from "./src/schema.ts";
 import { __test as uiTest } from "./src/ui.ts";
-import { resetPipToolsForTests, flushPipTools } from "../pip-common/index.ts";
+import { resetPipToolsForTests, flushPipTools, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const questions: QuestionInfo[] = [
@@ -189,6 +189,35 @@ describe("pi-question", () => {
     const test = makeComponent([questions[0]]);
     test.component.handleInput("\u0003");
     expect(test.result).toEqual({ answers: [], rejected: true });
+  });
+
+  it("wraps long question prose and descriptions within the box", () => {
+    const test = makeComponent([
+      {
+        question: "This is a very long question sentence that should wrap cleanly instead of being clipped at the edge of the question box",
+        header: "Long",
+        options: [{ label: "Yes", description: "A long explanatory description should also wrap because it is prose rather than a compact data row" }],
+      },
+    ]);
+
+    const rendered = test.component.render(44);
+    expect(rendered.some((line) => line.includes("long question sentence"))).toBe(true);
+    expect(rendered.some((line) => line.includes("should wrap cleanly"))).toBe(true);
+    expect(rendered.some((line) => line.includes("clipped at the edge"))).toBe(true);
+    expect(rendered.some((line) => line.includes("explanatory description"))).toBe(true);
+    expect(rendered.some((line) => line.includes("compact data row"))).toBe(true);
+    expect(rendered.every((line) => visibleWidth(line) <= 44)).toBe(true);
+  });
+
+  it("wraps long typed custom answers within the box", () => {
+    const test = makeComponent([questions[0]]);
+    test.component.handleInput("3");
+    for (const ch of "This custom typed answer should wrap while it is being edited") test.component.handleInput(ch);
+
+    const rendered = test.component.render(44);
+    expect(rendered.some((line) => line.includes("custom typed answer"))).toBe(true);
+    expect(rendered.some((line) => line.includes("while it is being"))).toBe(true);
+    expect(rendered.every((line) => visibleWidth(line) <= 44)).toBe(true);
   });
 
   it("renders answered result", () => {
