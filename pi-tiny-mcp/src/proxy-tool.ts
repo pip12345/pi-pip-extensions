@@ -17,7 +17,7 @@ export function getManager(cwd = process.cwd()): TinyMcpManager {
 }
 
 export async function shutdownManager(): Promise<void> {
-  await Promise.all([...managers.values()].map((manager) => manager.disconnect().catch(() => undefined)));
+  await Promise.all([...managers.values()].map((manager) => manager.close().catch(() => undefined)));
   managers.clear();
 }
 
@@ -38,6 +38,7 @@ export function registerTinyMcpTool(pi: any): void {
         "Call tools with tiny-mcp({ tool: \"tool_name\", args: \"{...}\" }); args must be a JSON string object.",
         "If no tools are cached for a server, use tiny-mcp({ connect: \"server\" }) first.",
         "When the user wants to configure MCP servers for this adapter, edit the PiP-owned file ~/.pi/agent/pip/tiny-mcp.json directly.",
+        "Set up ~/.pi/agent/pip/tiny-mcp.json as { \"mcpServers\": { \"serverName\": { \"command\": \"cmd\", \"args\": [\"arg1\"] } } }; optional stdio fields are cwd, env, timeoutMs, and disabled.",
         "Shared MCP config files are ~/.config/mcp/mcp.json for user-global and .mcp.json for project-local. Edit shared files only when the user explicitly asks for shared/global/project MCP config.",
         "pi-tiny-mcp only supports stdio command servers. Do not add url, headers, auth, or oauth fields to tiny-mcp config.",
       ],
@@ -58,8 +59,12 @@ export function registerTinyMcpTool(pi: any): void {
       display: {
         kind: "command",
         call: (args: any) => args?.tool ? args.tool : args?.search ? `search ${args.search}` : args?.connect ? `connect ${args.connect}` : "status",
-        result: (result: any) => firstResultText(result).split("\n")[0],
+        result: (result: any) => {
+          const text = firstResultText(result).trim();
+          return /^error\b/i.test(text) ? text.split("\n")[0] : undefined;
+        },
         expandedResult: firstResultText,
+        hideSuccessfulResult: true,
       },
     },
   });

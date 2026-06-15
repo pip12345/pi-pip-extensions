@@ -208,13 +208,17 @@ function renderDisplayPipCall(toolName: string, display: any) {
 }
 
 function renderDisplayPipResult(display: any) {
-  return (result: any, options: any, theme: any) => {
+  return (result: any, options: any, theme: any, context?: any) => {
+    const rawText = firstResultText(result);
+    const isError = context?.isError || /^(error|access denied|failed)\b/i.test(rawText.trim());
     const resultText = display.result?.(result);
     if (options?.expanded) {
-      const expanded = display.expandedResult?.(result) ?? resultText ?? firstResultText(result);
+      const expanded = display.expandedResult?.(result) ?? resultText ?? rawText;
       return textLines(expanded, theme);
     }
-    if (resultText?.trim()) return new Text(themeFg(theme, "warning", "⚠ ") + themeFg(theme, "muted", resultText), 0, 0);
+    if (display.hideSuccessfulResult && !isError) return EMPTY_COMPONENT;
+    const collapsed = resultText ?? (isError ? rawText.split("\n")[0] : undefined);
+    if (collapsed?.trim()) return new Text(themeFg(theme, isError ? "error" : "muted", collapsed), 0, 0);
     return EMPTY_COMPONENT;
   };
 }

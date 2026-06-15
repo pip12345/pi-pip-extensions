@@ -17,7 +17,7 @@ export function registerTinyMcpSettings(): void {
     settings: {
       enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Enable the tiny stdio-only MCP proxy tool and /tiny-mcp commands." }),
       configTarget: setting.enum({ label: "Config target", default: "pip", choices: ["pip", "global", "project"] as const, order: 2, description: "Default file opened by /tiny-mcp config: PiP-owned, shared global, or project .mcp.json." }),
-      metadataCache: setting.boolean({ label: "Metadata cache", default: true, order: 3, description: "Cache tool metadata under ~/.pi/agent/pip so search/list can work before reconnecting." }),
+      metadataCache: setting.boolean({ label: "Metadata cache", default: true, order: 3, description: "Cache tool metadata under ~/.pi/agent/pip so search/list can work before connecting." }),
       defaultTimeout: setting.enum({ label: "Tool timeout", default: "120", choices: ["30", "60", "120", "300"] as const, order: 4, description: "Default MCP request timeout in seconds." }),
       stderr: setting.enum({ label: "Server stderr", default: "tail", choices: ["ignore", "tail", "inherit"] as const, order: 5, description: "How to handle MCP server stderr logs." }),
       toolPrefix: setting.enum({ label: "Tool prefix", default: "server", choices: ["server", "none"] as const, order: 6, description: "Expose MCP tool names with server prefixes or original names. Collisions are suffixed." }),

@@ -51,7 +51,7 @@ Useful commands:
 /tiny-mcp config pip
 /tiny-mcp config global
 /tiny-mcp config project
-/tiny-mcp reconnect <server>
+/tiny-mcp connect [server]
 /tiny-mcp disconnect [server]
 ```
 

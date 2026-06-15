@@ -350,6 +350,10 @@ describe("pi-tool-ui", () => {
 
     expect(mcp.renderShell).toBe("self");
     expect(mcp.renderCall({ search: "files" }, theme, {}).render(80).join("\n")).toContain("› tiny-mcp: search files");
+    expect(mcp.renderResult({ content: [{ type: "text", text: "Connected ghidra." }] }, { expanded: false }, theme, {}).render(80)).toEqual([]);
+    const error = mcp.renderResult({ content: [{ type: "text", text: "Error: nope\nmore" }] }, { expanded: false }, theme, {}).render(80).join("\n");
+    expect(error).toContain("Error: nope");
+    expect(error).not.toContain("⚠");
   });
 
   it("does not compact-render subagent just because it has display metadata", () => {

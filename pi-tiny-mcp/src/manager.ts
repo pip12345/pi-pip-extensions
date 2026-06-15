@@ -2,6 +2,7 @@ import { loadTinyMcpConfig } from "./config.ts";
 import { readCache, updateCachedTools } from "./cache.ts";
 import { defaultTimeoutMs, settingValue, type StderrMode, type ToolPrefix } from "./settings.ts";
 import { TinyMcpClient } from "./mcp-client.ts";
+import { isExplicitlyDisconnected, setExplicitlyDisconnected } from "./state.ts";
 import type { McpToolInfo, ServerStatus, TinyMcpConfig, VisibleToolInfo } from "./types.ts";
 
 interface ServerState {
@@ -52,6 +53,7 @@ export class TinyMcpManager {
   }
 
   async connect(serverName: string): Promise<void> {
+    setExplicitlyDisconnected([serverName], false);
     const state = this.requireState(serverName);
     if (state.status === "connected") return;
     const config = this.config.mcpServers[serverName];
@@ -95,13 +97,34 @@ export class TinyMcpManager {
     return result;
   }
 
-  async disconnect(serverName?: string): Promise<void> {
+  async connectEligible(): Promise<{ connected: string[]; failed: { server: string; error: string }[] }> {
+    const connected: string[] = [];
+    const failed: { server: string; error: string }[] = [];
+    for (const serverName of this.serverNames()) {
+      if (isExplicitlyDisconnected(serverName)) continue;
+      try {
+        await this.connect(serverName);
+        connected.push(serverName);
+      } catch (error) {
+        failed.push({ server: serverName, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { connected, failed };
+  }
+
+  async close(serverName?: string): Promise<void> {
     const targets = serverName ? [this.requireState(serverName)] : [...this.states.values()];
     await Promise.all(targets.map(async (state) => {
       await state.client?.close().catch(() => undefined);
       state.client = undefined;
       state.status = "disconnected";
     }));
+  }
+
+  async disconnect(serverName?: string): Promise<void> {
+    const targets = serverName ? [this.requireState(serverName)] : [...this.states.values()];
+    setExplicitlyDisconnected(targets.map((state) => state.name), true);
+    await this.close(serverName);
   }
 
   stderrTail(serverName: string): string[] {
