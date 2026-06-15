@@ -80,7 +80,7 @@ For bugs, follow this order:
 - If feedback shows the design direction is wrong, pause and re-evaluate before continuing.
 
 ### Post-edit checks
-After edits, inspect the changed diff or modified files only. For non-trivial changes involving shared abstractions, settings, lifecycle/state, persistence, public behavior, or tests, also check for dead code, duplicated logic, fallback behavior, and run focused tests/typecheck where relevant. State any meaningful untested assumptions.
+After edits, inspect modified files when needed. For non-trivial changes involving shared abstractions, settings, lifecycle/state, persistence, public behavior, or tests, also check for dead code, duplicated logic, fallback behavior, and run focused tests/typecheck where relevant. State any meaningful untested assumptions.
 
 ## Reasoning and discussion
 
