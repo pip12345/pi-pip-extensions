@@ -38,7 +38,7 @@ describe("pip settings command", () => {
     component.handleInput("\u001b[B");
     component.handleInput("\u001b[C");
     component.handleInput("\u001b[D");
-    component.handleInput("q");
+    component.handleInput("\u001b");
 
     expect(result.dirty).toBe(true);
     expect(result.values["plan-mode"].enabled).toBe(false);
@@ -85,7 +85,7 @@ describe("pip settings command", () => {
     const rendered = component.render(100).join("\n");
     const visibleSettingRows = rendered.split("\n").filter((line: string) => /Setting \d+:/.test(line));
 
-    expect(visibleSettingRows.length).toBe(11);
+    expect(visibleSettingRows.length).toBe(9);
   });
 
   it("keeps settings rows stable when selected description appears or disappears", () => {
@@ -112,6 +112,43 @@ describe("pip settings command", () => {
     expect(plainRowBefore).toBe(plainRowAfter);
   });
 
+  it("filters settings by typing and keeps printable keys in the search query", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({
+      id: "x",
+      title: "X",
+      settings: {
+        enabled: setting.boolean({ label: "Enabled", default: true, order: 1 }),
+        quietMode: setting.boolean({ label: "Quiet mode", default: false, order: 2 }),
+      },
+    });
+    const component = createPipSettingsComponent({ requestRender() {} }, { fg: (_name: string, text: string) => text }, () => undefined, registry) as any;
+
+    component.handleInput("q");
+    let rendered = component.render(80).join("\n");
+    expect(rendered).toContain("Quiet mode:");
+    expect(rendered).not.toContain("Enabled:");
+    expect(registry.get("x.quietMode")).toBe(false);
+
+    component.handleInput("\u007f");
+    rendered = component.render(80).join("\n");
+    expect(rendered).toContain("Enabled:");
+    expect(rendered).toContain("Quiet mode:");
+  });
+
+  it("shows an empty search state when no settings match", () => {
+    const registry = createSettingsRegistry({}, { persistPath: false });
+    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean({ label: "Enabled", default: true }) } });
+    const component = createPipSettingsComponent({ requestRender() {} }, { fg: (_name: string, text: string) => text }, () => undefined, registry) as any;
+
+    component.handleInput("z");
+    component.handleInput("z");
+
+    const rendered = component.render(80).join("\n");
+    expect(rendered).toContain("No matching settings");
+    expect(rendered).not.toContain("Enabled:");
+  });
+
   it("always closes on raw escape, ctrl-c, and ctrl-d", () => {
     for (const key of ["\u001b", "\u0003", "\u0004"]) {
       const registry = createSettingsRegistry({}, { persistPath: false });
@@ -135,7 +172,7 @@ describe("pip settings command", () => {
           let result: any;
           const component = factory({ requestRender() {} }, { fg: (_name: string, text: string) => text }, undefined, (value: any) => { result = value; }) as any;
           component.handleInput("\r");
-          component.handleInput("q");
+          component.handleInput("\u001b");
           return result;
         },
         select: async (_title: string, choices: string[]) => {
@@ -164,7 +201,7 @@ describe("pip settings command", () => {
           let result: any;
           const component = factory({ requestRender() {} }, { fg: (_name: string, text: string) => text }, undefined, (value: any) => { result = value; }) as any;
           component.handleInput("\r");
-          component.handleInput("q");
+          component.handleInput("\u001b");
           return result;
         },
         select: async (_title: string, choices: string[]) => {

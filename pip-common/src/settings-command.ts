@@ -1,3 +1,4 @@
+import { fuzzyFilter, Input } from "@earendil-works/pi-tui";
 import { PipCustomComponent } from "./custom-component.ts";
 import { hasTuiCustom } from "./pi-api.ts";
 import { truncateToWidth } from "./keys.ts";
@@ -35,11 +36,18 @@ function applySettingsValues(registry: SettingsRegistry, values: Record<string, 
 const MAX_VISIBLE_SETTING_ROWS = 30;
 const MIN_VISIBLE_SETTING_ROWS = 8;
 const SETTINGS_OVERLAY_MAX_HEIGHT_RATIO = 0.85;
-const SETTINGS_CHROME_LINES = 8;
+const SETTINGS_CHROME_LINES = 10;
 
 type SettingsDisplayRow = { kind: "section"; section: ReturnType<SettingsRegistry["sections"]>[number] } | { kind: "setting"; row: SettingRow };
 
-function buildDisplayRows(registry: SettingsRegistry): SettingsDisplayRow[] {
+function searchText(registry: SettingsRegistry, row: SettingRow): string {
+  return [registry.settingLabel(row), row.section.title, row.path].join(" ");
+}
+
+function buildDisplayRows(registry: SettingsRegistry, query = ""): SettingsDisplayRow[] {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery) return fuzzyFilter(registry.rows(), trimmedQuery, (row) => searchText(registry, row)).map((row) => ({ kind: "setting", row }));
+
   const out: SettingsDisplayRow[] = [];
   for (const section of registry.sections()) {
     out.push({ kind: "section", section });
@@ -58,9 +66,10 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   private selected = 1;
   private scroll = 0;
   private readonly originalValues: Record<string, Record<string, unknown>>;
+  private readonly searchInput = new Input();
 
   constructor(tui: any, theme: any, done: (result?: PipSettingsResult) => void, private registry: SettingsRegistry = pipSettings) {
-    super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d", "q", "Q"] });
+    super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d"] });
     this.originalValues = registry.all();
   }
 
@@ -69,27 +78,27 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
     super.close(result ?? { dirty: !settingsEqual(this.originalValues, values), values });
   }
 
-  protected handleKey(key: string): void {
-    const displayRows = buildDisplayRows(this.registry);
+  protected handleKey(key: string, raw: string): void {
+    const displayRows = this.displayRows();
     const selectedItem = displayRows[this.selected];
     const selectedRow = selectedItem?.kind === "setting" ? selectedItem.row : undefined;
     let changed = false;
 
-    if (key === "up" || key === "k") {
-      this.move(-1);
-      changed = true;
-    } else if (key === "down" || key === "j") {
-      this.move(1);
-      changed = true;
-    } else if (key === "right" || key === "l" || key === "return") {
+    if (key === "up") {
+      changed = this.move(-1);
+    } else if (key === "down") {
+      changed = this.move(1);
+    } else if (key === "right" || key === "return" || raw === " ") {
       if (selectedRow) changed = this.edit(selectedRow, 1);
-    } else if (key === "left" || key === "h") {
+    } else if (key === "left") {
       if (selectedRow) changed = this.edit(selectedRow, -1);
-    } else if (key === "r") {
+    } else if (key === "ctrl+r") {
       if (selectedRow) {
         this.registry.reset(selectedRow.path);
         changed = true;
       }
+    } else {
+      changed = this.updateSearch(raw);
     }
 
     if (changed) this.requestRender();
@@ -115,27 +124,59 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
     });
   }
 
-  private move(delta: number): void {
-    const count = buildDisplayRows(this.registry).length;
+  private searchQuery(): string {
+    return this.searchInput.getValue();
+  }
+
+  private displayRows(): SettingsDisplayRow[] {
+    return buildDisplayRows(this.registry, this.searchQuery());
+  }
+
+  private updateSearch(raw: string): boolean {
+    const before = this.searchQuery();
+    this.searchInput.handleInput(raw);
+    const after = this.searchQuery();
+    if (after === before) return false;
+
+    const displayRows = this.displayRows();
+    this.selected = firstSettingIndex(displayRows);
+    this.scroll = 0;
+    return true;
+  }
+
+  private move(delta: number): boolean {
+    const count = this.displayRows().length;
+    if (!count) return false;
+
     const visibleSettingRows = this.visibleSettingRows();
+    const previousSelected = this.selected;
+    const previousScroll = this.scroll;
     this.selected = moveSelection(this.selected, delta, count);
     this.scroll = selectionOffset(this.selected, this.scroll, count, visibleSettingRows);
+    return this.selected !== previousSelected || this.scroll !== previousScroll;
   }
 
   render(width: number): string[] {
     const bodyWidth = Math.max(1, width);
     const rows = this.registry.rows();
-    const displayRows = buildDisplayRows(this.registry);
+    const displayRows = this.displayRows();
     if (this.selected >= displayRows.length) this.selected = firstSettingIndex(displayRows);
     const theme = this.theme;
     const lines: string[] = [];
 
     const dirty = !settingsEqual(this.originalValues, this.registry.all());
-    lines.push(themeFg(theme, "accent", "Pip Settings") + themeFg(theme, "dim", `  q close · j/k move · enter/←/→ change · r reset${dirty ? " · unsaved" : ""}`));
+    lines.push(themeFg(theme, "accent", "Pip Settings") + themeFg(theme, "dim", `${dirty ? " · unsaved" : ""}  Esc close · type search · ↑/↓ move · enter/space/←/→ change · ctrl+r reset`));
+    lines.push("");
+    lines.push(...this.searchInput.render(Math.max(1, bodyWidth - 2)));
     lines.push("");
 
     if (!rows.length) {
       lines.push(themeFg(theme, "dim", "No pip settings registered."));
+      return boxLines(lines, bodyWidth, theme);
+    }
+
+    if (!displayRows.length) {
+      lines.push(themeFg(theme, "dim", "No matching settings"));
       return boxLines(lines, bodyWidth, theme);
     }
 
@@ -159,7 +200,7 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
       }
 
       const row = item.row;
-      const label = this.registry.settingLabel(row);
+      const label = this.searchQuery().trim() ? `${row.section.title} › ${this.registry.settingLabel(row)}` : this.registry.settingLabel(row);
       const value = this.registry.valueLabel(row.path);
       const left = `  ${marker} ${padAnsi(label + ":", 28)}`;
       const rendered = `${left} ${valueColor(row, value, theme, this.registry)}`;
