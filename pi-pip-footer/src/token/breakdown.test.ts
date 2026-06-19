@@ -31,7 +31,7 @@ describe("pi-pip-footer token breakdown", () => {
     ];
     const ctx = createMockCtx({ entries, model: { contextWindow: 272_000 } });
     const tokens = getBranchTokens(ctx);
-    expect(tokens).toMatchObject({ input: 5000, output: 7000, cache: 9000, cost: 0.09 });
+    expect(tokens).toMatchObject({ input: 14_000, output: 7000, cache: 9000, cost: 0.09 });
     expect(tokens?.latestCacheHitRate).toBe(0);
   });
 
@@ -54,7 +54,7 @@ describe("pi-pip-footer token breakdown", () => {
     const { getHistoricalSessionTokens } = await loadBreakdown();
     const ctx = createMockCtx({ sessionManager: { getSessionFile: () => parentSession } });
     const tokens = getHistoricalSessionTokens(ctx);
-    expect(tokens).toMatchObject({ input: 30, output: 11, cache: 5, cost: 0.03 });
+    expect(tokens).toMatchObject({ input: 35, output: 11, cache: 5, cost: 0.03 });
     expect(tokens?.latestCacheHitRate).toBeCloseTo((2 / 12) * 100);
   });
 
@@ -62,7 +62,7 @@ describe("pi-pip-footer token breakdown", () => {
     const { cacheHitRate, tokenBreakdownFromUsage } = await loadBreakdown();
     expect(cacheHitRate({ input: 1000, cacheRead: 3000, cacheWrite: 0 })).toBe(75);
     expect(cacheHitRate({ input: 0, cacheRead: 0, cacheWrite: 0 })).toBeUndefined();
-    expect(tokenBreakdownFromUsage({ input: 1000, output: 10, cacheRead: 3000 })?.latestCacheHitRate).toBe(75);
+    expect(tokenBreakdownFromUsage({ input: 1000, output: 10, cacheRead: 3000 })).toMatchObject({ input: 4000, latestCacheHitRate: 75 });
   });
 
   it("interpolates token values for count-up animation", async () => {

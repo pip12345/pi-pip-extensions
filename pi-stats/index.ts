@@ -4,6 +4,8 @@ import {
   boxLines,
   emptyUsage as emptyTokens,
   normalizeUsage,
+  promptTokensFromUsage,
+  cacheHitRateFromUsage,
   applyTemporaryLiveModelsDevCostFallback,
   hasTuiCustom,
   padAnsi,
@@ -55,10 +57,7 @@ function money(n: number): string {
   return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
 }
 
-function cacheHitRate(tokens: Pick<Tokens, "input" | "cacheRead" | "cacheWrite">): number | undefined {
-  const promptTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite;
-  return promptTokens > 0 ? (tokens.cacheRead / promptTokens) * 100 : undefined;
-}
+const cacheHitRate = cacheHitRateFromUsage;
 
 function formatCacheHit(tokens: Tokens): string {
   const hit = cacheHitRate(tokens);
@@ -103,7 +102,7 @@ function tokenDetailRow(label: string, tokens: Tokens, compact: boolean): string
   const cell = (name: string, value: string, width: number) => padAnsi(`${name}:${value}`, width);
   return [
     padAnsi(label, labelW),
-    cell("input", fmt(tokens.input, compact), 14),
+    cell("prompt", fmt(promptTokensFromUsage(tokens), compact), 14),
     cell("output", fmt(tokens.output, compact), 14),
     cell("cache read", fmt(tokens.cacheRead, compact), 18),
     cell("cache write", fmt(tokens.cacheWrite, compact), 19),
@@ -181,7 +180,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
       if (!t) continue;
       const row = ensureCurrent(entry);
       if (row.assistantCount === 0) {
-        const promptContext = t.input + t.cacheRead + t.cacheWrite;
+        const promptContext = promptTokensFromUsage(t);
         row.contextTokens = promptContext;
         row.contextWindow = modelWindow;
         row.contextPercent = modelWindow > 0 ? (promptContext / modelWindow) * 100 : null;
@@ -329,7 +328,7 @@ class TokenInspector extends PipCustomComponent<void> {
     const ctxPct = typeof current?.percent === "number" ? current.percent : null;
     const ctxTokens = typeof current?.tokens === "number" ? current.tokens : 0;
     const ctxWindow = current?.contextWindow || this.ctx.model?.contextWindow || 0;
-    const maxIn = Math.max(1, ...rows.map((r) => r.input));
+    const maxIn = Math.max(1, ...rows.map((r) => promptTokensFromUsage(r)));
     const maxOut = Math.max(1, ...rows.map((r) => r.output));
     const maxCache = Math.max(1, ...rows.map((r) => r.cache));
     const lines = this.renderHeader();
@@ -343,7 +342,7 @@ class TokenInspector extends PipCustomComponent<void> {
     lines.push(
       th.fg(
         "dim",
-        `${padAnsi("#", 3)} ${padAnsi("User prompt", promptW)} ${padAnsi("Ctx", ctxW)} ${padLeftAnsi("ΔInput", inW)} ${padLeftAnsi("ΔOutput", outW)} ${padLeftAnsi("ΔCache", cacheW)}`
+        `${padAnsi("#", 3)} ${padAnsi("User prompt", promptW)} ${padAnsi("Ctx", ctxW)} ${padLeftAnsi("ΔPrompt", inW)} ${padLeftAnsi("ΔOutput", outW)} ${padLeftAnsi("ΔCache", cacheW)}`
       )
     );
     const visible = rows.slice(this.scroll, this.scroll + 14);
@@ -357,7 +356,8 @@ class TokenInspector extends PipCustomComponent<void> {
       const prompt = truncateToWidth(r.prompt, promptW);
       const ctxText = `${fmt(r.contextTokens, this.compact)} ${r.contextPercent == null ? "?" : `${Math.round(r.contextPercent)}%`}`;
       const ctxCell = `${padAnsi(ctxText, 9)} ${contextBar(r.contextPercent, 10, th)}`;
-      const inCell = `${padLeftAnsi(fmt(r.input, this.compact), 8)} ${bar(r.input, maxIn, 6, th)}`;
+      const promptTokens = promptTokensFromUsage(r);
+      const inCell = `${padLeftAnsi(fmt(promptTokens, this.compact), 8)} ${bar(promptTokens, maxIn, 6, th)}`;
       const outCell = `${padLeftAnsi(fmt(r.output, this.compact), 9)} ${bar(r.output, maxOut, 5, th)}`;
       const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheValueW, cacheHitW)} ${bar(r.cache, maxCache, 7, th)}`;
       lines.push(
@@ -388,7 +388,7 @@ class TokenInspector extends PipCustomComponent<void> {
     const lines = this.renderHeader();
     lines.push(`Range: ${th.fg("accent", RANGE_LABELS[this.range])} ${th.fg("dim", "[1 today · 2 7d · 3 30d · 4 all]")}   Group: ${th.fg("accent", this.groupBy)} ${th.fg("dim", "[g]")}   Search: ${this.searching ? th.fg("accent", this.search + "_") : this.search ? th.fg("accent", this.search) : th.fg("dim", "press /")}`);
     lines.push("");
-    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Turns", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Input", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", 9)} ${padLeftAnsi("Cost", 8)}`));
+    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Turns", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Prompt", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", 9)} ${padLeftAnsi("Cost", 8)}`));
     const visible = rows.slice(this.scroll, this.scroll + 16);
     const cacheValueW = Math.max(1, ...visible.map((r) => fmt(r.cache, this.compact).length));
     const cacheHitW = Math.max(0, ...visible.map((r) => (r.cache > 0 ? `/${Math.round(cacheHitRate(r) ?? 0)}%`.length : 0)));
@@ -399,7 +399,7 @@ class TokenInspector extends PipCustomComponent<void> {
       const key = truncateToWidth(r.key, 33);
       const totalCell = `${padLeftAnsi(fmt(r.total, this.compact), 8)} ${bar(r.total, maxTotal, 12, th)}`;
       lines.push(`${prefix}${padAnsi(key, 34)} ${padLeftAnsi(String(r.turns), 5)}   ${padAnsi(totalCell, 22)} ${padLeftAnsi(
-        fmt(r.input, this.compact),
+        fmt(promptTokensFromUsage(r), this.compact),
         9
       )} ${padLeftAnsi(fmt(r.output, this.compact), 9)} ${padLeftAnsi(formatCacheWithHit(r, this.compact, th, cacheValueW, cacheHitW), 9)} ${padLeftAnsi(money(r.cost), 8)}`);
     });
@@ -408,7 +408,7 @@ class TokenInspector extends PipCustomComponent<void> {
     if (selected) {
       lines.push("");
       lines.push(th.fg("accent", selected.key));
-      lines.push(`turns ${selected.turns}   input ${fmt(selected.input, false)}   output ${fmt(selected.output, false)}   cache ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
+      lines.push(`turns ${selected.turns}   prompt ${fmt(promptTokensFromUsage(selected), false)}   output ${fmt(selected.output, false)}   cache ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
     }
     return lines;
   }

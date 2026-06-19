@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addUsage, emptyUsage, formatCompactUsage, formatTokenCount, normalizeUsage } from "../src/usage.ts";
+import { addUsage, cacheHitRateFromUsage, emptyUsage, formatCompactUsage, formatTokenCount, normalizeUsage, promptTokensFromUsage } from "../src/usage.ts";
 
 describe("usage helpers", () => {
   it("normalizes common provider usage shapes", () => {
@@ -31,7 +31,13 @@ describe("usage helpers", () => {
     expect(formatTokenCount(1_500_000)).toBe("1.5M");
   });
 
-  it("formats compact usage with existing arrow convention and cost", () => {
-    expect(formatCompactUsage({ input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 }, { includeCost: true })).toBe("↓:172k ↑:6k ↻:848k · $0.42");
+  it("computes prompt-side input from uncached and cache buckets", () => {
+    const usage = { input: 2, output: 110, cacheRead: 0, cacheWrite: 166_066, cache: 166_066, total: 166_178, cost: 0 };
+    expect(promptTokensFromUsage(usage)).toBe(166_068);
+    expect(cacheHitRateFromUsage(usage)).toBe(0);
+  });
+
+  it("formats compact usage with prompt-side input and cost", () => {
+    expect(formatCompactUsage({ input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 }, { includeCost: true })).toBe("↓:1M ↑:6k ↻:848k · $0.42");
   });
 });

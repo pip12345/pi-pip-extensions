@@ -2,6 +2,7 @@ import {
   boxLines,
   formatTokenCount,
   normalizeUsage,
+  promptTokensFromUsage,
   padAnsi,
   padLeftAnsi,
   hasTuiCustom,
@@ -370,7 +371,7 @@ class ContextInspector extends PipCustomComponent<void> {
     lines.push(`${th.fg("accent", "Context inspector")} ${th.fg("dim", "· p prompt · q close")}`);
     lines.push(`${th.fg("dim", "total")} ${used == null ? "?" : fmt(used)}/${fmt(snapshot.contextWindow)} ${pctText(percent)}  ${bar(percent, 18, th)}`);
     if (snapshot.latestUsage) {
-      lines.push(`${th.fg("dim", "latest observed")} input ${fmt(snapshot.latestUsage.input)} · cache ${fmt(snapshot.latestUsage.cache)} · output ${fmt(snapshot.latestUsage.output)} · total ${fmt(snapshot.latestUsage.total)}`);
+      lines.push(`${th.fg("dim", "latest observed")} prompt ${fmt(promptTokensFromUsage(snapshot.latestUsage))} · cache ${fmt(snapshot.latestUsage.cache)} · output ${fmt(snapshot.latestUsage.output)} · total ${fmt(snapshot.latestUsage.total)}`);
     } else {
       lines.push(th.fg("dim", "latest observed unavailable until an assistant response records usage"));
     }

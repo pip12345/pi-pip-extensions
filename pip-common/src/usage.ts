@@ -58,6 +58,26 @@ export function addUsage(target: TokenUsage, next: TokenUsage): void {
   target.cost += next.cost;
 }
 
+export type PromptTokenParts = Pick<TokenUsage, "input" | "cacheRead" | "cacheWrite">;
+
+/**
+ * Total prompt-side/input tokens for Pi-normalized usage.
+ *
+ * Pi normalizes cache reads/writes as separate prompt-side token buckets, matching
+ * Anthropic's accounting: total input = input + cache_creation + cache_read.
+ * Keep raw `input` as uncached input for pricing; use this helper for human-facing
+ * prompt/input totals.
+ */
+export function promptTokensFromUsage(usage: PromptTokenParts | undefined): number {
+  if (!usage) return 0;
+  return usage.input + usage.cacheRead + usage.cacheWrite;
+}
+
+export function cacheHitRateFromUsage(usage: PromptTokenParts | undefined): number | undefined {
+  const promptTokens = promptTokensFromUsage(usage);
+  return usage && promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : undefined;
+}
+
 export function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000) {
     const m = tokens / 1_000_000;
@@ -77,7 +97,8 @@ export function formatCost(cost: number): string {
 export function formatCompactUsage(usage: TokenUsage | undefined, options: { includeCost?: boolean } = {}): string {
   if (!usage) return "";
   const parts: string[] = [];
-  if (usage.input) parts.push(`↓:${formatTokenCount(usage.input)}`);
+  const promptTokens = promptTokensFromUsage(usage);
+  if (promptTokens) parts.push(`↓:${formatTokenCount(promptTokens)}`);
   if (usage.output) parts.push(`↑:${formatTokenCount(usage.output)}`);
   if (usage.cache) parts.push(`↻:${formatTokenCount(usage.cache)}`);
   const text = parts.join(" ");

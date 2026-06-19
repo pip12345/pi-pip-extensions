@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { normalizeUsage, pipPath } from "../../../pip-common/index.ts";
+import { cacheHitRateFromUsage, normalizeUsage, pipPath, promptTokensFromUsage } from "../../../pip-common/index.ts";
 import { buildSessionContext } from "../session-context.ts";
 
 export interface TokenBreakdown {
+  /** Human-facing total prompt-side input: uncached input + cache read + cache write. */
   input: number;
   output: number;
   cacheRead: number;
@@ -15,14 +16,11 @@ export interface TokenBreakdown {
   latestCacheHitRate?: number;
 }
 
-export function cacheHitRate(tokens: Pick<TokenBreakdown, "input" | "cacheRead" | "cacheWrite">): number | undefined {
-  const promptTokens = tokens.input + tokens.cacheRead + tokens.cacheWrite;
-  return promptTokens > 0 ? (tokens.cacheRead / promptTokens) * 100 : undefined;
-}
+export const cacheHitRate = cacheHitRateFromUsage;
 
 export function tokenBreakdownFromUsage(usage: any): TokenBreakdown | undefined {
   const tokens = normalizeUsage(usage);
-  return tokens ? { ...tokens, latestCacheHitRate: cacheHitRate(tokens) } : undefined;
+  return tokens ? { ...tokens, input: promptTokensFromUsage(tokens), latestCacheHitRate: cacheHitRateFromUsage(tokens) } : undefined;
 }
 
 export function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): void {
