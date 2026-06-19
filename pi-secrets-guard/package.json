@@ -1,12 +1,13 @@
 {
-  "name": "pi-gitignore-guard",
+  "name": "pi-secrets-guard",
   "version": "0.1.0",
-  "description": "Block Pi tool access to files matched by .gitignore",
+  "description": "Block Pi tool access to common secrets and .secretignore paths",
   "type": "module",
   "keywords": [
     "pi-package",
     "pi-extension",
-    "gitignore",
+    "secrets",
+    "ignore",
     "guard"
   ],
   "license": "MIT",

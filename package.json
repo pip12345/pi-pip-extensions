@@ -11,11 +11,11 @@
     "extensions": [
       "pip-common/index.ts",
       "pi-context/index.ts",
-      "pi-gitignore-guard/index.ts",
       "pi-pip-footer/index.ts",
       "pi-plan-mode/index.ts",
       "pi-prompt-profiles/index.ts",
       "pi-question/index.ts",
+      "pi-secrets-guard/index.ts",
       "pi-stats/index.ts",
       "pi-subagents/index.ts",
       "pi-tiny-mcp/index.ts",

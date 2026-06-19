@@ -44,7 +44,7 @@ Pi reads the top-level `pi.extensions` manifest. `pip-common` loads first for sh
 
 This collection includes:
 
-- `pi-gitignore-guard` - blocks tool access to paths matched by `.gitignore`
+- `pi-secrets-guard` - Secrets Guard: blocks common secret paths and project `.secretignore` rules; legacy `.gitignore` blocking is optional
 - `pi-pip-footer` - richer footer with token/context/model/quota info
 - `pi-plan-mode` - read-only planning mode
 - `pi-prompt-profiles` - switchable prompt profile overlays
@@ -74,3 +74,5 @@ Settings are saved under:
 ```text
 ~/.pi/agent/pip/pip-settings.json
 ```
+
+`pi-secrets-guard` appears as **Secrets Guard** in `/pip-settings`. It blocks common secret paths by default and reads project `.secretignore` files using gitignore-style patterns; `!pattern` negates earlier `.secretignore` rules. Legacy `.gitignore` blocking is available but off by default.
