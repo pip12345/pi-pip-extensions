@@ -1,0 +1,32 @@
+{
+  "name": "pi-provider-proxy",
+  "version": "0.1.0",
+  "description": "Provider baseUrl overrides for routing Pi providers through an external SSH-forwarded relay",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "provider",
+    "proxy",
+    "relay"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  }
+}

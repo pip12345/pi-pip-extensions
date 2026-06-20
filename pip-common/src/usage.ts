@@ -94,11 +94,11 @@ export function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
-export function formatCompactUsage(usage: TokenUsage | undefined, options: { includeCost?: boolean } = {}): string {
+export function formatCompactUsage(usage: TokenUsage | undefined, options: { includeCost?: boolean; inputMode?: "prompt" | "raw" } = {}): string {
   if (!usage) return "";
   const parts: string[] = [];
-  const promptTokens = promptTokensFromUsage(usage);
-  if (promptTokens) parts.push(`↓:${formatTokenCount(promptTokens)}`);
+  const inputTokens = options.inputMode === "raw" ? usage.input : promptTokensFromUsage(usage);
+  if (inputTokens) parts.push(`↓:${formatTokenCount(inputTokens)}`);
   if (usage.output) parts.push(`↑:${formatTokenCount(usage.output)}`);
   if (usage.cache) parts.push(`↻:${formatTokenCount(usage.cache)}`);
   const text = parts.join(" ");

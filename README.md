@@ -48,6 +48,7 @@ This collection includes:
 - `pi-pip-footer` - richer footer with token/context/model/quota info
 - `pi-plan-mode` - read-only planning mode
 - `pi-prompt-profiles` - switchable prompt profile overlays
+- `pi-provider-proxy` - map Pi provider `baseUrl`s to externally managed relay URLs
 - `pi-question` - structured question tool for the assistant
 - `pi-quiet-tools` - quieter rendering for noisy built-in tools
 - `pi-stats` - session and usage stats

@@ -12,8 +12,8 @@ export function readState(path = STATE_PATH): TinyMcpState {
   try {
     if (!existsSync(path)) return { explicitlyDisconnected: [] };
     const parsed = JSON.parse(readFileSync(path, "utf8"));
-    const disconnected = Array.isArray(parsed?.explicitlyDisconnected) ? parsed.explicitlyDisconnected.filter((name: unknown) => typeof name === "string") : [];
-    return { explicitlyDisconnected: [...new Set(disconnected)].sort() };
+    const disconnected: string[] = Array.isArray(parsed?.explicitlyDisconnected) ? parsed.explicitlyDisconnected.filter((name: unknown): name is string => typeof name === "string") : [];
+    return { explicitlyDisconnected: [...new Set<string>(disconnected)].sort() };
   } catch {
     return { explicitlyDisconnected: [] };
   }

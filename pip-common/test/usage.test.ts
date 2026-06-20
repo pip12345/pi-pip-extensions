@@ -40,4 +40,8 @@ describe("usage helpers", () => {
   it("formats compact usage with prompt-side input and cost", () => {
     expect(formatCompactUsage({ input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 }, { includeCost: true })).toBe("↓:1M ↑:6k ↻:848k · $0.42");
   });
+
+  it("can format compact usage with raw input separate from cache", () => {
+    expect(formatCompactUsage({ input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 }, { includeCost: true, inputMode: "raw" })).toBe("↓:172k ↑:6k ↻:848k · $0.42");
+  });
 });

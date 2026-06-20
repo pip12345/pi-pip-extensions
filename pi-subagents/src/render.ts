@@ -54,7 +54,7 @@ export function compactLine(run: SubagentSnapshot, width: number, theme: any): s
   const bg = run.status === "running" && !run.background ? " · Ctrl+Shift+B bg" : "";
   const err = run.status === "error" ? ` · ${run.errorText ?? "error"}` : "";
   const keep = run.keep ? " · kept" : "";
-  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true) });
+  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
   const usagePart = usage ? ` · ${usage}` : "";
   return truncateToWidth(themeFg(theme, "dim", `› subagent ${run.agent} ${run.id}: `) + `${taskSummary(run.prompt, 48)} · ${state} · ${elapsed(run)} · ${tools} tools${usagePart}${keep}${bg}${err}`, width);
 }
@@ -72,7 +72,7 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
   if (!run) return new Text(firstResultText(result), 0, 0);
   const statusColor = run.status === "error" ? "error" : run.status === "completed" ? "success" : run.status === "cancelled" ? "warning" : "accent";
   const toolCount = run.events.filter((event) => event.type === "tool_start").length;
-  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true) });
+  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
   const summary = [
     themeFg(theme, statusColor, run.status === "completed" ? "done" : run.status),
     elapsed(run),
@@ -108,7 +108,7 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
 }
 
 export function formatRunStatus(run: SubagentSnapshot): string {
-  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true) });
+  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
   const text = run.errorText ? `\nError: ${run.errorText}` : run.resultText ? `\n\n<subagent_result>\n${run.resultText}\n</subagent_result>` : "";
   return [`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n");
 }
