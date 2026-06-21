@@ -233,7 +233,7 @@ describe("provider proxy extension", () => {
     expect(ctx.ui.notifications.at(-1).message).toContain(SSH_TUNNEL_HINT);
   });
 
-  it("sets status on session_start when providers are active", async () => {
+  it("shows a simple on/off status badge", async () => {
     const path = tempConfigPath();
     saveProviderProxyConfig({ enabled: true, providers: { openai: "http://127.0.0.1:9000/openai/v1" }, auth: { anthropic: "http://127.0.0.1:9000/anthropic-auth" } }, path);
     const pi = createProviderPi();
@@ -241,7 +241,9 @@ describe("provider proxy extension", () => {
     const ctx = createMockCtx();
 
     await emitEvent(pi, "session_start", {}, ctx);
+    expect(ctx.ui.statuses.get("provider-proxy")).toBe("proxy: on");
 
-    expect(ctx.ui.statuses.get("provider-proxy")).toBe("proxy:2");
+    await runCommand(pi, "proxy", "off", ctx);
+    expect(ctx.ui.statuses.get("provider-proxy")).toBeUndefined();
   });
 });

@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import pipFooter, { __test } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
 import { pipSettings } from "../pip-common/index.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 describe("pi-pip-footer", () => {
   it("registers footer/token lifecycle handlers", () => {
@@ -77,6 +82,22 @@ describe("pi-pip-footer", () => {
     const component = factory({ requestRender() {} }, theme);
     expect(component.render(120)[0]).toContain("↓:4k ↑:2k ↻:3k · $0.04");
     pipSettings.set("pi-pip-footer.showCacheHitRate", true);
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("uses the active model baseUrl for quota checks", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "token");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ rate_limit: { primary_window: { limit_window_seconds: 18_000, used_percent: 42 } } }), { status: 200 });
+    });
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const ctx = createMockCtx({ model: { provider: "openai-codex", baseUrl: "http://172.17.0.1:9898/chatgpt/backend-api", contextWindow: 272_000 } });
+
+    await emitEvent(pi, "session_start", {}, ctx);
+    await vi.waitFor(() => expect(urls).toContain("http://172.17.0.1:9898/chatgpt/backend-api/wham/usage"));
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 });

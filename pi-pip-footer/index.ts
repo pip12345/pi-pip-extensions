@@ -121,7 +121,7 @@ export default function (pi: ExtensionAPI) {
     }
     const cached = usageCache.get(provider);
     if (cached?.windows.length) latestUsage = cached;
-    fetchQuotaForProvider(provider)
+    fetchQuotaForProvider(provider, { modelBaseUrl: typeof ctx.model?.baseUrl === "string" ? ctx.model.baseUrl : undefined })
       .then((snapshot) => {
         if (activeProvider !== provider) return;
         if (snapshot.error || snapshot.windows.length || !cached?.windows.length) latestUsage = snapshot;

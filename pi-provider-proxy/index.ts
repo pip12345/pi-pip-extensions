@@ -891,6 +891,10 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
     for (const provider of applyProviderProxyConfig(pi, config)) appliedProviders.add(provider);
   };
 
+  const updateStatus = (ctx: any) => {
+    ctx.ui?.setStatus?.("provider-proxy", config.enabled ? "proxy: on" : undefined);
+  };
+
   try {
     load();
     apply();
@@ -912,6 +916,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
         } else {
           load();
         }
+        updateStatus(ctx);
 
         if (!subcommand || subcommand === "status") {
           showOutput(ctx, `${providerProxyStatus(config, configPath)}\n\n${COMMANDS}`);
@@ -927,6 +932,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
           config.enabled = true;
           save();
           apply();
+          updateStatus(ctx);
           showOutput(ctx, `Provider proxy enabled.\n\n${providerProxyStatus(config, configPath)}`);
           return;
         }
@@ -935,6 +941,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
           config.enabled = false;
           save();
           unapply();
+          updateStatus(ctx);
           showOutput(ctx, `Provider proxy disabled.\n\n${providerProxyStatus(config, configPath)}`);
           return;
         }
@@ -948,6 +955,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
           config.providers[provider] = baseUrl;
           save();
           reapplyOne(provider);
+          updateStatus(ctx);
           showOutput(ctx, `Provider API baseUrl set: ${provider} -> ${baseUrl}`);
           return;
         }
@@ -969,6 +977,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
             config.auth[provider] = authBaseUrl;
             save();
             reapplyOne(provider);
+            updateStatus(ctx);
             showOutput(ctx, `Provider auth relay set: ${provider} -> ${authBaseUrl}`);
             return;
           }
@@ -1003,6 +1012,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
             config.enabled = true;
             config.providers[provider] = baseUrl;
             reapplyOne(provider);
+            updateStatus(ctx);
           } while (await ctx.ui.confirm("Provider proxy", "Add another provider API baseUrl?"));
           save();
           showOutput(ctx, providerProxyStatus(config, configPath));
@@ -1041,8 +1051,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
       ctx.ui?.notify?.(`Provider proxy config error: ${loadError}`, "error");
       return;
     }
-    const count = config.enabled ? configuredProviderIds(config).length : 0;
-    ctx.ui?.setStatus?.("provider-proxy", count ? `proxy:${count}` : undefined);
+    updateStatus(ctx);
   });
 
   pi.on("session_shutdown", async () => {

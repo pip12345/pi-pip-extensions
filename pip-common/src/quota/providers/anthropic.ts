@@ -1,10 +1,12 @@
 import { getClaudeToken } from "../auth.ts";
-import { fetchWithTimeout } from "../http.ts";
+import { fetchWithTimeout, joinUrlPath } from "../http.ts";
 import type { QuotaFetchOptions, QuotaSnapshot, QuotaWindow } from "../types.ts";
 import { normalizePercent, formatResetTime } from "../util.ts";
 
 const PROVIDER = "Claude";
 const PROVIDER_ID = "anthropic" as const;
+const DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+const ANTHROPIC_USAGE_PATH = "/api/oauth/usage";
 
 function snapshot(windows: QuotaWindow[], options: QuotaFetchOptions | undefined, raw?: unknown, error?: string): QuotaSnapshot {
   return { provider: PROVIDER, providerId: PROVIDER_ID, windows, error, fetchedAt: options?.now?.() ?? Date.now(), raw };
@@ -21,11 +23,15 @@ export function parseAnthropicUsageResponse(data: any, now = Date.now()): QuotaW
   return windows;
 }
 
+export function resolveAnthropicUsageUrl(modelBaseUrl?: string): string {
+  return joinUrlPath(modelBaseUrl?.trim() || DEFAULT_ANTHROPIC_BASE_URL, ANTHROPIC_USAGE_PATH);
+}
+
 export async function fetchAnthropicUsage(options: QuotaFetchOptions = {}): Promise<QuotaSnapshot> {
   const token = getClaudeToken();
   if (!token) return snapshot([], options, undefined, "no-auth");
   try {
-    const res = await fetchWithTimeout("https://api.anthropic.com/api/oauth/usage", {
+    const res = await fetchWithTimeout(resolveAnthropicUsageUrl(options.modelBaseUrl), {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
     }, options.timeoutMs, options.fetchImpl);
     if (!res.ok) return snapshot([], options, undefined, `HTTP ${res.status}`);

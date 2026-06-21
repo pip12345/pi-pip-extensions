@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   detectQuotaProvider,
+  fetchQuotaForProvider,
   getCodexCredentials,
   getWindowLabel,
   parseAnthropicUsageResponse,
@@ -9,6 +10,10 @@ import {
 } from "../src/quota/index.ts";
 
 const now = Date.parse("2026-01-01T00:00:00Z");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("quota helpers", () => {
   it("detects quota providers from model providers", () => {
@@ -47,5 +52,40 @@ describe("quota helpers", () => {
   it("keeps unknown api shapes easy to inspect", () => {
     expect(parseCodexUsageResponse({ something_else: true }, now)).toEqual([]);
     expect(getWindowLabel(604_800_000, "fallback")).toBe("Week");
+  });
+
+  it("routes Codex quota through the active model baseUrl", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "token");
+    const urls: string[] = [];
+    const snapshot = await fetchQuotaForProvider("codex", {
+      modelBaseUrl: "http://172.17.0.1:9898/chatgpt/backend-api/",
+      now: () => now,
+      fetchImpl: async (input: RequestInfo | URL) => {
+        urls.push(String(input));
+        return new Response(
+          JSON.stringify({ rate_limit: { primary_window: { limit_window_seconds: 18_000, used_percent: 42, reset_at: now / 1000 + 3600 } } }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(urls).toEqual(["http://172.17.0.1:9898/chatgpt/backend-api/wham/usage"]);
+    expect(snapshot.windows[0]?.usedPercent).toBe(42);
+  });
+
+  it("routes Anthropic quota through the active model baseUrl", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "token");
+    const urls: string[] = [];
+    const snapshot = await fetchQuotaForProvider("anthropic", {
+      modelBaseUrl: "http://172.17.0.1:9898/anthropic/",
+      now: () => now,
+      fetchImpl: async (input: RequestInfo | URL) => {
+        urls.push(String(input));
+        return new Response(JSON.stringify({ five_hour: { utilization: 0.5 } }), { status: 200 });
+      },
+    });
+
+    expect(urls).toEqual(["http://172.17.0.1:9898/anthropic/api/oauth/usage"]);
+    expect(snapshot.windows[0]?.usedPercent).toBe(50);
   });
 });

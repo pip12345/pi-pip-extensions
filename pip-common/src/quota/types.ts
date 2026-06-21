@@ -26,6 +26,8 @@ export interface QuotaFetchOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   now?: () => number;
+  /** Effective Pi model.baseUrl. Quota adapters append provider-specific usage paths to it. */
+  modelBaseUrl?: string;
 }
 
 export interface QuotaProviderAdapter {
