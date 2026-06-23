@@ -29,9 +29,9 @@ interface CallbackServerHandle {
   waitForCode: () => Promise<{ code: string; state?: string } | null>;
 }
 
-interface ProviderProxyOAuthLoginCallbacks extends OAuthLoginCallbacks {
-  onDeviceCode?: (info: { userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }) => void;
-}
+type ProviderProxyOAuthLoginCallbacks = Omit<OAuthLoginCallbacks, "onDeviceCode"> & {
+  onDeviceCode?: OAuthLoginCallbacks["onDeviceCode"];
+};
 
 type DeviceCodePollResult<T> = { status: "pending" } | { status: "slow_down" } | { status: "failed"; message: string } | { status: "complete"; value: T };
 

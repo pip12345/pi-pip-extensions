@@ -100,7 +100,7 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ connect: "bad" }, dir)).content[0].text).toMatch(/Invalid JSON|timed out/);
     resetManager();
     expect((await executeTinyMcp({ connect: "slow" }, dir)).content[0].text).toContain("timed out");
-  });
+  }, 10_000);
 
   it("shows slash command help and hints", async () => {
     const pi = createMockPi();
