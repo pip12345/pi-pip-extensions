@@ -6,6 +6,7 @@ export function snapshotRun(run: SubagentRun): SubagentSnapshot {
     id: run.id,
     name: run.name,
     agent: run.agent,
+    model: run.model,
     prompt: run.prompt,
     cwd: run.cwd,
     parentSessionKey: run.parentSessionKey,

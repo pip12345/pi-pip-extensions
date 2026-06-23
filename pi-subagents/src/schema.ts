@@ -5,6 +5,7 @@ export const SubagentParams = Type.Object({
     Type.Literal("launch"),
     Type.Literal("agents"),
     Type.Literal("get_agent"),
+    Type.Literal("models"),
     Type.Literal("list"),
     Type.Literal("status"),
     Type.Literal("read"),
@@ -16,6 +17,8 @@ export const SubagentParams = Type.Object({
   ], { description: "Operation. Omit for list, or provide agent+prompt to launch." })),
   agent: Type.Optional(Type.String({ description: "Agent name for launch/get_agent." })),
   prompt: Type.Optional(Type.String({ description: "Task prompt. Must include all context the subagent needs." })),
+  model: Type.Optional(Type.String({ description: "Optional launch model override as provider/model-id." })),
+  query: Type.Optional(Type.String({ description: "Filter for action=models." })),
   id: Type.Optional(Type.String({ description: "Subagent id or kept name." })),
   name: Type.Optional(Type.String({ description: "Optional alias for kept subagents." })),
   message: Type.Optional(Type.String({ description: "Message for steer." })),
@@ -26,9 +29,11 @@ export const SubagentParams = Type.Object({
 });
 
 export type SubagentParamsType = {
-  action?: "launch" | "agents" | "get_agent" | "list" | "status" | "read" | "steer" | "cancel" | "keep" | "forget" | "background";
+  action?: "launch" | "agents" | "get_agent" | "models" | "list" | "status" | "read" | "steer" | "cancel" | "keep" | "forget" | "background";
   agent?: string;
   prompt?: string;
+  model?: string;
+  query?: string;
   id?: string;
   name?: string;
   message?: string;

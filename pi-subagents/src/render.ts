@@ -61,7 +61,8 @@ export function compactLine(run: SubagentSnapshot, width: number, theme: any): s
 
 export function renderSubagentCall(args: any, theme: any, context: any) {
   const label = `subagent ${args?.agent ?? args?.action ?? args?.id ?? ""}`.trim();
-  const flags = [args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");
+  const model = args?.model ? String(args.model) : undefined;
+  const flags = [model ? `model ${model}` : undefined, args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");
   const prompt = typeof args?.prompt === "string" ? args.prompt.replace(/\s+/g, " ").trim() : "";
   const text = [themeFg(theme, "toolTitle", label), flags ? themeFg(theme, "dim", ` ${flags}`) : "", prompt ? themeFg(theme, "muted", ` — ${truncateToWidth(prompt, 120)}`) : ""].join("");
   return new Text(text, 0, 0);
@@ -75,6 +76,7 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
   const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
   const summary = [
     themeFg(theme, statusColor, run.status === "completed" ? "done" : run.status),
+    run.model || undefined,
     elapsed(run),
     `${toolCount} tool${toolCount === 1 ? "" : "s"}`,
     usage || undefined,
@@ -110,5 +112,5 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
 export function formatRunStatus(run: SubagentSnapshot): string {
   const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
   const text = run.errorText ? `\nError: ${run.errorText}` : run.resultText ? `\n\n<subagent_result>\n${run.resultText}\n</subagent_result>` : "";
-  return [`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n");
+  return [`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, run.model ? `model: ${run.model}` : undefined, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n");
 }

@@ -30,6 +30,7 @@ export interface PersistedRun {
   id: string;
   name?: string;
   agent: string;
+  model?: string;
   prompt: string;
   cwd: string;
   parentSessionKey: string;
@@ -69,6 +70,7 @@ export function toPersistedRun(run: SubagentRun): PersistedRun | undefined {
     id: run.id,
     name: run.name,
     agent: run.agent,
+    model: run.model,
     prompt: run.prompt,
     cwd: run.cwd,
     parentSessionKey: run.parentSessionKey,
@@ -97,6 +99,7 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
     id: record.id,
     name: record.name,
     agent: record.agent,
+    model: record.model,
     prompt: record.prompt,
     cwd: record.cwd,
     parentSessionKey: record.parentSessionKey,

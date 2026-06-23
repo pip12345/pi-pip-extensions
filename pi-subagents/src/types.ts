@@ -36,6 +36,7 @@ export interface SubagentSnapshot {
   id: string;
   name?: string;
   agent: string;
+  model?: string;
   prompt: string;
   cwd: string;
   parentSessionKey: string;
@@ -61,6 +62,7 @@ export interface SubagentRun {
   id: string;
   name?: string;
   agent: string;
+  model?: string;
   prompt: string;
   cwd: string;
   parentSessionKey: string;

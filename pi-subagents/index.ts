@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
 import { hasTuiCustom, registerPipTool } from "../pip-common/index.ts";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
@@ -8,6 +8,7 @@ import { getManager, resetManagerForTests, shutdownGlobalManager, type SubagentM
 import { RealRunner } from "./src/runner.ts";
 import { renderSubagentCall, renderSubagentResult, formatRunStatus } from "./src/render.ts";
 import { SubagentViewer } from "./src/view.ts";
+import { parseModelRef } from "./src/model-ref.ts";
 import { SubagentParams, type SubagentParamsType } from "./src/schema.ts";
 import { registerSubagentSettings, settingValue } from "./src/settings.ts";
 import type { AgentConfig, Runner, SubagentRun } from "./src/types.ts";
@@ -36,6 +37,19 @@ function currentModelString(ctx: any): string | undefined {
   const provider = ctx?.model?.provider;
   const id = ctx?.model?.id;
   return provider && id ? `${provider}/${id}` : undefined;
+}
+
+function modelOverrideRequested(params: SubagentParamsType): boolean {
+  return params.model != null;
+}
+
+function isLaunchRequest(params: SubagentParamsType): boolean {
+  return (params.action === "launch" || !params.action) && Boolean(params.agent && params.prompt && !params.id);
+}
+
+function launchModelOverride(params: SubagentParamsType): string | undefined {
+  if (params.model == null) return undefined;
+  return parseModelRef(params.model).value;
 }
 
 function textResult(text: string, details?: any, isError = false) {
@@ -68,8 +82,34 @@ function listAgents(cwd: string): string {
   return lines.join("\n");
 }
 
+function modelRef(model: any): string {
+  return `${model.provider}/${model.id}`;
+}
+
+function modelMatches(model: any, query: string): boolean {
+  const text = [modelRef(model), model.provider, model.id, model.name, model.api].filter(Boolean).join(" ").toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every((term) => text.includes(term));
+}
+
+async function availableSubagentModels(ctx: any, query?: string): Promise<{ text: string; models: Array<{ id: string; name?: string }> }> {
+  const registry = ctx?.modelRegistry ?? ModelRegistry.create(AuthStorage.create());
+  await Promise.resolve(registry.refresh?.());
+  const all = [...(await Promise.resolve(registry.getAvailable?.() ?? []))].sort((a: any, b: any) => modelRef(a).localeCompare(modelRef(b)));
+  const q = query?.trim();
+  const models = q ? all.filter((model: any) => modelMatches(model, q)) : all;
+  const summaries = models.map((model: any) => ({ id: modelRef(model), name: typeof model.name === "string" ? model.name : undefined }));
+  const loadError = registry.getError?.();
+  const lines = [q ? `Available subagent models matching "${q}" (${models.length}/${all.length}):` : `Available subagent models (${models.length}):`, "Use these exact ids as launch model overrides, e.g. model:'provider/model-id'."];
+  if (!all.length) lines.push("(none; configure auth with /login or ~/.pi/agent/models.json)");
+  else if (!models.length) lines.push("(no matches)");
+  else for (const model of models) lines.push(`- ${modelRef(model)}${model.name && model.name !== model.id ? ` — ${model.name}` : ""}`);
+  if (loadError) lines.push("", `Warning loading models.json: ${loadError}`);
+  return { text: lines.join("\n"), models: summaries };
+}
+
 function runSummary(run: SubagentRun): string {
-  return `${run.id}${run.name ? ` (${run.name})` : ""} [${run.status}${run.keep ? ", kept" : ""}${run.background ? ", bg" : ""}] ${run.agent}: ${run.prompt.slice(0, 80)}`;
+  const label = run.model ? `${run.agent} ${run.model}` : run.agent;
+  return `${run.id}${run.name ? ` (${run.name})` : ""} [${run.status}${run.keep ? ", kept" : ""}${run.background ? ", bg" : ""}] ${label}: ${run.prompt.slice(0, 80)}`;
 }
 
 function listRuns(manager: SubagentManager, key?: string): string {
@@ -162,14 +202,16 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
         label: "subagent",
         description: [
           "Launch and manage quiet subagent task runs with isolated context. The caller must include all context the subagent needs in prompt.",
-          "Use action:'agents' to list agent files and creation paths; action:'get_agent' to inspect a default/schema example.",
-          "Agent files live in ~/.pi/agent/agents/*.md, .pi/agents/*.md, or legacy .agents/*.md. Omitted model uses the parent/current model; omitted tools means all tools.",
+          "Use action:'agents' to list agent files and creation paths; action:'get_agent' to inspect a default/schema example; action:'models' to list exact available model override ids.",
+          "Agent files live in ~/.pi/agent/agents/*.md, .pi/agents/*.md, or legacy .agents/*.md. Launch may pass model:'provider/model-id' to override the agent file model; omitted model override uses the agent model or parent/current model.",
           "Ephemeral subagents can be messaged or steered while retained; each interaction refreshes their TTL. Use keep:true for runs that should not expire; /pip-settings can enable Always keep.",
           "Use background:true for long tasks. action:'background' moves foreground subagents to background. Nested subagents are disabled. Use /subagent view for live inspection/steering."
         ].join(" "),
         promptSnippet: "Launch and manage quiet subagent task runs with isolated context.",
         promptGuidelines: [
           "Use only listed subagent agent names; call subagent with action:'agents' if unsure.",
+          "model is a launch-only override. Use model:'provider/model-id' only when a specific subagent model is desired; omit it to use the agent file model or parent/current model.",
+          "Use action:'models' with optional query when you need an exact model override id; do not guess provider/model strings.",
           "Do not repeatedly poll background subagents; Pi sends a follow-up message when background results are ready if background result injection is enabled.",
           "Use subagent status/read for explicit user requests, debugging, or when background result injection is disabled.",
         ],
@@ -183,7 +225,12 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           activate(ctx);
           try {
             const action = params.action;
+            if (modelOverrideRequested(params) && !isLaunchRequest(params)) throw new Error("model overrides are only supported when launching a subagent.");
             if (action === "agents") return textResult(listAgents(cwd));
+            if (action === "models") {
+              const available = await availableSubagentModels(ctx, params.query);
+              return textResult(available.text, { models: available.models });
+            }
             if (action === "get_agent") {
               if (!params.agent) throw new Error("get_agent requires agent.");
               return textResult(formatAgent(findAgent(cwd, params.agent)));
@@ -238,7 +285,8 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             if (!params.agent || !params.prompt) throw new Error("Launch requires agent and prompt, or use an action.");
             const agent = findAgent(cwd, params.agent);
             const keep = params.keep ?? settingValue("alwaysKeep", false);
-            const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: agent.model ? undefined : currentModelString(ctx), signal, onUpdate });
+            const explicitModel = launchModelOverride(params);
+            const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: explicitModel ?? (agent.model ? undefined : currentModelString(ctx)), signal, onUpdate });
             const backgroundHint = settingValue("injectBackgroundResults", true)
               ? "Result will arrive as a follow-up message when done; no routine status checks needed."
               : "Background result injection is disabled; use status/read later if needed.";
@@ -259,7 +307,8 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           kind: "command",
           call: (args: any) => {
             const label = args?.agent ?? args?.action ?? args?.id ?? "status";
-            const flags = [args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");
+            const model = args?.model ? String(args.model) : undefined;
+            const flags = [model ? `model ${model}` : undefined, args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");
             return flags ? `${label} ${flags}` : String(label);
           },
           result: (result: any) => result?.details?.run ? undefined : String(result?.content?.find?.((item: any) => item?.type === "text")?.text ?? "").split("\n")[0],

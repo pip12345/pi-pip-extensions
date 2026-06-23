@@ -273,7 +273,7 @@ export class SubagentViewer extends PipCustomComponent<void> {
     const statusColor = snapshot.status === "error" ? "error" : snapshot.status === "completed" ? "success" : snapshot.status === "cancelled" ? "warning" : "accent";
     const chrome: string[] = [];
     chrome.push(themeFg(this.theme, "dim", "↑↓/PgUp/PgDn scroll · End follow · r refresh · s steer · c cancel · b background · k keep · f forget · Ctrl+D delete · q close"));
-    chrome.push(`${themeFg(this.theme, "accent", snapshot.id)} ${snapshot.name ? `(${snapshot.name}) ` : ""}${snapshot.agent}`);
+    chrome.push(`${themeFg(this.theme, "accent", snapshot.id)} ${snapshot.name ? `(${snapshot.name}) ` : ""}${snapshot.agent}${snapshot.model ? themeFg(this.theme, "dim", ` · ${snapshot.model}`) : ""}`);
     chrome.push([themeFg(this.theme, statusColor, snapshot.status), elapsed(snapshot), snapshot.background ? "background" : "foreground", snapshot.keep ? "kept" : "ephemeral"].join(themeFg(this.theme, "dim", " · ")));
     if (this.message) chrome.push(themeFg(this.theme, this.message.toLowerCase().includes("error") ? "error" : "warning", this.message));
 

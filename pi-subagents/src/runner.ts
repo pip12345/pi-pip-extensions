@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { addUsage, emptyUsage, isPipReadOnlyActive, normalizeUsage, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
+import { parseModelRef } from "./model-ref.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { PiChildAgentRuntime, type ChildAgentRuntime, type ChildAgentRuntimeSession } from "./child-runtime.ts";
 
@@ -216,10 +217,9 @@ export class RealRunner implements Runner {
 
       const modelString = input.model ?? input.agent.model;
       if (modelString) {
-        const [provider, ...rest] = modelString.split("/");
-        const id = rest.join("/");
-        const model = provider && id ? created.modelRegistry.find(provider, id) : undefined;
-        if (!model) throw new Error(`Unknown subagent model: ${modelString}`);
+        const { provider, id } = parseModelRef(modelString);
+        const model = created.modelRegistry.find(provider, id);
+        if (!model) throw new Error(`Unknown subagent model: ${modelString}. Use subagent({ action: "models", query: ${JSON.stringify(provider)} }) to list available model IDs.`);
         await activeSession.setModel(model);
       }
 

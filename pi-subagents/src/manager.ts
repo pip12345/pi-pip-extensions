@@ -193,6 +193,7 @@ export class SubagentManager {
       id: runId,
       name: input.name,
       agent: input.agent.name,
+      model: input.model ?? input.agent.model,
       prompt: input.prompt,
       cwd: input.cwd,
       parentSessionKey: input.parentSessionKey,
@@ -280,7 +281,8 @@ export class SubagentManager {
       if (run.continuePrompt) await run.continuePrompt(promptWithWorkspace);
       else {
         if (!agent) throw new Error(`Subagent ${run.id} cannot be continued until its agent definition is available.`);
-        run.runPromise = this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir }, run);
+        run.model ??= agent.model;
+        run.runPromise = this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, model: run.model, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir }, run);
         await run.runPromise;
       }
       if (run.status === "running") run.status = "completed";
@@ -385,7 +387,7 @@ export class SubagentManager {
   completionMessage(run: SubagentRun): string {
     const title = run.status === "completed" ? "completed" : "failed";
     const body = run.status === "completed" ? `<subagent_result>\n${run.resultText ?? "(no output)"}\n</subagent_result>` : `Error: ${run.errorText ?? "unknown"}`;
-    return [`**Background subagent ${title}: ${run.id}** (${run.agent}, ${((run.completedAt ?? this.now()) - run.createdAt) / 1000}s)`, `> ${run.prompt.slice(0, 160)}`, "", body].join("\n");
+    return [`**Background subagent ${title}: ${run.id}** (${[run.agent, run.model, `${((run.completedAt ?? this.now()) - run.createdAt) / 1000}s`].filter(Boolean).join(", ")})`, `> ${run.prompt.slice(0, 160)}`, "", body].join("\n");
   }
 
   completeBackground(run: SubagentRun): void {

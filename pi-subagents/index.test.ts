@@ -74,6 +74,44 @@ class UsageRuntime implements ChildAgentRuntime {
   }
 }
 
+class ModelRuntime implements ChildAgentRuntime {
+  findCalls: Array<[string, string]> = [];
+  setModels: any[] = [];
+  constructor(private readonly found = true) {}
+
+  async create(_input: any, _sessionDir: string) {
+    let subscriber: ((event: any) => void) | undefined;
+    const model = { provider: "openrouter", id: "anthropic/claude-sonnet-4" };
+    const runtime = this;
+    const session = {
+      sessionFile: "/tmp/model-session.jsonl",
+      isStreaming: false,
+      subscribe(cb: (event: any) => void) {
+        subscriber = cb;
+        return () => { subscriber = undefined; };
+      },
+      async prompt() {
+        subscriber?.({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "child done" }], usage: { input: 1, output: 1 } } });
+      },
+      async abort() {},
+      dispose() {},
+      async sendUserMessage() {},
+      getActiveToolNames: () => [],
+      setActiveToolsByName() {},
+      async setModel(selected: any) { runtime.setModels.push(selected); },
+    };
+    return {
+      session: session as any,
+      modelRegistry: {
+        find(provider: string, id: string) {
+          runtime.findCalls.push([provider, id]);
+          return runtime.found && provider === model.provider && id === model.id ? model : undefined;
+        },
+      } as any,
+    };
+  }
+}
+
 function setup(runner: Runner = new FakeRunner()) {
   const pi = createMockPi();
   createSubagentsExtension({ runner })(pi as any);
@@ -116,6 +154,8 @@ describe("pi-subagents", () => {
     const { pi, tool } = setup();
     expect(tool).toBeTruthy();
     expect(tool.promptSnippet).toContain("subagent");
+    expect(tool.promptGuidelines.join("\n")).toContain("model is a launch-only override");
+    expect(tool.promptGuidelines.join("\n")).toContain("action:'models'");
     expect(tool.promptGuidelines.join("\n")).toContain("Do not repeatedly poll");
     expect(pi.commands.has("subagent")).toBe(true);
     expect(getRegisteredShortcut(pi, "ctrl+shift+b")).toBeTruthy();
@@ -162,6 +202,78 @@ describe("pi-subagents", () => {
     expect(detail.content[0].text).toContain("tools:");
   });
 
+  it("lists available launch model override ids for the agent", async () => {
+    const { tool } = setup();
+    const ctx = createMockCtx();
+    let refreshed = false;
+    ctx.modelRegistry = {
+      refresh: () => { refreshed = true; },
+      getAvailable: () => [
+        { provider: "openai-codex", id: "gpt-5.4", name: "GPT-5.4", api: "openai-codex-responses" },
+        { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", api: "anthropic-messages" },
+      ],
+      getError: () => undefined,
+    };
+
+    const result = await tool.execute("1", { action: "models", query: "codex 5.4" }, undefined, undefined, ctx);
+    expect(refreshed).toBe(true);
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain("Available subagent models matching \"codex 5.4\" (1/2)");
+    expect(result.content[0].text).toContain("openai-codex/gpt-5.4 — GPT-5.4");
+    expect(result.content[0].text).not.toContain("anthropic/claude-sonnet-4-5");
+    expect(result.details.models).toEqual([{ id: "openai-codex/gpt-5.4", name: "GPT-5.4" }]);
+  });
+
+  it("passes launch model overrides without new agent files", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-subagents-model-"));
+    const runner = new FakeRunner();
+    const { tool } = setup(runner);
+    try {
+      mkdirSync(join(dir, ".pi", "agents"), { recursive: true });
+      writeFileSync(join(dir, ".pi", "agents", "fixed.md"), "---\ndescription: Has a fixed model\nmodel: openai/gpt-old\n---\n\nUse the configured model unless overridden.");
+      const ctx = createMockCtx({ cwd: dir, model: { provider: "openai", id: "gpt-parent" } });
+
+      const overridden = await tool.execute("1", { agent: "fixed", prompt: "use override", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, ctx);
+      expect(overridden.isError).toBeFalsy();
+      expect(overridden.content[0].text).toContain("model: openrouter/anthropic/claude-sonnet-4");
+      expect(overridden.details.run.model).toBe("openrouter/anthropic/claude-sonnet-4");
+      expect(runner.inputs[0].agent.model).toBe("openai/gpt-old");
+      expect(runner.inputs[0].model).toBe("openrouter/anthropic/claude-sonnet-4");
+
+      const inherited = await tool.execute("2", { agent: "explore", prompt: "inherit current" }, undefined, undefined, ctx);
+      expect(inherited.isError).toBeFalsy();
+      expect(inherited.content[0].text).toContain("model: openai/gpt-parent");
+      expect(inherited.details.run.model).toBe("openai/gpt-parent");
+      expect(runner.inputs[1].model).toBe("openai/gpt-parent");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects model overrides outside launch", async () => {
+    const { tool } = setup();
+    const ctx = createMockCtx();
+    const result = await tool.execute("1", { action: "status", id: "missing", model: "openai/gpt-5.1" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("only supported when launching");
+
+    const launched = await tool.execute("2", { agent: "explore", prompt: "one" }, undefined, undefined, ctx);
+    const id = launched.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+    const ignoredContinuationOverride = await tool.execute("3", { action: "launch", id, prompt: "again", model: "openai/gpt-5.1" }, undefined, undefined, ctx);
+    expect(ignoredContinuationOverride.isError).toBe(true);
+    expect(ignoredContinuationOverride.content[0].text).toContain("only supported when launching");
+  });
+
+  it("rejects malformed launch model overrides", async () => {
+    const { tool } = setup();
+    const ctx = createMockCtx({ model: { provider: "openai", id: "gpt-parent" } });
+    for (const model of ["gpt-5.1", "/gpt-5.1", "openai/", " openai/gpt-5.1", "openai/gpt 5.1"]) {
+      const result = await tool.execute("1", { agent: "explore", prompt: "bad", model }, undefined, undefined, ctx);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("provider/model-id");
+    }
+  });
+
   it("runs foreground subagents and allows ephemeral continuation while retained", async () => {
     const { tool } = setup();
     const ctx = createMockCtx();
@@ -173,14 +285,36 @@ describe("pi-subagents", () => {
     expect(continued.content[0].text).toContain("continued: again");
   });
 
+  it("real runner parses slash-containing model ids and sets the child model", async () => {
+    const runtime = new ModelRuntime();
+    const runner = new RealRunner(runtime);
+    const { tool } = setup(runner);
+    const result = await tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx());
+    expect(result.isError).toBeFalsy();
+    expect(runtime.findCalls).toEqual([["openrouter", "anthropic/claude-sonnet-4"]]);
+    expect(runtime.setModels).toEqual([{ provider: "openrouter", id: "anthropic/claude-sonnet-4" }]);
+  });
+
+  it("real runner unknown model errors point to model discovery", async () => {
+    const runner = new RealRunner(new ModelRuntime(false));
+    const { tool } = setup(runner);
+    const result = await tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Unknown subagent model: openrouter/anthropic/claude-sonnet-4");
+    expect(result.content[0].text).toContain("action: \"models\"");
+    expect(result.content[0].text).toContain('query: "openrouter"');
+  });
+
   it("accumulates real child assistant usage and renders compact usage with cost", async () => {
     const runner = new RealRunner(new UsageRuntime());
     const { tool } = setup(runner);
     const ctx = createMockCtx();
-    const result = await tool.execute("1", { agent: "explore", prompt: "usage" }, undefined, undefined, ctx);
+    const result = await tool.execute("1", { agent: "explore", prompt: "usage", model: "openai-codex/gpt-5.4" }, undefined, undefined, ctx);
+    expect(result.content[0].text).toContain("model: openai-codex/gpt-5.4");
     expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k · $0.42");
     expect(result.details.run.usage).toMatchObject({ input: 172_000, output: 6_000, cache: 848_000, cost: 0.42 });
     const rendered = tool.renderResult(result, { expanded: false }, { fg: (_key: string, text: string) => text }).render(120).join("\n");
+    expect(rendered).toContain("openai-codex/gpt-5.4");
     expect(rendered).toContain("↓:172k ↑:6k ↻:848k · $0.42");
   });
 
@@ -225,6 +359,30 @@ describe("pi-subagents", () => {
     const continued = await tool.execute("2", { id: "scout", prompt: "again" }, undefined, undefined, ctx);
     expect(continued.isError).toBeFalsy();
     expect(continued.content[0].text).toContain("continued: again");
+  });
+
+  it("persists subagent model metadata", async () => {
+    const parentFile = join(mkdtempSync(join(tmpdir(), "pi-parent-model-")), "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const first = persistedSetup();
+    try {
+      const ctx = ctxForSession(parentFile);
+      await first.tool.execute("1", { agent: "explore", prompt: "model metadata", keep: true, name: "model-run", model: "openai-codex/gpt-5.4" }, undefined, undefined, ctx);
+      const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
+      const secondPi = createMockPi();
+      createSubagentsExtension({ manager: secondManager })(secondPi as any);
+      flushPipTools(secondPi as any);
+      await emitEvent(secondPi, "session_start", {}, ctx);
+      const secondTool = getRegisteredTool(secondPi, "subagent");
+      const restored = await secondTool.execute("2", { action: "status", id: "model-run" }, undefined, undefined, ctx);
+      expect(restored.content[0].text).toContain("model: openai-codex/gpt-5.4");
+      expect(restored.details.run.model).toBe("openai-codex/gpt-5.4");
+      const listed = await secondTool.execute("3", {}, undefined, undefined, ctx);
+      expect(listed.content[0].text).toContain("explore openai-codex/gpt-5.4");
+    } finally {
+      first.cleanup();
+      rmSync(dirname(parentFile), { recursive: true, force: true });
+    }
   });
 
   it("persists kept subagents and restores them for the same parent", async () => {
@@ -639,12 +797,13 @@ describe("pi-subagents", () => {
     const { pi, tool } = setup();
     const ctx = createMockCtx();
     await emitEvent(pi, "session_start", {}, ctx);
-    const result = await tool.execute("1", { agent: "explore", prompt: "bg", background: true }, undefined, undefined, ctx);
+    const result = await tool.execute("1", { agent: "explore", prompt: "bg", background: true, model: "openai-codex/gpt-5.4-mini" }, undefined, undefined, ctx);
     expect(result.content[0].text).toContain("state: running");
     expect(result.content[0].text).toContain("follow-up message");
     expect(result.content[0].text).not.toContain("to poll");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pi.userMessages.at(-1)?.message).toContain("Background subagent completed");
+    expect(pi.userMessages.at(-1)?.message).toContain("openai-codex/gpt-5.4-mini");
   });
 
   it("does not let nested factory loading steal background injection", async () => {
@@ -860,10 +1019,11 @@ describe("pi-subagents", () => {
       rendered = component.render(100).join("\n");
       component.dispose?.();
     };
-    const result = await tool.execute("1", { agent: "explore", prompt: "view me" }, undefined, undefined, ctx);
+    const result = await tool.execute("1", { agent: "explore", prompt: "view me", model: "openai-codex/gpt-5.4-mini" }, undefined, undefined, ctx);
     const id = result.content[0].text.match(/subagent_id: (\S+)/)?.[1];
     await runCommand(pi, "subagent", `view ${id}`, ctx);
     expect(rendered).toContain(`Subagent ${id}`);
+    expect(rendered).toContain("openai-codex/gpt-5.4-mini");
     expect(rendered).toContain("view me");
     expect(rendered).toContain("scroll");
   });

@@ -7,10 +7,11 @@ A subagent is a child task run with isolated context. The caller must put all ne
 ## Tool
 
 ```text
-subagent({ agent, prompt, background?, keep?, name? })
+subagent({ agent, prompt, model?, background?, keep?, name? })
 subagent({ id, prompt })                 # continue retained runs
 subagent({ action: "agents" })
 subagent({ action: "get_agent", agent })
+subagent({ action: "models", query? })          # tool-only; exact model override ids
 subagent({ action: "status"|"read", id })
 subagent({ action: "steer", id, message })
 subagent({ action: "background", id? })
@@ -60,7 +61,16 @@ tools: read, grep, find, ls, bash
 System prompt for the subagent.
 ```
 
-Defaults: filename stem for name, parent/current model when `model` is omitted, and `tools: all` when tools is omitted.
+Defaults: filename stem for name, the agent file `model` when set, parent/current model when no agent model is set, and `tools: all` when tools is omitted.
+
+Launch calls can override the agent file/default model without creating a new agent file:
+
+```text
+subagent({ agent: "explore", prompt: "...", model: "anthropic/claude-sonnet-4-5" })
+subagent({ agent: "explore", prompt: "...", model: "openrouter/anthropic/claude-sonnet-4" })
+```
+
+`model` must be `provider/model-id`; provider-specific model IDs may contain additional slashes. Agents can use `subagent({ action: "models", query: "codex" })` to discover exact available override IDs; there is intentionally no `/subagent models` human command because `/model` already owns that UI. The effective model is shown in status/read output and `/subagent view` when known.
 
 ## Settings
 
