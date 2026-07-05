@@ -137,6 +137,12 @@ function normalizeLoadedServer(name: string, server: TinyMcpServerConfig, cwd: s
   }
 }
 
+export function parseTinyMcpServerConfig(name: string, raw: unknown, cwd = process.cwd()): TinyMcpServerConfig {
+  const server = validateServer(name, raw);
+  normalizeLoadedServer(name, server, cwd);
+  return server;
+}
+
 export function loadTinyMcpConfig(cwd = process.cwd()): TinyMcpConfig & { sources: string[] } {
   const merged: TinyMcpConfig & { sources: string[] } = { mcpServers: {}, settings: {}, sources: [] };
   for (const source of configSources(cwd)) {

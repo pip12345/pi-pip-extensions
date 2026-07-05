@@ -11,6 +11,7 @@ interface ServerState {
   client?: TinyMcpClient;
   tools: McpToolInfo[];
   lastError?: string;
+  runtime?: boolean;
 }
 
 export class TinyMcpManager {
@@ -37,8 +38,9 @@ export class TinyMcpManager {
     if (!this.states.size) lines.push("  none configured");
     for (const state of [...this.states.values()].sort((a, b) => a.name.localeCompare(b.name))) {
       const count = state.tools.length;
+      const runtime = state.runtime ? " [runtime]" : "";
       const err = state.lastError ? ` - ${state.lastError}` : "";
-      lines.push(`  ${state.name}: ${state.status}, ${count} tools${err}`);
+      lines.push(`  ${state.name}: ${state.status}, ${count} tools${runtime}${err}`);
     }
     if (this.config.sources.length) lines.push(`\nConfig: ${this.config.sources.join(", ")}`);
     return lines.join("\n");
@@ -52,9 +54,20 @@ export class TinyMcpManager {
     return this.visibleTools.get(name) ?? this.allTools().find((tool) => tool.visibleName.replace(/[-_]/g, "") === name.replace(/[-_]/g, ""));
   }
 
+  async addRuntimeServer(serverName: string, config: TinyMcpConfig["mcpServers"][string]): Promise<void> {
+    const name = serverName.trim();
+    if (!name) throw new Error("Runtime MCP server name is required");
+    if (config.disabled) throw new Error(`Runtime MCP server cannot be disabled: ${name}`);
+    const existing = this.states.get(name);
+    await existing?.client?.close().catch(() => undefined);
+    this.config.mcpServers[name] = config;
+    this.states.set(name, { name, status: "disconnected", tools: [], runtime: true });
+    this.rebuildVisibleTools();
+  }
+
   async connect(serverName: string): Promise<void> {
-    setExplicitlyDisconnected([serverName], false);
     const state = this.requireState(serverName);
+    if (!state.runtime) setExplicitlyDisconnected([serverName], false);
     if (state.status === "connected") return;
     const config = this.config.mcpServers[serverName];
     if (!config || config.disabled) throw new Error(`Server not configured: ${serverName}`);
@@ -84,7 +97,7 @@ export class TinyMcpManager {
     const state = this.requireState(serverName);
     if (!state.client) return;
     state.tools = await state.client.listTools();
-    if (settingValue("metadataCache", true)) updateCachedTools(serverName, state.tools);
+    if (!state.runtime && settingValue("metadataCache", true)) updateCachedTools(serverName, state.tools);
     this.rebuildVisibleTools();
   }
 
@@ -101,7 +114,8 @@ export class TinyMcpManager {
     const connected: string[] = [];
     const failed: { server: string; error: string }[] = [];
     for (const serverName of this.serverNames()) {
-      if (isExplicitlyDisconnected(serverName)) continue;
+      const state = this.requireState(serverName);
+      if (!state.runtime && isExplicitlyDisconnected(serverName)) continue;
       try {
         await this.connect(serverName);
         connected.push(serverName);
@@ -123,7 +137,8 @@ export class TinyMcpManager {
 
   async disconnect(serverName?: string): Promise<void> {
     const targets = serverName ? [this.requireState(serverName)] : [...this.states.values()];
-    setExplicitlyDisconnected(targets.map((state) => state.name), true);
+    const persistentNames = targets.filter((state) => !state.runtime).map((state) => state.name);
+    if (persistentNames.length) setExplicitlyDisconnected(persistentNames, true);
     await this.close(serverName);
   }
 

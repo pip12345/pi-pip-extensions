@@ -134,6 +134,17 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ tool: "basic_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
   });
 
+  it("adds a memory-only runtime MCP server", async () => {
+    const dir = tempProject();
+    const config = JSON.stringify({ command: "node", args: [fixture("basic-server.js")] });
+    expect((await executeTinyMcp({ action: "add", server: "scratch", config, connect: true }, dir)).content[0].text).toContain("scratch_echo");
+    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("scratch: connected, 1 tools [runtime]");
+    expect((await executeTinyMcp({ tool: "scratch_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
+    await executeTinyMcp({ action: "disconnect", server: "scratch" }, dir);
+    resetManager();
+    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("none configured");
+  });
+
   it("connects, lists, and calls a Streamable HTTP MCP tool", async () => {
     let initializedSeen = false;
     await withServer(async (req, res) => {

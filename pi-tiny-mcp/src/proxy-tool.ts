@@ -1,8 +1,9 @@
 import { Type } from "typebox";
 import { firstResultText, registerPipTool } from "../../pip-common/index.ts";
+import { parseTinyMcpServerConfig } from "./config.ts";
 import { resultLimit } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
-import type { VisibleToolInfo } from "./types.ts";
+import type { TinyMcpServerConfig, VisibleToolInfo } from "./types.ts";
 
 const managers = new Map<string, TinyMcpManager>();
 
@@ -37,6 +38,7 @@ export function registerTinyMcpTool(pi: any): void {
         "Use tiny-mcp({ describe: \"tool_name\" }) to inspect required arguments before calling a tool.",
         "Call tools with tiny-mcp({ tool: \"tool_name\", args: \"{...}\" }); args must be a JSON string object.",
         "If no tools are cached for a server, use tiny-mcp({ connect: \"server\" }) first.",
+        "For temporary memory-only testing, use tiny-mcp({ action: \"add\", server: \"name\", config: \"{...}\", connect: true }); config must be a JSON string MCP server object and is not persisted.",
         "When the user wants to configure MCP servers for this adapter, edit the PiP-owned file ~/.pi/agent/pip/tiny-mcp.json directly.",
         "Set up ~/.pi/agent/pip/tiny-mcp.json as { \"mcpServers\": { \"serverName\": { \"command\": \"cmd\", \"args\": [\"arg1\"] } } }; optional stdio fields are cwd, env, timeoutMs, and disabled.",
         "For HTTP MCP servers, configure { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }; optional HTTP fields are headers, timeoutMs, and disabled.",
@@ -49,8 +51,9 @@ export function registerTinyMcpTool(pi: any): void {
         describe: Type.Optional(Type.String({ description: "Describe a visible MCP tool name" })),
         tool: Type.Optional(Type.String({ description: "Visible MCP tool name to call" })),
         args: Type.Optional(Type.String({ description: "JSON string arguments for tool call" })),
-        connect: Type.Optional(Type.String({ description: "Connect to a server and refresh tools" })),
-        action: Type.Optional(Type.String({ description: "status/disconnect" })),
+        connect: Type.Optional(Type.Union([Type.String(), Type.Boolean()], { description: "Connect to a server and refresh tools, or true with action:add" })),
+        config: Type.Optional(Type.String({ description: "JSON string MCP server config for action:add" })),
+        action: Type.Optional(Type.String({ description: "status/disconnect/add" })),
       }),
       execute: async (_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) => executeTinyMcp(params ?? {}, ctx?.cwd ?? process.cwd()),
     },
@@ -74,6 +77,17 @@ export function registerTinyMcpTool(pi: any): void {
 export async function executeTinyMcp(input: any, cwd = process.cwd()) {
   const m = getManager(cwd);
   try {
+    if (input.action === "add") {
+      const serverName = parseServerName(input.server);
+      const config = parseRuntimeServerConfig(input.config, serverName, cwd);
+      await m.addRuntimeServer(serverName, config);
+      if (input.connect === true || input.connect === "true" || input.connect === serverName) {
+        await m.connect(serverName);
+        return textResult(`Added memory-only MCP server ${serverName} and connected.\n${formatTools(m.allTools().filter((tool) => tool.serverName === serverName))}`);
+      }
+      return textResult(`Added memory-only MCP server ${serverName}. Use tiny-mcp({ connect: "${serverName}" }) to connect.`);
+    }
+    if (typeof input.connect === "boolean") throw new Error("connect:true is only valid with action:add; use connect:\"server\" otherwise");
     if (input.connect) {
       await m.connect(String(input.connect));
       return textResult(`Connected ${input.connect}.\n${formatTools(m.allTools().filter((tool) => tool.serverName === input.connect))}`);
@@ -98,6 +112,18 @@ export async function executeTinyMcp(input: any, cwd = process.cwd()) {
   } catch (error) {
     return textResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function parseServerName(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) throw new Error("server is required for action:add");
+  return raw.trim();
+}
+
+function parseRuntimeServerConfig(raw: unknown, serverName: string, cwd: string): TinyMcpServerConfig {
+  if (raw === undefined || raw === "") throw new Error("config is required for action:add");
+  const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("config must be a JSON object or JSON string object");
+  return parseTinyMcpServerConfig(serverName, parsed, cwd);
 }
 
 function parseArgs(raw: unknown): Record<string, unknown> {

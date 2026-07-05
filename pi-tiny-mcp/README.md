@@ -86,6 +86,14 @@ tiny-mcp({ tool: "ghidra_decompile_function", args: "{\"address\":\"0x401000\"}"
 
 `args` is a JSON string.
 
+For quick testing, add a memory-only server without writing config files:
+
+```text
+tiny-mcp({ action: "add", server: "scratch", config: "{\"type\":\"http\",\"url\":\"http://127.0.0.1:3000/mcp\"}", connect: true })
+```
+
+The `config` value is a JSON string containing one MCP server object. Runtime servers live only in the current pi process and disappear on restart/reset.
+
 The tool metadata tells the model to search/describe before calling unfamiliar tools, to connect servers when no tools are cached, and to edit explicit config files directly when asked to configure MCP.
 
 ## Settings
