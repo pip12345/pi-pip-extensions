@@ -1,7 +1,9 @@
 import { EventEmitter } from "node:events";
+import { HttpTransport } from "./http.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
 import type { StderrMode } from "./settings.ts";
 import { StdioTransport } from "./stdio.ts";
+import type { McpTransport } from "./transport.ts";
 import type { McpCallResult, McpToolInfo, TinyMcpServerConfig } from "./types.ts";
 
 export interface McpClientOptions {
@@ -12,7 +14,7 @@ export interface McpClientOptions {
 }
 
 export class TinyMcpClient extends EventEmitter {
-  private transport: StdioTransport;
+  private transport: McpTransport;
   private peer: JsonRpcPeer;
   private initialized = false;
   protocolVersion = "2025-06-18";
@@ -20,7 +22,7 @@ export class TinyMcpClient extends EventEmitter {
 
   constructor(private options: McpClientOptions) {
     super();
-    this.transport = new StdioTransport({ ...options.config, stderr: options.stderr });
+    this.transport = options.config.url ? new HttpTransport({ config: options.config }) : new StdioTransport({ ...options.config, command: options.config.command ?? "", stderr: options.stderr });
     this.peer = new JsonRpcPeer((message) => this.transport.send(message));
     this.transport.on("message", (message) => {
       try {
@@ -44,7 +46,7 @@ export class TinyMcpClient extends EventEmitter {
 
   async connect(): Promise<void> {
     if (this.initialized) return;
-    this.transport.start();
+    await this.transport.start();
     const result = await this.peer.request("initialize", {
       protocolVersion: this.protocolVersion,
       capabilities: {},
@@ -52,6 +54,7 @@ export class TinyMcpClient extends EventEmitter {
     }, Math.min(this.options.timeoutMs, 30000));
     const version = result?.protocolVersion;
     if (typeof version === "string") this.protocolVersion = version;
+    this.transport.setProtocolVersion?.(this.protocolVersion);
     this.capabilities = result?.capabilities && typeof result.capabilities === "object" ? result.capabilities : {};
     this.peer.notify("notifications/initialized");
     this.initialized = true;
@@ -74,7 +77,7 @@ export class TinyMcpClient extends EventEmitter {
   }
 
   stderrTail(): string[] {
-    return this.transport.tail();
+    return this.transport.tail?.() ?? [];
   }
 
   async close(): Promise<void> {

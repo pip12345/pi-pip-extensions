@@ -1,8 +1,8 @@
 # pi-tiny-mcp
 
-Tiny stdio-only MCP adapter for pi/PiP.
+Tiny stdio/HTTP MCP adapter for pi/PiP.
 
-No SDK. No HTTP. No SSE. No OAuth. No MCP UI. No dependency refrigerator.
+No SDK. No OAuth. No MCP UI. No dependency refrigerator.
 
 ## Install in this workspace
 
@@ -28,9 +28,26 @@ Preferred project config:
 }
 ```
 
-Supported fields: `command`, `args`, `cwd`, `env`, `timeoutMs`, `disabled`.
+Supported stdio fields: `type`, `command`, `args`, `cwd`, `env`, `timeoutMs`, `disabled`.
 
-Unsupported fields such as `url`, `headers`, `auth`, and `oauth` fail loudly because this adapter is stdio-only.
+HTTP/HTTPS Streamable HTTP servers are configured with `url`:
+
+```json
+{
+  "mcpServers": {
+    "logic2": {
+      "type": "http",
+      "url": "http://127.0.0.1:10530"
+    }
+  }
+}
+```
+
+Supported HTTP fields: `type`, `url`, `headers`, `timeoutMs`, `disabled`. `type` may be `http`, `streamable-http`, or `sse`; URL configs try Streamable HTTP with legacy HTTP+SSE fallback, while `sse` starts legacy directly.
+
+`url` and `headers` values support `${VAR}` and `${VAR:-default}` environment expansion.
+
+Unsupported auth fields such as `auth` and `oauth` fail loudly. Use static `headers` when a server only needs header-based auth.
 
 ## Config files
 

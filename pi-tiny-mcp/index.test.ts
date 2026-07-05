@@ -1,4 +1,6 @@
+import { once } from "node:events";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +13,39 @@ const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fi
 
 function tempProject() {
   return mkdtempSync(join(tmpdir(), "pi-tiny-mcp-"));
+}
+
+async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>, test: (url: string) => Promise<void>) {
+  const server = createServer((req, res) => void Promise.resolve(handler(req, res)).catch((error) => {
+    res.statusCode = 500;
+    res.end(error instanceof Error ? error.message : String(error));
+  }));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No test server address");
+  try {
+    await test(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await closeServer(server);
+  }
+}
+
+function closeServer(server: Server) {
+  return new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+}
+
+function readBody(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => resolve(body ? JSON.parse(body) : undefined));
+    req.on("error", reject);
+  });
+}
+
+function rpcResponse(id: string | number, result: unknown) {
+  return JSON.stringify({ jsonrpc: "2.0", id, result });
 }
 
 beforeEach(() => {
@@ -52,10 +87,25 @@ describe("pi-tiny-mcp", () => {
     expect(config.mcpServers.basic.command).toBe("node");
   });
 
-  it("rejects HTTP config loudly", () => {
+  it("loads and validates HTTP config while rejecting OAuth", () => {
     const dir = tempProject();
-    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: "http://x/mcp" } } }));
-    expect(() => loadTinyMcpConfig(dir)).toThrow(/only supports stdio/);
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { type: "http", url: "http://127.0.0.1:10530", headers: { "X-Test": "ok" } } } }));
+    const config = loadTinyMcpConfig(dir);
+    expect(config.mcpServers.remote.url).toBe("http://127.0.0.1:10530");
+    expect(config.mcpServers.remote.headers?.["X-Test"]).toBe("ok");
+
+    process.env.TINY_MCP_TEST_TOKEN = "secret-test-token";
+    try {
+      const envDir = tempProject();
+      writeFileSync(join(envDir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: "http://127.0.0.1:10530", headers: { Authorization: "Bearer ${TINY_MCP_TEST_TOKEN}" } } } }));
+      expect(loadTinyMcpConfig(envDir).mcpServers.remote.headers?.Authorization).toBe("Bearer secret-test-token");
+    } finally {
+      delete process.env.TINY_MCP_TEST_TOKEN;
+    }
+
+    const oauthDir = tempProject();
+    writeFileSync(join(oauthDir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: "http://127.0.0.1:10530", oauth: {} } } }));
+    expect(() => loadTinyMcpConfig(oauthDir)).toThrow(/not OAuth/);
   });
 
   it("scaffolds selected config without opening real vi when command is used", async () => {
@@ -82,6 +132,194 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ search: "echo" }, dir)).content[0].text).toContain("basic_echo");
     expect((await executeTinyMcp({ describe: "basic_echo" }, dir)).content[0].text).toContain("Original: echo");
     expect((await executeTinyMcp({ tool: "basic_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
+  });
+
+  it("connects, lists, and calls a Streamable HTTP MCP tool", async () => {
+    let initializedSeen = false;
+    await withServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      const payload = await readBody(req);
+      expect(req.headers["x-test"]).toBe("ok");
+      if (payload.method === "initialize") {
+        expect(req.headers.accept).toContain("application/json");
+        expect(req.headers.accept).toContain("text/event-stream");
+        res.setHeader("content-type", "application/json");
+        res.setHeader("MCP-Session-Id", "sid-1");
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "http-test", version: "1" } }));
+        return;
+      }
+      expect(req.headers["mcp-session-id"]).toBe("sid-1");
+      expect(req.headers["mcp-protocol-version"]).toBe("2025-11-25");
+      if (payload.method === "notifications/initialized") {
+        initializedSeen = true;
+        res.statusCode = 202;
+        res.end();
+        return;
+      }
+      expect(initializedSeen).toBe(true);
+      if (payload.method === "tools/list") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { tools: [{ name: "echo", description: "Echo text", inputSchema: { type: "object", properties: { text: { type: "string" } } } }] }));
+        return;
+      }
+      if (payload.method === "tools/call") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { content: [{ type: "text", text: payload.params.arguments.text }] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { type: "http", url: base, headers: { "X-Test": "ok" } } } }));
+      expect((await executeTinyMcp({ connect: "remote" }, dir)).content[0].text).toContain("remote_echo");
+      expect((await executeTinyMcp({ describe: "remote_echo" }, dir)).content[0].text).toContain("Original: echo");
+      expect((await executeTinyMcp({ tool: "remote_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
+      await executeTinyMcp({ action: "disconnect" }, dir);
+    });
+  });
+
+  it("handles Streamable HTTP SSE responses", async () => {
+    await withServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      const payload = await readBody(req);
+      if (payload.method === "initialize") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-11-25", capabilities: {}, serverInfo: { name: "sse-test", version: "1" } }));
+        return;
+      }
+      if (payload.method === "notifications/initialized") {
+        res.statusCode = 202;
+        res.end();
+        return;
+      }
+      if (payload.method === "tools/list") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { tools: [{ name: "echo", description: "Echo text", inputSchema: { type: "object", properties: { text: { type: "string" } } } }] }));
+        return;
+      }
+      if (payload.method === "tools/call") {
+        res.setHeader("content-type", "text/event-stream");
+        res.end(`event: message\ndata: ${rpcResponse(payload.id, { content: [{ type: "text", text: payload.params.arguments.text }] })}\n\n`);
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: base } } }));
+      await executeTinyMcp({ connect: "remote" }, dir);
+      expect((await executeTinyMcp({ tool: "remote_echo", args: '{"text":"hi over sse"}' }, dir)).content[0].text).toBe("hi over sse");
+      await executeTinyMcp({ action: "disconnect" }, dir);
+    });
+  });
+
+  it("refreshes Streamable HTTP tools after tools/list_changed on GET stream", async () => {
+    let enabled = false;
+    let getRes: ServerResponse | undefined;
+    let pendingNotify = false;
+    const sendListChanged = () => {
+      if (!getRes) {
+        pendingNotify = true;
+        return;
+      }
+      getRes.write(`data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })}\n\n`);
+      getRes.end();
+      getRes = undefined;
+    };
+
+    await withServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        getRes = res;
+        if (pendingNotify) {
+          pendingNotify = false;
+          sendListChanged();
+        }
+        return;
+      }
+      const payload = await readBody(req);
+      if (payload.method === "initialize") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "changed-test", version: "1" } }));
+        return;
+      }
+      if (payload.method === "notifications/initialized") {
+        res.statusCode = 202;
+        res.end();
+        return;
+      }
+      if (payload.method === "tools/list") {
+        const tools = [{ name: "connect_instance", description: "Connect", inputSchema: { type: "object", properties: {} } }];
+        if (enabled) tools.push({ name: "decompile_function", description: "Decompile", inputSchema: { type: "object", properties: {} } });
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { tools }));
+        return;
+      }
+      if (payload.method === "tools/call") {
+        enabled = true;
+        sendListChanged();
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { content: [{ type: "text", text: "connected" }] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: base } } }));
+      await executeTinyMcp({ connect: "remote" }, dir);
+      expect((await executeTinyMcp({ search: "decompile" }, dir)).content[0].text).not.toContain("remote_decompile_function");
+      await executeTinyMcp({ tool: "remote_connect_instance", args: "{}" }, dir);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect((await executeTinyMcp({ search: "decompile" }, dir)).content[0].text).toContain("remote_decompile_function");
+      await executeTinyMcp({ action: "disconnect" }, dir);
+    });
+  });
+
+  it("falls back to legacy HTTP+SSE transport", async () => {
+    let sseRes: ServerResponse | undefined;
+    await withServer(async (req, res) => {
+      const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      if (req.method === "GET" && path === "/") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        sseRes = res;
+        res.write("event: endpoint\ndata: /messages\n\n");
+        return;
+      }
+      if (req.method === "POST" && path === "/") {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      if (req.method === "POST" && path === "/messages") {
+        const payload = await readBody(req);
+        res.statusCode = 202;
+        res.end();
+        if (payload.method === "initialize") {
+          sseRes?.write(`data: ${rpcResponse(payload.id, { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "legacy", version: "1" } })}\n\n`);
+        } else if (payload.method === "tools/list") {
+          sseRes?.write(`data: ${rpcResponse(payload.id, { tools: [{ name: "echo", description: "Echo text", inputSchema: { type: "object", properties: {} } }] })}\n\n`);
+          sseRes?.end();
+        }
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { legacy: { type: "http", url: base } } }));
+      expect((await executeTinyMcp({ connect: "legacy" }, dir)).content[0].text).toContain("legacy_echo");
+      await executeTinyMcp({ action: "disconnect" }, dir);
+    });
   });
 
   it("refreshes tools after tools/list_changed", async () => {

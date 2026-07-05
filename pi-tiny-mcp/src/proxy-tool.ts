@@ -30,8 +30,8 @@ export function registerTinyMcpTool(pi: any): void {
     tool: {
       name: "tiny-mcp",
       label: "tiny-mcp",
-      description: "Tiny stdio-only MCP proxy. List/search/describe/call local MCP tools without HTTP, OAuth, or SDK bloat.",
-      promptSnippet: "Use tiny-mcp to discover and call local stdio MCP tools on demand.",
+      description: "Tiny stdio/HTTP MCP proxy. List/search/describe/call MCP tools without OAuth or SDK bloat.",
+      promptSnippet: "Use tiny-mcp to discover and call configured stdio or HTTP MCP tools on demand.",
       promptGuidelines: [
         "Use tiny-mcp({ search: \"...\" }) to find MCP tools before calling unfamiliar ones.",
         "Use tiny-mcp({ describe: \"tool_name\" }) to inspect required arguments before calling a tool.",
@@ -39,8 +39,9 @@ export function registerTinyMcpTool(pi: any): void {
         "If no tools are cached for a server, use tiny-mcp({ connect: \"server\" }) first.",
         "When the user wants to configure MCP servers for this adapter, edit the PiP-owned file ~/.pi/agent/pip/tiny-mcp.json directly.",
         "Set up ~/.pi/agent/pip/tiny-mcp.json as { \"mcpServers\": { \"serverName\": { \"command\": \"cmd\", \"args\": [\"arg1\"] } } }; optional stdio fields are cwd, env, timeoutMs, and disabled.",
+        "For HTTP MCP servers, configure { \"type\": \"http\", \"url\": \"https://example.com/mcp\" }; optional HTTP fields are headers, timeoutMs, and disabled.",
         "Shared MCP config files are ~/.config/mcp/mcp.json for user-global and .mcp.json for project-local. Edit shared files only when the user explicitly asks for shared/global/project MCP config.",
-        "pi-tiny-mcp only supports stdio command servers. Do not add url, headers, auth, or oauth fields to tiny-mcp config.",
+        "pi-tiny-mcp supports static HTTP headers but not OAuth. Do not add auth or oauth fields to tiny-mcp config.",
       ],
       parameters: Type.Object({
         server: Type.Optional(Type.String({ description: "List tools for a server" })),

@@ -35,7 +35,7 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
   if (settingValue("enabled", true)) registerTinyMcpTool(pi);
 
   pi.registerCommand("tiny-mcp", {
-    description: "Tiny stdio-only MCP status/config/connect commands",
+    description: "Tiny stdio/HTTP MCP status/config/connect commands",
     handler: async (args: string, ctx: any) => {
       const [subcommand, target] = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const cwd = ctx?.cwd ?? process.cwd();

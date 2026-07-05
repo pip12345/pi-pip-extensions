@@ -1,13 +1,14 @@
 {
   "name": "pi-tiny-mcp",
   "version": "0.1.0",
-  "description": "Tiny stdio-only MCP adapter for pi",
+  "description": "Tiny stdio/HTTP MCP adapter for pi",
   "type": "module",
   "keywords": [
     "pi-package",
     "pi-extension",
     "mcp",
     "stdio",
+    "http",
     "tiny"
   ],
   "license": "MIT",

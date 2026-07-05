@@ -53,7 +53,7 @@ This collection includes:
 - `pi-quiet-tools` - quieter rendering for noisy built-in tools
 - `pi-stats` - session and usage stats
 - `pi-subagents` - quiet subagent task runner
-- `pi-tiny-mcp` - tiny stdio MCP bridge
+- `pi-tiny-mcp` - tiny stdio/HTTP MCP bridge
 - `pi-todo` - todo tools and `/todo`
 - `pi-tree-edit` - session tree editor
 - `pi-undo-redo` - undo/redo recent prompts

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pipPath } from "../../pip-common/index.ts";
 import type { ConfigTarget } from "./settings.ts";
-import type { TinyMcpConfig, TinyMcpServerConfig } from "./types.ts";
+import type { TinyMcpConfig, TinyMcpServerConfig, TinyMcpTransportType } from "./types.ts";
 
 export interface ConfigSource {
   path: string;
@@ -47,16 +47,51 @@ function asEnv(value: unknown, serverName: string): Record<string, string> | und
   return out;
 }
 
+function asHeaders(value: unknown, serverName: string): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error(`Server "${serverName}" field headers must be an object.`);
+  const out: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value)) out[key] = String(raw);
+  return out;
+}
+
+function asTransportType(value: unknown, serverName: string): TinyMcpTransportType | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "stdio" && value !== "http" && value !== "streamable-http" && value !== "sse") {
+    throw new Error(`Server "${serverName}" field type must be one of: stdio, http, streamable-http, sse.`);
+  }
+  return value;
+}
+
 function validateServer(name: string, raw: unknown): TinyMcpServerConfig {
   if (!isRecord(raw)) throw new Error(`Server "${name}" must be an object.`);
-  if ("url" in raw) throw new Error(`Server "${name}" uses url/HTTP transport. pi-tiny-mcp only supports stdio command servers.`);
-  if ("auth" in raw || "oauth" in raw || "headers" in raw) throw new Error(`Server "${name}" uses HTTP auth fields. pi-tiny-mcp only supports local stdio servers.`);
+  if ("auth" in raw || "oauth" in raw) throw new Error(`Server "${name}" uses auth/oauth fields. pi-tiny-mcp supports static HTTP headers only, not OAuth.`);
   if (raw.disabled !== undefined && typeof raw.disabled !== "boolean") throw new Error(`Server "${name}" field disabled must be boolean.`);
-  if (raw.disabled === true && raw.command === undefined) return { command: "", disabled: true };
-  if (typeof raw.command !== "string" || !raw.command.trim()) throw new Error(`Server "${name}" requires a non-empty command.`);
-  if (raw.cwd !== undefined && typeof raw.cwd !== "string") throw new Error(`Server "${name}" field cwd must be a string.`);
   if (raw.timeoutMs !== undefined && (typeof raw.timeoutMs !== "number" || !Number.isFinite(raw.timeoutMs) || raw.timeoutMs <= 0)) throw new Error(`Server "${name}" field timeoutMs must be a positive number.`);
+
+  const type = asTransportType(raw.type, name);
+  const hasCommand = raw.command !== undefined;
+  const hasUrl = raw.url !== undefined;
+  if (hasCommand && hasUrl) throw new Error(`Server "${name}" must configure either command or url, not both.`);
+  if (raw.disabled === true && !hasCommand && !hasUrl) return { type, disabled: true };
+
+  if (hasUrl) {
+    if (type === "stdio") throw new Error(`Server "${name}" has type stdio but configures url.`);
+    if (typeof raw.url !== "string" || !raw.url.trim()) throw new Error(`Server "${name}" requires a non-empty url.`);
+    return {
+      type: type ?? "http",
+      url: raw.url.trim(),
+      headers: asHeaders(raw.headers, name),
+      timeoutMs: raw.timeoutMs,
+      disabled: raw.disabled,
+    };
+  }
+
+  if (type === "http" || type === "streamable-http" || type === "sse") throw new Error(`Server "${name}" has type ${type} but configures no url.`);
+  if (typeof raw.command !== "string" || !raw.command.trim()) throw new Error(`Server "${name}" requires a non-empty command or url.`);
+  if (raw.cwd !== undefined && typeof raw.cwd !== "string") throw new Error(`Server "${name}" field cwd must be a string.`);
   return {
+    type: type ?? "stdio",
     command: raw.command,
     args: asStringArray(raw.args, "args", name),
     cwd: raw.cwd,
@@ -76,6 +111,32 @@ function parseConfig(path: string, raw: unknown): TinyMcpConfig {
   return { settings: isRecord(raw.settings) ? raw.settings : undefined, mcpServers };
 }
 
+function expandEnvString(value: string, field: string, serverName: string): string {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}/g, (_match, name: string, _fallbackPart: string | undefined, fallback: string | undefined) => {
+    const env = process.env[name];
+    if (env !== undefined) return env;
+    if (fallback !== undefined) return fallback;
+    throw new Error(`Server "${serverName}" field ${field} references unset environment variable ${name}.`);
+  });
+}
+
+function normalizeLoadedServer(name: string, server: TinyMcpServerConfig, cwd: string): void {
+  if (server.cwd) server.cwd = resolve(cwd, server.cwd.replace(/^~(?=$|\/|\\)/, homedir()));
+  if (server.url) {
+    server.url = expandEnvString(server.url, "url", name);
+    let parsed: URL;
+    try {
+      parsed = new URL(server.url);
+    } catch {
+      throw new Error(`Server "${name}" url must be a valid http or https URL.`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`Server "${name}" url must use http or https.`);
+  }
+  if (server.headers) {
+    for (const [key, value] of Object.entries(server.headers)) server.headers[key] = expandEnvString(value, `headers.${key}`, name);
+  }
+}
+
 export function loadTinyMcpConfig(cwd = process.cwd()): TinyMcpConfig & { sources: string[] } {
   const merged: TinyMcpConfig & { sources: string[] } = { mcpServers: {}, settings: {}, sources: [] };
   for (const source of configSources(cwd)) {
@@ -85,9 +146,7 @@ export function loadTinyMcpConfig(cwd = process.cwd()): TinyMcpConfig & { source
     merged.settings = { ...(merged.settings ?? {}), ...(parsed.settings ?? {}) };
     merged.mcpServers = { ...merged.mcpServers, ...parsed.mcpServers };
   }
-  for (const [name, server] of Object.entries(merged.mcpServers)) {
-    if (server.cwd) server.cwd = resolve(cwd, server.cwd.replace(/^~(?=$|\/|\\)/, homedir()));
-  }
+  for (const [name, server] of Object.entries(merged.mcpServers)) normalizeLoadedServer(name, server, cwd);
   return merged;
 }
 

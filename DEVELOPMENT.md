@@ -15,7 +15,7 @@ This directory is a loose collection of Pi extensions plus shared helper code.
 - `pi-plan-mode` - read-only planning mode with explicit tool blocking
 - `pi-question` - interactive question tool
 - `pi-subagents` - quiet subagent task runs
-- `pi-tiny-mcp` - tiny stdio-only MCP adapter
+- `pi-tiny-mcp` - tiny stdio/HTTP MCP adapter
 - `pi-webfetch-websearch` - cleaned web fetching and no-key web search
 
 Each `pi-*` folder is intended to work both when the whole repo is loaded as a raw extension folder and when packages are installed with dependencies. Shared code lives in `pip-common`; packages declare it as a dependency, but source files use relative imports so raw-folder loading does not require `npm install`.

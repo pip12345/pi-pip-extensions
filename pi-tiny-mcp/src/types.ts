@@ -1,8 +1,13 @@
+export type TinyMcpTransportType = "stdio" | "http" | "streamable-http" | "sse";
+
 export interface TinyMcpServerConfig {
-  command: string;
+  type?: TinyMcpTransportType;
+  command?: string;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
   timeoutMs?: number;
   disabled?: boolean;
 }
