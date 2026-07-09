@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -24,6 +24,23 @@ describe("pi-prompt-profiles", () => {
 
     const profiles = __test.discoverProfiles(dir);
     expect(profiles.map((profile) => profile.id)).toEqual(["alpha.md"]);
+    expect(profiles[0]?.source).toBe("bundled");
+  });
+
+  it("merges user profiles over bundled profiles by filename", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-prompt-profiles-"));
+    const bundledDir = join(root, "bundled");
+    const userDir = join(root, "user");
+    mkdirSync(bundledDir);
+    mkdirSync(userDir);
+    writeFileSync(join(bundledDir, "default.md"), "bundled default");
+    writeFileSync(join(userDir, "custom.md"), "custom prompt");
+    writeFileSync(join(userDir, "default.md"), "user default");
+
+    const profiles = __test.discoverAvailableProfiles(bundledDir, userDir);
+    expect(profiles.map((profile) => profile.id)).toEqual(["custom.md", "default.md"]);
+    expect(profiles.find((profile) => profile.id === "default.md")?.source).toBe("user");
+    expect(__test.readSelectedProfile("default.md", [userDir, bundledDir])).toBe("user default");
   });
 
   it("applies selected profile according to mode", () => {

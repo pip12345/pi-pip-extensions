@@ -109,9 +109,9 @@ export class HttpTransport extends EventEmitter {
       throw new Error(formatHttpError(response, text));
     }
 
-    if (response.status === 202) {
+    if (response.status === 202 || response.status === 204) {
       await response.body?.cancel().catch(() => undefined);
-      if (isJsonRpcRequest(message)) throw new Error("HTTP MCP server returned 202 for a JSON-RPC request");
+      if (isJsonRpcRequest(message)) throw new Error(`HTTP MCP server returned ${response.status} without a JSON-RPC response`);
       return;
     }
 

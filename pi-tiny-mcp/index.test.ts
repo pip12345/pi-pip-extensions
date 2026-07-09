@@ -194,7 +194,8 @@ describe("pi-tiny-mcp", () => {
     });
   });
 
-  it("handles Streamable HTTP SSE responses", async () => {
+  it("accepts Saleae-compatible 204 responses to initialized notifications", async () => {
+    let initializedSeen = false;
     await withServer(async (req, res) => {
       if (req.method === "GET") {
         res.statusCode = 405;
@@ -204,15 +205,18 @@ describe("pi-tiny-mcp", () => {
       const payload = await readBody(req);
       if (payload.method === "initialize") {
         res.setHeader("content-type", "application/json");
-        res.end(rpcResponse(payload.id, { protocolVersion: "2025-11-25", capabilities: {}, serverInfo: { name: "sse-test", version: "1" } }));
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-03-26", capabilities: {}, serverInfo: { name: "saleae-compatible-test", version: "1" } }));
         return;
       }
       if (payload.method === "notifications/initialized") {
-        res.statusCode = 202;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        initializedSeen = true;
+        res.statusCode = 204;
         res.end();
         return;
       }
       if (payload.method === "tools/list") {
+        expect(initializedSeen).toBe(true);
         res.setHeader("content-type", "application/json");
         res.end(rpcResponse(payload.id, { tools: [{ name: "echo", description: "Echo text", inputSchema: { type: "object", properties: { text: { type: "string" } } } }] }));
         return;
