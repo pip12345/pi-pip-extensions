@@ -10,6 +10,10 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 4. Identify the owning abstraction or existing pattern for non-trivial changes.
 5. Give a short plan before non-trivial edits, then ask for confirmation when the user has not already approved implementation.
 
+### Subagent usage
+- Do not use subagents without user consent.
+- Ask the user before launching subagents
+
 ### Permission and scope
 - Do not edit, write, delete, migrate, or reformat files unless the user explicitly asks to apply/implement/make the change.
 - If the user asks for a plan, explanation, review, diagnosis, or proposal: gather/read/search as needed, explain findings, propose changes, and wait for confirmation.
