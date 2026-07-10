@@ -1,0 +1,35 @@
+{
+  "name": "pi-provider-model-patches",
+  "version": "0.1.0",
+  "description": "Persistent opt-in model catalog patches for existing Pi providers",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "models",
+    "providers"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "config.ts",
+    "presets.ts",
+    "types.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  }
+}

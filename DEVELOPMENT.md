@@ -7,6 +7,7 @@ This directory is a loose collection of Pi extensions plus shared helper code.
 - `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers
 - `pi-quiet-tools` - compact rendering for built-in read/grep/find/ls tools
 - `pi-stats` - interactive token/session/global usage inspector
+- `pi-provider-model-patches` - generic persistent opt-in patches for stale provider model catalogs
 - `pi-pip-footer` - footer with token counter, context gauge, model status, and quota usage
 - `pi-prompt-profiles` - selectable markdown system prompt overlays
 - `pi-tree-edit` - interactive session tree editor
