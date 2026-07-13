@@ -150,6 +150,29 @@ describe("provider model patch definitions", () => {
     expect(pipSettings.get(`${SETTINGS_ID}.github-copilot-gpt-5-6`)).toBe(false);
   });
 
+  it("pre-registers enabled bundled models before session_start so Pi can restore them", () => {
+    const pi = createMockPi() as any;
+    pi.registrations = [] as any[];
+    pi.registerProvider = (provider: string, config: any) => pi.registrations.push({ provider, config });
+
+    registerProviderModelPatchesExtension(pi, {
+      patches: BUILTIN_MODEL_PATCHES,
+      settings: memorySettings({ "github-copilot-gpt-5-6": true }),
+    });
+
+    expect(pi.registrations).toHaveLength(1);
+    expect(pi.registrations[0]).toMatchObject({
+      provider: "github-copilot",
+      config: {
+        models: expect.arrayContaining([
+          expect.objectContaining({ id: "gpt-5.6-sol" }),
+          expect.objectContaining({ id: "gpt-5.6-terra" }),
+          expect.objectContaining({ id: "gpt-5.6-luna" }),
+        ]),
+      },
+    });
+  });
+
   it("uses bundled fallback metadata when Pi does not know the source models", () => {
     const models = [model("github-copilot", "gpt-5.5")];
     const result = buildProviderModelPatch(models, "github-copilot", BUILTIN_MODEL_PATCHES);
@@ -215,12 +238,12 @@ describe("user-owned patch config", () => {
 });
 
 describe("provider model patch extension", () => {
-  it("defaults every patch to off and reports the default provider", async () => {
+  it("defaults every patch to off without showing a footer status", async () => {
     const { pi, ctx } = extensionHarness();
     await emitEvent(pi, "session_start", {}, ctx);
 
     expect(pi.registrations).toHaveLength(0);
-    expect(ctx.ui.statuses.get("provider-model-patches")).toBe("patches: default");
+    expect(ctx.ui.statuses.get("provider-model-patches")).toBeUndefined();
   });
 
   it("restores an enabled patch on startup and reuses existing OAuth", async () => {
@@ -261,6 +284,6 @@ describe("provider model patch extension", () => {
     expect(settings.values["target-next"]).toBe(false);
     expect(pi.unregistrations).toEqual(["target"]);
     expect(pi.selectedModels[0]?.id).toBe("current");
-    expect(ctx.ui.statuses.get("provider-model-patches")).toBe("patches: default");
+    expect(ctx.ui.statuses.get("provider-model-patches")).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { pipSettings, registerSettingsSection, setting } from "../pip-common/index.ts";
 import { loadUserModelPatches, mergeModelPatches, USER_PATCHES_PATH } from "./config.ts";
-import { BUILTIN_MODEL_PATCHES } from "./presets.ts";
+import { BUILTIN_MODEL_PATCHES, getBuiltinPatchProviderCatalog } from "./presets.ts";
 import type { ModelPatchMetadata, PatchBuildResult, PatchModelDefinition, ProviderModelPatch } from "./types.ts";
 
 export { loadUserModelPatches, mergeModelPatches, parseUserModelPatches, USER_PATCHES_PATH } from "./config.ts";
@@ -225,12 +225,35 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
   const appliedIds = new Map<string, Set<string>>();
   const baseModels = new Map<string, Model<Api>[]>();
 
+  // Pi resolves the initial/session model after extension loading but before session_start.
+  // Pre-register enabled package-owned catalogs here so saved patched models can be restored.
+  for (const provider of new Set(patches.filter((patch) => patch.source === "builtin" && settings.getEnabled(patch.id)).map((patch) => patch.provider))) {
+    const catalog = getBuiltinPatchProviderCatalog(provider);
+    if (!catalog) continue;
+
+    const enabled = patches.filter((patch) => patch.source === "builtin" && patch.provider === provider && settings.getEnabled(patch.id));
+    const result = buildProviderModelPatch(catalog.models, provider, enabled);
+    if (!result.addedIds.length) continue;
+
+    const firstTemplate = result.templates[0];
+    if (!firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
+    baseModels.set(provider, catalog.models.filter((model) => model.provider === provider));
+    pi.registerProvider(provider, {
+      baseUrl: firstTemplate.baseUrl,
+      api: firstTemplate.api,
+      oauth: catalog.oauth,
+      models: result.models.map(providerModelConfig) as any,
+    });
+    appliedIds.set(provider, new Set(result.addedIds));
+  }
+
   const enabledForProvider = (provider: string) => patches.filter((patch) => patch.provider === provider && settings.getEnabled(patch.id));
   const patchedProviders = () => [...appliedIds.entries()].filter(([, ids]) => ids.size > 0).map(([provider]) => provider).sort();
 
   const updateStatus = (ctx: any) => {
     const providers = patchedProviders();
-    ctx.ui?.setStatus?.(STATUS_KEY, providers.length ? `patches: ${providers.join(",")}` : "patches: default");
+    const anyEnabled = patches.some((patch) => settings.getEnabled(patch.id));
+    ctx.ui?.setStatus?.(STATUS_KEY, providers.length ? `patches: ${providers.join(",")}` : anyEnabled ? "patches: default" : undefined);
   };
 
   const switchFromRemovedModel = async (ctx: any, provider: string, removedIds: Set<string>) => {

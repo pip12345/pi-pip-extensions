@@ -21,7 +21,7 @@ Every patch defaults to **off**. Configure persistent toggles under **Provider M
 /pip-settings
 ```
 
-Settings changed there apply after `/reload` or the next Pi launch. For immediate persistent changes:
+Settings changed there apply after `/reload` or the next Pi launch. Enabled bundled presets register during extension loading, before Pi restores the saved/default model, so patched model selections survive startup. For immediate persistent changes:
 
 ```text
 /model-patch status
@@ -31,7 +31,7 @@ Settings changed there apply after `/reload` or the next Pi launch. For immediat
 /model-patch reload
 ```
 
-The footer shows `patches: default` when Pi's unmodified catalogs are active, or lists patched providers.
+The footer is hidden when every patch is off. It lists patched providers when active, or shows `patches: default` when a patch is enabled but no configured model can be applied.
 
 ## Optional user patches
 

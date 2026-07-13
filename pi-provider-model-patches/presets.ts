@@ -1,4 +1,23 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { githubCopilotOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
 import type { ProviderModelPatch } from "./types.ts";
+
+export interface BuiltinPatchProviderCatalog {
+  models: Model<Api>[];
+  oauth: Omit<typeof githubCopilotOAuthProvider, "id">;
+}
+
+export function getBuiltinPatchProviderCatalog(provider: string): BuiltinPatchProviderCatalog | undefined {
+  if (provider !== "github-copilot") return undefined;
+
+  const builtinProvider = githubCopilotProvider();
+  const { id: _id, ...oauth } = githubCopilotOAuthProvider;
+  return {
+    models: [...builtinProvider.getModels()] as Model<Api>[],
+    oauth,
+  };
+}
 
 const GPT_56_COMMON = {
   api: "openai-responses",
