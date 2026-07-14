@@ -16,7 +16,6 @@ export * from "./src/paths.ts";
 export * from "./src/pip-tools.ts";
 export * from "./src/prompt-registry.ts";
 export * from "./src/quota/index.ts";
-export * from "./src/read-only.ts";
 export * from "./src/settings.ts";
 export * from "./src/settings-command.ts";
 export * from "./src/settings-scope.ts";

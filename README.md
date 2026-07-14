@@ -47,7 +47,6 @@ This collection includes:
 - `pi-secrets-guard` - Secrets Guard: blocks common secret paths and project `.secretignore` rules; legacy `.gitignore` blocking is optional
 - `pi-provider-model-patches` - persistent opt-in patches for stale provider model catalogs; includes Copilot GPT-5.6, off by default
 - `pi-pip-footer` - richer footer with token/context/model/quota info
-- `pi-plan-mode` - read-only planning mode
 - `pi-prompt-profiles` - switchable prompt profile overlays
 - `pi-provider-proxy` - map Pi provider `baseUrl`s to externally managed relay URLs
 - `pi-question` - structured question tool for the assistant

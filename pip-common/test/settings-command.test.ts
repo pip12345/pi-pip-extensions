@@ -15,8 +15,8 @@ describe("pip settings command", () => {
   it("stages boolean and enum values until close", () => {
     const registry = createSettingsRegistry({}, { persistPath: false });
     registry.registerSection({
-      id: "plan-mode",
-      title: "Plan Mode",
+      id: "example",
+      title: "Example",
       settings: {
         enabled: setting.boolean({ label: "Enabled", default: true, order: 1 }),
         behavior: setting.enum({ label: "Default behavior", default: "ask", order: 2, choices: ["ask", "always", "never"] as const }),
@@ -29,10 +29,10 @@ describe("pip settings command", () => {
     const component = createPipSettingsComponent(tui, theme, (value) => { result = value; }, registry) as any;
 
     expect(component.render(80).join("\n")).toContain("Enabled:");
-    expect(registry.get("plan-mode.enabled")).toBe(true);
+    expect(registry.get("example.enabled")).toBe(true);
 
     component.handleInput("\r");
-    expect(registry.get("plan-mode.enabled")).toBe(true);
+    expect(registry.get("example.enabled")).toBe(true);
     expect(component.render(80).join("\n")).toContain("unsaved");
 
     component.handleInput("\u001b[B");
@@ -41,9 +41,9 @@ describe("pip settings command", () => {
     component.handleInput("\u001b");
 
     expect(result.dirty).toBe(true);
-    expect(result.values["plan-mode"].enabled).toBe(false);
-    expect(result.values["plan-mode"].behavior).toBe("ask");
-    expect(registry.get("plan-mode.enabled")).toBe(true);
+    expect(result.values.example.enabled).toBe(false);
+    expect(result.values.example.behavior).toBe("ask");
+    expect(registry.get("example.enabled")).toBe(true);
   });
 
   it("draws the settings box across the full overlay width", () => {

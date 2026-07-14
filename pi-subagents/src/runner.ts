@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { addUsage, emptyUsage, isPipReadOnlyActive, normalizeUsage, pipPath } from "../../pip-common/index.ts";
+import { addUsage, emptyUsage, normalizeUsage, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { parseModelRef } from "./model-ref.ts";
@@ -95,10 +95,8 @@ function activeTools(tools: AgentTools): string[] | undefined {
   return tools;
 }
 
-const MUTATING_TOOLS = new Set(["edit", "write", "todo_write", "todo_update"]);
-
-function finalizeTools(names: string[]): string[] {
-  return names.filter((name) => name !== "subagent" && (!isPipReadOnlyActive() || !MUTATING_TOOLS.has(name)));
+function withoutNestedSubagent(names: string[]): string[] {
+  return names.filter((name) => name !== "subagent");
 }
 
 export class RealRunner implements Runner {
@@ -213,7 +211,7 @@ export class RealRunner implements Runner {
 
       const configured = activeTools(input.agent.tools);
       const current = configured ?? activeSession.getActiveToolNames();
-      activeSession.setActiveToolsByName(finalizeTools(current));
+      activeSession.setActiveToolsByName(withoutNestedSubagent(current));
 
       const modelString = input.model ?? input.agent.model;
       if (modelString) {

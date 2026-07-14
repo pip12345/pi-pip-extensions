@@ -13,7 +13,6 @@ This directory is a loose collection of Pi extensions plus shared helper code.
 - `pi-tree-edit` - interactive session tree editor
 - `pi-undo-redo` - destructive tail-only undo/redo for recent prompts
 - `pi-todo` - session-scoped todo tools, compact widget, and `/todo`
-- `pi-plan-mode` - read-only planning mode with explicit tool blocking
 - `pi-question` - interactive question tool
 - `pi-subagents` - quiet subagent task runs
 - `pi-tiny-mcp` - tiny stdio/HTTP MCP adapter
@@ -29,8 +28,8 @@ Each `pi-*` folder is intended to work both when the whole repo is loaded as a r
 import { registerSettingsSection, setting } from "../pip-common/index.ts";
 
 registerSettingsSection({
-  id: "plan-mode",
-  title: "Plan Mode",
+  id: "example",
+  title: "Example",
   order: 10,
   settings: {
     enabled: setting.boolean({ label: "Enabled", default: true, order: 1 }),

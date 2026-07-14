@@ -20,9 +20,9 @@ function auth() {
   return { authStorage, modelRegistry };
 }
 
-function excludeNestedExtensions(extension: any): boolean {
+function excludeNestedSubagents(extension: any): boolean {
   const path = `${extension?.path ?? ""} ${extension?.resolvedPath ?? ""}`;
-  return !path.includes("pi-subagents") && !path.includes("pi-plan-mode");
+  return !path.includes("pi-subagents");
 }
 
 export class PiChildAgentRuntime implements ChildAgentRuntime {
@@ -42,7 +42,7 @@ export class PiChildAgentRuntime implements ChildAgentRuntime {
       appendSystemPrompt: input.agent.systemPrompt ? [input.agent.systemPrompt] : [],
       extensionsOverride: (base) => ({
         ...base,
-        extensions: base.extensions.filter(excludeNestedExtensions),
+        extensions: base.extensions.filter(excludeNestedSubagents),
       }),
     });
     await resourceLoader.reload();
