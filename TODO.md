@@ -59,9 +59,9 @@
 - [x] Canonicalize existing Secrets Guard targets through `realpath`.
 - [x] Canonicalize the nearest existing parent for write targets.
 - [x] Prevent recursive grep/find/ls operations from traversing or returning guarded descendants.
-- [ ] Recompute or validate restored subagent context paths before recursive deletion.
-- [ ] Quarantine malformed persisted subagent records instead of performing cleanup from untrusted fields.
-- [ ] Add trusted/untrusted, symlink, recursive traversal, and path-containment regression tests.
+- [x] Recompute or validate restored subagent context paths before recursive deletion.
+- [x] Quarantine malformed persisted subagent records instead of performing cleanup from untrusted fields.
+- [x] Add trusted/untrusted, symlink, recursive traversal, and path-containment regression tests.
 
 ## 5. Repair shared settings and runtime ownership
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
@@ -8,6 +8,8 @@ import { createSubagentsExtension, resetManagerForTests } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";
 import { RealRunner } from "./src/runner.ts";
+import { runContextDir } from "./src/context.ts";
+import { parentIndexPath } from "./src/persistence.ts";
 import type { ChildAgentRuntime } from "./src/child-runtime.ts";
 import type { Runner, SubagentRun } from "./src/types.ts";
 
@@ -126,6 +128,26 @@ function persistedSetup(runner: Runner = new FakeRunner()) {
   createSubagentsExtension({ manager })(pi as any);
   flushPipTools(pi as any);
   return { dir, manager, pi, runner, tool: getRegisteredTool(pi, "subagent"), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+function persistedRecord(parentSessionKey: string, parentSessionFile: string, id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    version: 3,
+    id,
+    agent: "explore",
+    prompt: "persisted run",
+    cwd: process.cwd(),
+    parentSessionKey,
+    parentSessionFile,
+    keep: true,
+    background: false,
+    detached: true,
+    status: "completed",
+    createdAt: 1,
+    updatedAt: 1,
+    events: [],
+    ...overrides,
+  };
 }
 
 function ctxForSession(sessionFile: string, cwd = process.cwd(), leafId?: string, branchIds?: string[]) {
@@ -346,6 +368,74 @@ describe("pi-subagents", () => {
     const result = await tool.execute("1", { agent: "explore", prompt: "usage no cost" }, undefined, undefined, createMockCtx());
     expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k");
     expect(result.content[0].text).not.toContain("$0.42");
+  });
+
+  it("recomputes persisted context paths before recursive deletion", () => {
+    const persistenceDir = mkdtempSync(join(tmpdir(), "pi-subagent-persistence-"));
+    const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));
+    const parentDir = mkdtempSync(join(tmpdir(), "pi-subagent-parent-"));
+    const victimDir = mkdtempSync(join(tmpdir(), "pi-subagent-victim-"));
+    const parentFile = join(parentDir, "parent.jsonl");
+    const runId = "sa_deadbeef";
+    writeFileSync(parentFile, "{}\n");
+    writeFileSync(join(victimDir, "keep.txt"), "keep");
+    const indexPath = parentIndexPath(parentFile, persistenceDir);
+    mkdirSync(dirname(indexPath), { recursive: true });
+    writeFileSync(indexPath, JSON.stringify({
+      version: 3,
+      parentSessionKey: parentFile,
+      parentSessionFile: parentFile,
+      runs: [persistedRecord(parentFile, parentFile, runId, { contextRoot: victimDir, runContextDir: victimDir })],
+    }));
+    const managedRunDir = runContextDir(parentFile, runId, contextDir);
+    mkdirSync(managedRunDir, { recursive: true });
+    writeFileSync(join(managedRunDir, "artifact.md"), "managed");
+
+    try {
+      const manager = new SubagentManager({ runner: new FakeRunner(), persistenceDir, contextDir });
+      manager.setActiveParent(parentFile, parentFile);
+      const restored = manager.resolve(runId, parentFile);
+      expect(restored?.runContextDir).toBe(managedRunDir);
+      manager.delete(restored!);
+      expect(existsSync(managedRunDir)).toBe(false);
+      expect(existsSync(join(victimDir, "keep.txt"))).toBe(true);
+    } finally {
+      rmSync(persistenceDir, { recursive: true, force: true });
+      rmSync(contextDir, { recursive: true, force: true });
+      rmSync(parentDir, { recursive: true, force: true });
+      rmSync(victimDir, { recursive: true, force: true });
+    }
+  });
+
+  it("quarantines malformed persisted runs without executing their cleanup paths", () => {
+    const persistenceDir = mkdtempSync(join(tmpdir(), "pi-subagent-persistence-"));
+    const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));
+    const parentDir = mkdtempSync(join(tmpdir(), "pi-subagent-parent-"));
+    const victimDir = mkdtempSync(join(tmpdir(), "pi-subagent-victim-"));
+    const parentFile = join(parentDir, "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    writeFileSync(join(victimDir, "keep.txt"), "keep");
+    const indexPath = parentIndexPath(parentFile, persistenceDir);
+    mkdirSync(dirname(indexPath), { recursive: true });
+    writeFileSync(indexPath, JSON.stringify({
+      version: 3,
+      parentSessionKey: parentFile,
+      parentSessionFile: parentFile,
+      runs: [persistedRecord(parentFile, parentFile, "../../victim", { runContextDir: victimDir })],
+    }));
+
+    try {
+      const manager = new SubagentManager({ runner: new FakeRunner(), persistenceDir, contextDir });
+      expect(() => manager.setActiveParent(parentFile, parentFile)).not.toThrow();
+      expect(manager.list(parentFile)).toEqual([]);
+      expect(existsSync(join(victimDir, "keep.txt"))).toBe(true);
+      expect(readdirSync(persistenceDir).some((name) => name.includes(".invalid."))).toBe(true);
+    } finally {
+      rmSync(persistenceDir, { recursive: true, force: true });
+      rmSync(contextDir, { recursive: true, force: true });
+      rmSync(parentDir, { recursive: true, force: true });
+      rmSync(victimDir, { recursive: true, force: true });
+    }
   });
 
   it("persists usage for retained subagents", async () => {

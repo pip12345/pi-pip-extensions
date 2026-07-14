@@ -13,6 +13,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Removable feature boundaries are now enforced: production sibling imports and reverse `pip-common` dependencies fail tests, while each standalone feature loads with only Pi and its bundled common runtime.
 - Findings 3–4 were resolved by threading `ctx.isProjectTrusted()` into Tiny MCP config/manager creation and Subagent agent discovery.
 - Finding 5 was resolved with canonical path checks, nearest-existing-parent resolution for writes, and preflight blocking for search/list roots containing guarded descendants.
+- Finding 23 was resolved by removing derived context paths from persistence, validating restored records, quarantining malformed indexes, and deriving recursive deletion targets from managed roots.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
@@ -378,22 +379,11 @@ Use one manager-owned “start run generation” path for launch, continue, and 
 
 ---
 
-### 23. Restored subagent persistence can drive an uncontained recursive delete
+### 23. Restored subagent persistence can drive an uncontained recursive delete — **resolved**
 
-**Evidence**
+New persistence records no longer store `contextRoot` or `runContextDir`; legacy fields are accepted only for migration and ignored. Restored records validate required fields, statuses, usage, event payloads, parent ownership, and path-safe run IDs. Context paths are always recomputed from the active parent key and managed context root, and deletion derives that same path instead of trusting mutable run state.
 
-- Persisted records include `contextRoot` and `runContextDir` at `pi-subagents/src/persistence.ts:63-93`.
-- `restoredRun()` trusts those path strings at `pi-subagents/src/persistence.ts:96-123`.
-- `SubagentManager.deleteRunContext()` recursively removes `run.runContextDir` without containment validation at `pi-subagents/src/manager.ts:376-380`.
-- By contrast, child session deletion uses an explicit containment check at `pi-subagents/src/persistence.ts:160-168`.
-
-**Impact**
-
-A corrupted, hand-edited, or unexpectedly migrated `runs.json` can make TTL cleanup, branch cleanup, or manual deletion recursively remove an arbitrary directory named in `runContextDir`. A malformed persisted run can also throw during restore and break subagent activation because run fields/events are not structurally validated.
-
-**Recommended direction**
-
-Never trust persisted derived paths. Recompute context paths from `parentSessionKey` and validated run IDs, or canonicalize and enforce containment under the managed context root before deletion. Validate every restored run and quarantine—not execute cleanup from—invalid records.
+Malformed indexes or records are moved to a quarantine file outside the parent persistence directory and are not used for cleanup. Regression tests verify that a persisted arbitrary deletion path survives manual deletion and that a traversal run ID is quarantined without touching its target.
 
 ---
 

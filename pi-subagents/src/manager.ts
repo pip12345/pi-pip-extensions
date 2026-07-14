@@ -119,8 +119,8 @@ export class SubagentManager {
     for (const record of loaded.runs) {
       if (this.runs.has(record.id)) continue;
       const run = restoredRun(record, this.now());
-      run.contextRoot ??= contextRoot(run.parentSessionKey, this.contextDir);
-      run.runContextDir ??= runContextDir(run.parentSessionKey, run.id, this.contextDir);
+      run.contextRoot = contextRoot(parentSessionKey, this.contextDir);
+      run.runContextDir = runContextDir(parentSessionKey, run.id, this.contextDir);
       run.persist = () => this.saveRun(run);
       this.runs.set(run.id, run);
       if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
@@ -375,8 +375,7 @@ export class SubagentManager {
   }
 
   private deleteRunContext(run: SubagentRun): void {
-    if (!run.runContextDir) return;
-    rmSync(run.runContextDir, { recursive: true, force: true });
+    rmSync(runContextDir(run.parentSessionKey, run.id, this.contextDir), { recursive: true, force: true });
   }
 
   list(parentSessionKey?: string): SubagentRun[] {

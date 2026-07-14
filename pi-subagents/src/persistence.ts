@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join, relative, resolve } from "node:path";
 import { emptyUsage, pipPath, type TokenUsage } from "pip-common";
 import type { RunStatus, SubagentEvent, SubagentRun } from "./types.ts";
+import { isSafeRunId } from "./context.ts";
 import { privateSessionDir } from "./runner.ts";
 
 const VERSION = 3;
@@ -84,8 +85,6 @@ export function toPersistedRun(run: SubagentRun): PersistedRun | undefined {
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
     sessionFile: run.sessionFile,
-    contextRoot: run.contextRoot,
-    runContextDir: run.runContextDir,
     resultText: run.resultText,
     errorText: run.errorText,
     usage: { ...run.usage },
@@ -113,8 +112,6 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
     updatedAt: wasRunning ? now : record.updatedAt,
     completedAt: wasRunning ? now : record.completedAt,
     sessionFile: record.sessionFile,
-    contextRoot: record.contextRoot,
-    runContextDir: record.runContextDir,
     resultText: record.resultText,
     errorText: wasRunning ? "Subagent was interrupted by parent process shutdown/restart." : record.errorText,
     usage: { ...(record.usage ?? emptyUsage()) },
@@ -124,19 +121,93 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
   };
 }
 
-function validateIndex(value: any, expectedParentKey: string): ParentIndex {
-  if (!value || ![2, VERSION].includes(value.version) || value.parentSessionKey !== expectedParentKey || typeof value.parentSessionFile !== "string" || !Array.isArray(value.runs)) {
+const RUN_STATUSES = new Set<RunStatus>(["running", "completed", "error", "cancelled", "interrupted"]);
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function optionalNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function validUsage(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const usage = value as Record<string, unknown>;
+  return ["input", "output", "cacheRead", "cacheWrite", "cache", "total", "cost"].every((key) => typeof usage[key] === "number" && Number.isFinite(usage[key]));
+}
+
+function validEvent(value: unknown): value is SubagentEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Record<string, unknown>;
+  if (typeof event.at !== "number" || !Number.isFinite(event.at)) return false;
+  if (event.type === "steer" || event.type === "text_delta") return typeof event.text === "string";
+  if (event.type === "tool_start") return typeof event.id === "string" && typeof event.name === "string" && typeof event.argsSummary === "string";
+  if (event.type === "tool_end") {
+    return typeof event.id === "string" && typeof event.ok === "boolean" && optionalString(event.resultSummary) && optionalNumber(event.durationMs);
+  }
+  return false;
+}
+
+function validPersistedRun(value: unknown, index: ParentIndex): value is PersistedRun {
+  if (!value || typeof value !== "object") return false;
+  const run = value as Record<string, unknown>;
+  return (
+    (run.version === 2 || run.version === VERSION) &&
+    isSafeRunId(run.id) &&
+    typeof run.agent === "string" && run.agent.length > 0 &&
+    typeof run.prompt === "string" &&
+    typeof run.cwd === "string" && run.cwd.length > 0 &&
+    run.parentSessionKey === index.parentSessionKey &&
+    run.parentSessionFile === index.parentSessionFile &&
+    typeof run.keep === "boolean" &&
+    typeof run.background === "boolean" &&
+    typeof run.detached === "boolean" &&
+    typeof run.status === "string" && RUN_STATUSES.has(run.status as RunStatus) &&
+    typeof run.createdAt === "number" && Number.isFinite(run.createdAt) &&
+    typeof run.updatedAt === "number" && Number.isFinite(run.updatedAt) &&
+    optionalNumber(run.completedAt) &&
+    optionalString(run.name) &&
+    optionalString(run.model) &&
+    optionalString(run.anchorEntryId) &&
+    optionalString(run.sessionFile) &&
+    optionalString(run.contextRoot) &&
+    optionalString(run.runContextDir) &&
+    optionalString(run.resultText) &&
+    optionalString(run.errorText) &&
+    validUsage(run.usage) &&
+    Array.isArray(run.events) && run.events.every(validEvent)
+  );
+}
+
+function validateIndex(value: unknown, expectedParentKey: string): { index: ParentIndex; invalidRuns: boolean } {
+  if (!value || typeof value !== "object") throw new Error(`Invalid subagent persistence index for parent ${expectedParentKey}`);
+  const raw = value as Record<string, unknown>;
+  if ((raw.version !== 2 && raw.version !== VERSION) || raw.parentSessionKey !== expectedParentKey || typeof raw.parentSessionFile !== "string" || !raw.parentSessionFile || !Array.isArray(raw.runs)) {
     throw new Error(`Invalid subagent persistence index for parent ${expectedParentKey}`);
   }
-  return value as ParentIndex;
+  const index = raw as unknown as ParentIndex;
+  const runs = index.runs.filter((run) => validPersistedRun(run, index));
+  return { index: { ...index, runs }, invalidRuns: runs.length !== index.runs.length };
+}
+
+function quarantineIndex(path: string, parentSessionKey: string, baseDir?: string): void {
+  const target = join(parentsDir(baseDir), `${safePart(parentSessionKey)}.invalid.${Date.now()}.${process.pid}.json`);
+  try { renameSync(path, target); } catch {}
 }
 
 export function readParentRuns(parentSessionKey: string, baseDir?: string): { parentSessionFile: string; runs: PersistedRun[] } | undefined {
   const path = parentIndexPath(parentSessionKey, baseDir);
   if (!existsSync(path)) return undefined;
-  const parsed = JSON.parse(readFileSync(path, "utf8"));
-  const index = validateIndex(parsed, parentSessionKey);
-  return { parentSessionFile: index.parentSessionFile, runs: index.runs };
+  try {
+    const { index, invalidRuns } = validateIndex(JSON.parse(readFileSync(path, "utf8")), parentSessionKey);
+    if (invalidRuns) quarantineIndex(path, parentSessionKey, baseDir);
+    return { parentSessionFile: index.parentSessionFile, runs: index.runs };
+  } catch {
+    quarantineIndex(path, parentSessionKey, baseDir);
+    return undefined;
+  }
 }
 
 export function writeParentRuns(parentSessionKey: string, parentSessionFile: string, runs: PersistedRun[], baseDir?: string): void {
@@ -177,7 +248,12 @@ export function gcOrphanedParents(activeParentSessionFile?: string, baseDir?: st
     let index: ParentIndex;
     try {
       const parsed = JSON.parse(readFileSync(indexPath, "utf8"));
-      index = validateIndex(parsed, parsed?.parentSessionKey);
+      const validated = validateIndex(parsed, parsed?.parentSessionKey);
+      if (validated.invalidRuns) {
+        quarantineIndex(indexPath, validated.index.parentSessionKey, baseDir);
+        continue;
+      }
+      index = validated.index;
     } catch {
       continue;
     }
