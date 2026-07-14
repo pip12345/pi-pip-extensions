@@ -219,8 +219,8 @@ function renderDisplayPipResult(display: any) {
   };
 }
 
-function registerToolUiPipFinalizer(): () => void {
-  return registerPipToolFinalizer({
+function registerToolUiPipFinalizer(pi: ExtensionAPI): () => void {
+  return registerPipToolFinalizer(pi, {
     id: "tool-ui",
     order: 100,
     finalize({ tool, metadata }) {
@@ -230,13 +230,13 @@ function registerToolUiPipFinalizer(): () => void {
   });
 }
 
-function registerToolUiSettings(): void {
+function registerToolUiSettings(pi: ExtensionAPI): void {
   const dynamicSettings: Record<string, any> = {};
   for (const adapter of BUILTIN_ADAPTERS) {
     dynamicSettings[adapter.settingKey] = setting.boolean({ label: adapter.label, default: true, description: adapter.settingDescription, order: 10, requiresReload: true });
   }
   let order = 20;
-  for (const registration of listPipToolRegistrations()) {
+  for (const registration of listPipToolRegistrations(pi)) {
     if (!COMPACT_PIP_TOOLS.has(registration.tool.name) || !registration.metadata?.display) continue;
     const label = registration.metadata.label ?? registration.tool.label ?? registration.tool.name;
     dynamicSettings[settingKey(registration.tool.name)] = setting.boolean({ label, default: true, description: `Use compact Tool UI rendering for ${label}.`, order: order++, requiresReload: true });
@@ -278,9 +278,9 @@ function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter): void {
 
 export default function (pi: ExtensionAPI) {
   const lifecycle = createLifecycle();
-  registerToolUiSettings();
-  lifecycle.add(onPipToolRegistrationChange(registerToolUiSettings));
-  lifecycle.add(registerToolUiPipFinalizer());
+  registerToolUiSettings(pi);
+  lifecycle.add(onPipToolRegistrationChange(pi, () => registerToolUiSettings(pi)));
+  lifecycle.add(registerToolUiPipFinalizer(pi));
   pi.on("session_shutdown", async () => { await lifecycle.disposeAll(); });
   for (const adapter of BUILTIN_ADAPTERS) registerBuiltInAdapter(pi, adapter);
 }

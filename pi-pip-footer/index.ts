@@ -97,11 +97,11 @@ export default function (pi: ExtensionAPI) {
             const rightLines = [
               renderToolsExpandedWarning(ctx, theme),
               renderExtensionStatuses(footerData),
-              ...renderRegisteredFooterItems({ width, theme, ctx, region: "right" }),
+              ...renderRegisteredFooterItems(pi, { width, theme, ctx, region: "right" }),
             ].filter(Boolean).slice(0, 2);
             for (let i = 0; i < Math.min(2, lines.length); i++) lines[i] = joinRight(lines[i], rightLines[i], width);
 
-            lines.push(...renderRegisteredFooterItems({ width, theme, ctx, region: "below" }).flatMap((line) => wrapSegments([line], width, sep)));
+            lines.push(...renderRegisteredFooterItems(pi, { width, theme, ctx, region: "below" }).flatMap((line) => wrapSegments([line], width, sep)));
           }
 
           return (lines.length ? lines : [theme.fg("dim", FOOTER_KEY)]).map((line) => truncateToWidth(line, width));

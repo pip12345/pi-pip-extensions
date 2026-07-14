@@ -6,6 +6,7 @@ export interface MockPi {
   messages: any[];
   userMessages: any[];
   entries: any[];
+  events: object;
   registerTool(tool: any): void;
   registerCommand(name: string, command: any): void;
   registerShortcut(shortcut: string, shortcutDef: any): void;
@@ -24,6 +25,7 @@ export function createMockPi(): MockPi {
     messages: [],
     userMessages: [],
     entries: [],
+    events: {},
     registerTool(tool: any) {
       this.tools.set(tool.name, tool);
     },

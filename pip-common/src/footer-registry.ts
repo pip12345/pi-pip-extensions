@@ -1,3 +1,5 @@
+import { piRuntimeKey, type PiRuntimeOwner } from "./runtime.ts";
+
 export type PipFooterRegion = "right" | "below";
 
 export interface PipFooterItemContext {
@@ -20,30 +22,50 @@ export type PipFooterLineProvider = Omit<PipFooterItemProvider, "region" | "rend
   render: (context: PipFooterLineContext) => string | string[] | undefined | null;
 };
 
-const FOOTER_ITEMS_KEY = Symbol.for("pip-common.footer-item-registry");
-
-export function getPipFooterItemRegistry(): Map<string, PipFooterItemProvider> {
-  const globalState = globalThis as any;
-  if (!globalState[FOOTER_ITEMS_KEY]) globalState[FOOTER_ITEMS_KEY] = new Map<string, PipFooterItemProvider>();
-  return globalState[FOOTER_ITEMS_KEY];
+interface FooterRuntimeState {
+  key: object;
+  items: Map<string, PipFooterItemProvider>;
 }
 
-export function registerFooterItem(provider: PipFooterItemProvider): () => void {
-  const registry = getPipFooterItemRegistry();
+const FOOTER_STATES_KEY = Symbol.for("pip-common.footer-runtime-states");
+
+function footerStates(): WeakMap<object, FooterRuntimeState> {
+  const globalState = globalThis as any;
+  if (!globalState[FOOTER_STATES_KEY]) globalState[FOOTER_STATES_KEY] = new WeakMap<object, FooterRuntimeState>();
+  return globalState[FOOTER_STATES_KEY];
+}
+
+export function getPipFooterItemRegistry(pi: PiRuntimeOwner): Map<string, PipFooterItemProvider> {
+  const key = piRuntimeKey(pi);
+  let state = footerStates().get(key);
+  if (!state) {
+    state = { key, items: new Map() };
+    footerStates().set(key, state);
+    const owner = pi as any;
+    owner.on?.("session_shutdown", async () => {
+      state!.items.clear();
+      footerStates().delete(key);
+    });
+  }
+  return state.items;
+}
+
+export function registerFooterItem(pi: PiRuntimeOwner, provider: PipFooterItemProvider): () => void {
+  const registry = getPipFooterItemRegistry(pi);
   registry.set(provider.id, provider);
   return () => registry.delete(provider.id);
 }
 
-export function registerFooterLine(provider: PipFooterLineProvider): () => void {
-  return registerFooterItem({
+export function registerFooterLine(pi: PiRuntimeOwner, provider: PipFooterLineProvider): () => void {
+  return registerFooterItem(pi, {
     ...provider,
     region: "below",
     render: (context) => provider.render(context),
   });
 }
 
-export function renderRegisteredFooterItems(context: PipFooterItemContext): string[] {
-  return [...getPipFooterItemRegistry().values()]
+export function renderRegisteredFooterItems(pi: PiRuntimeOwner, context: PipFooterItemContext): string[] {
+  return [...getPipFooterItemRegistry(pi).values()]
     .filter((provider) => (provider.region ?? "below") === context.region)
     .filter((provider) => {
       if (typeof provider.enabled === "function") return provider.enabled(context.ctx);
@@ -58,6 +80,6 @@ export function renderRegisteredFooterItems(context: PipFooterItemContext): stri
     .filter((line) => line.trim().length > 0);
 }
 
-export function renderRegisteredFooterLines(context: PipFooterLineContext): string[] {
-  return renderRegisteredFooterItems({ ...context, region: "below" });
+export function renderRegisteredFooterLines(pi: PiRuntimeOwner, context: PipFooterLineContext): string[] {
+  return renderRegisteredFooterItems(pi, { ...context, region: "below" });
 }
