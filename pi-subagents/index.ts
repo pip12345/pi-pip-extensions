@@ -196,6 +196,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerShortcut?.(Key.ctrlShift("b"), {
       description: "Move foreground subagents to background",
       handler: async (ctx: any) => {
+        if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
         activate(ctx);
         const detached = manager.detachAll(parentKey(ctx));
         ctx.ui?.notify?.(detached.length ? `Moved ${detached.length} subagent${detached.length === 1 ? "" : "s"} to background.` : "No foreground subagents running.", "info");
@@ -328,6 +329,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerCommand("subagent", {
       description: "Inspect, view, steer, cancel, or background subagents",
       handler: async (args: string, ctx: any) => {
+        if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
         activate(ctx);
         const trusted = projectTrusted(ctx);
         const [cmd, ref, ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);

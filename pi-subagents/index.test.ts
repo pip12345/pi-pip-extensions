@@ -199,6 +199,17 @@ describe("pi-subagents", () => {
     expect(result).toBeUndefined();
   });
 
+  it("blocks the command and shortcut when subagents are disabled", async () => {
+    const { pi } = setup();
+    const ctx = createMockCtx();
+    pipSettings.set("subagents.enabled", false);
+
+    await runCommand(pi, "subagent", "", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+    await getRegisteredShortcut(pi, "ctrl+shift+b").handler(ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+  });
+
   it("injects project agent names from a trusted workspace", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pi-subagents-project-agents-"));
     try {

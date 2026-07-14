@@ -27,8 +27,8 @@ function settingsEqual(a: Record<string, Record<string, unknown>>, b: Record<str
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function applySettingsValues(registry: SettingsRegistry, values: Record<string, Record<string, unknown>>): void {
-  registry.apply(values);
+function applySettingsValues(registry: SettingsRegistry, values: Record<string, Record<string, unknown>>) {
+  return registry.apply(values);
 }
 
 const MAX_VISIBLE_SETTING_ROWS = 30;
@@ -235,8 +235,16 @@ export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry =
       const choice = await ctx.ui.select?.("Save pip settings?", ["No, discard changes", "Yes, save changes"]);
       if (choice === "Yes, save changes") {
         try {
-          applySettingsValues(registry, result.values);
+          const changes = applySettingsValues(registry, result.values);
           ctx.ui.notify?.("Saved pip settings", "info");
+          const reloadLabels = changes
+            .filter((change) => registry.definition(change.section)?.[change.key]?.requiresReload)
+            .map((change) => {
+              const section = registry.section(change.section);
+              const definition = registry.definition(change.section)?.[change.key];
+              return `${section?.title ?? change.section}: ${definition?.label ?? change.key}`;
+            });
+          if (reloadLabels.length) ctx.ui.notify?.(`Reload required to apply: ${reloadLabels.join(", ")}`, "warning");
         } catch (error) {
           ctx.ui.notify?.(`Failed to save pip settings: ${error instanceof Error ? error.message : String(error)}`, "error");
         }

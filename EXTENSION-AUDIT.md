@@ -198,25 +198,11 @@ Base the conversation section on `buildContextEntries()` / the same session-cont
 
 ---
 
-### 14. Settings changes have no lifecycle notification, so several toggles do not apply live
+### 14. Settings changes have no lifecycle notification, so several toggles do not apply live — **resolved**
 
-**Evidence**
+The settings registry emits one filtered, subscribable change batch after each successful transaction. Todo subscribes to refresh or remove its widget immediately, and its tools/command reject calls while disabled. Subagent commands and shortcuts now honor `enabled`. Tiny MCP no longer auto-connects while disabled and does not register its tool after a disabled reload.
 
-- `pip-common/src/settings-command.ts` copies draft values into the registry but emits no setting-change event and triggers no reload.
-- `pi-pip-footer/index.ts:57-59` checks footer `enabled` only during installation; disabling it later does not uninstall the footer.
-- `pi-tiny-mcp/index.ts:35` checks `enabled` only while registering the tool, while `pi-tiny-mcp/index.ts:86-88` auto-connects regardless of that setting.
-- `pi-todo/index.ts:342-347` checks `enabled` only when refreshing the widget; `todo_write`, `todo_update`, `todo_read`, and `/todo` remain active despite the setting description saying they are disabled.
-- `pi-subagents/index.ts:175-177,221-223` checks `enabled` for prompt injection and the LLM tool, but `/subagent` and the Ctrl+Shift+B shortcut remain active despite the setting description.
-- `pi-tool-ui/index.ts:265-280` fixes `renderShell` at registration time.
-- Todo placement/widget settings are not refreshed until another todo/session event.
-
-**Impact**
-
-`/pip-settings` appears to save changes successfully, but multiple settings require an undocumented reload or another lifecycle event. Tiny MCP’s disabled setting does not stop commands or auto-connect at all.
-
-**Recommended direction**
-
-The owning abstraction is `pip-common` settings. Add a shared change-notification/subscription mechanism and let each extension reconfigure its owned resources. For changes that cannot apply dynamically, explicitly request/require reload and say so in the UI.
+Settings whose registrations/resources cannot safely change in place carry declarative `requiresReload` metadata. `/pip-settings` names those settings in a warning after saving; this covers footer installation, Tiny MCP process/name configuration, Tool UI registration-time adapters, and provider catalog patches. Other settings are read at action/render time and apply to subsequent work without reload.
 
 ---
 

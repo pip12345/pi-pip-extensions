@@ -7,7 +7,10 @@ const theme = {
   fg: (_name: string, text: string) => text,
 };
 
-beforeEach(() => resetPipToolsForTests());
+beforeEach(() => {
+  resetPipToolsForTests();
+  pipSettings.set("todo.enabled", true);
+});
 
 describe("pi-todo", () => {
   it("registers settings, tools, and command", () => {
@@ -23,6 +26,24 @@ describe("pi-todo", () => {
     expect(pipSettings.get("todo.enabled")).toBe(true);
     expect(pipSettings.get("todo.compactRows")).toBe("4");
     expect(pipSettings.definition("todo")?.compactRows.description).toContain("Fixed height");
+  });
+
+  it("applies enabled changes to the widget, tools, and command", async () => {
+    const pi = createMockPi();
+    const ctx = createMockCtx({ entries: [{ type: "custom", customType: __test.CUSTOM_TYPE, data: { todos: [{ id: 1, text: "One", status: "pending" }], nextId: 2, updatedAt: 1 } }] });
+    todoExtension(pi as any);
+    flushPipTools(pi as any);
+    await emitEvent(pi, "session_start", {}, ctx);
+    expect(ctx.ui.widgets.get(__test.WIDGET_KEY)).toBeTruthy();
+
+    pipSettings.set("todo.enabled", false);
+    expect(ctx.ui.widgets.get(__test.WIDGET_KEY)).toBeUndefined();
+    const result = await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Blocked" }] }, undefined, undefined, ctx);
+    expect(result.details.disabled).toBe(true);
+    expect(pi.entries).toHaveLength(0);
+    await runCommand(pi, "todo", "", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+    await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 
   it("todo_write creates multiple todos, normalizes active, and appends state", async () => {

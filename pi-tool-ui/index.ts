@@ -233,13 +233,13 @@ function registerToolUiPipFinalizer(): () => void {
 function registerToolUiSettings(): void {
   const dynamicSettings: Record<string, any> = {};
   for (const adapter of BUILTIN_ADAPTERS) {
-    dynamicSettings[adapter.settingKey] = setting.boolean({ label: adapter.label, default: true, description: adapter.settingDescription, order: 10 });
+    dynamicSettings[adapter.settingKey] = setting.boolean({ label: adapter.label, default: true, description: adapter.settingDescription, order: 10, requiresReload: true });
   }
   let order = 20;
   for (const registration of listPipToolRegistrations()) {
     if (!COMPACT_PIP_TOOLS.has(registration.tool.name) || !registration.metadata?.display) continue;
     const label = registration.metadata.label ?? registration.tool.label ?? registration.tool.name;
-    dynamicSettings[settingKey(registration.tool.name)] = setting.boolean({ label, default: true, description: `Use compact Tool UI rendering for ${label}.`, order: order++ });
+    dynamicSettings[settingKey(registration.tool.name)] = setting.boolean({ label, default: true, description: `Use compact Tool UI rendering for ${label}.`, order: order++, requiresReload: true });
   }
 
   registerSettingsSection({
@@ -248,7 +248,7 @@ function registerToolUiSettings(): void {
     description: "Unified rendering for tool calls and results.",
     order: 50,
     settings: {
-      enabled: setting.boolean({ label: "Enabled", default: true, description: "Enable Tool UI rendering adapters.", order: 1 }),
+      enabled: setting.boolean({ label: "Enabled", default: true, description: "Enable Tool UI rendering adapters.", order: 1, requiresReload: true }),
       diffLayout: setting.enum({ label: "Diff layout", default: "auto", choices: ["auto", "split", "unified"] as const, description: "Preferred layout for edit diffs.", order: 2 }),
       diffSplitMinWidth: setting.number({ label: "Split diff width", default: 120, min: 80, max: 240, step: 10, description: "Minimum terminal width before auto layout uses side-by-side edit diffs.", order: 3 }),
       diffMaxLines: setting.number({ label: "Diff max lines", default: 80, min: 20, max: 1000, step: 20, description: "Maximum edit diff lines shown in Tool UI rendering.", order: 4 }),

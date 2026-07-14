@@ -80,6 +80,19 @@ describe("pi-tiny-mcp", () => {
     expect(hints).toContain("args");
   });
 
+  it("does not register or auto-connect the tool while disabled", async () => {
+    pipSettings.set("tiny-mcp.enabled", false);
+    const pi = createMockPi();
+    const ctx = createMockCtx();
+    tinyMcp(pi as any);
+    flushPipTools(pi as any);
+
+    expect(getRegisteredTool(pi, "tiny-mcp")).toBeUndefined();
+    await emitEvent(pi, "session_start", {}, ctx);
+    await runCommand(pi, "tiny-mcp", "status", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+  });
+
   it("loads project config only when project trust is allowed", () => {
     const dir = tempProject();
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));

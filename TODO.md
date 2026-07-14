@@ -72,8 +72,8 @@
 - [x] Batch `/pip-settings` changes into one commit.
 - [x] Enforce numeric `min` and `max` bounds in the central validator.
 - [x] Validate defaults when settings sections register.
-- [ ] Add shared setting-change notifications.
-- [ ] Make each extension apply live setting changes or explicitly report that reload is required.
+- [x] Add shared setting-change notifications.
+- [x] Make each extension apply live setting changes or explicitly report that reload is required.
 - [ ] Scope shared tool, settings, footer, and lifecycle state by Pi runtime rather than process-global module state.
 - [ ] Preserve correct behavior across reloads and concurrent parent/child runtimes.
 

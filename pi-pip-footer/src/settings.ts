@@ -8,7 +8,7 @@ export function registerFooterSettings(): void {
     description: "Pip footer with quotas, context, model, and the existing above-editor token counter.",
     order: 20,
     settings: {
-      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Show the pip footer and manage its above-editor token counter." }),
+      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, requiresReload: true, description: "Show the pip footer and manage its above-editor token counter." }),
       quotaProvider: setting.enum({
         label: "Quota provider",
         default: "auto",

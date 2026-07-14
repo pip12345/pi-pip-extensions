@@ -191,9 +191,9 @@ describe("pip settings command", () => {
     expect(ctx.ui.notifications.at(-1).message).toContain("Cannot read malformed settings");
   });
 
-  it("confirms saving staged changes from the command", async () => {
+  it("confirms saving staged changes from the command and reports reload-required values", async () => {
     const registry = createSettingsRegistry({}, { persistPath: false });
-    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean({ label: "Enabled", default: true, requiresReload: true }) } });
     const pi = createMockPi();
     registerPipSettingsCommand(pi as any, registry);
 
@@ -217,7 +217,8 @@ describe("pip settings command", () => {
 
     await pi.commands.get("pip-settings").handler("", ctx);
     expect(registry.get("x.enabled")).toBe(false);
-    expect(ctx.ui.notifications.at(-1).message).toContain("Saved");
+    expect(ctx.ui.notifications.at(-2).message).toContain("Saved");
+    expect(ctx.ui.notifications.at(-1)).toEqual({ message: "Reload required to apply: X: Enabled", level: "warning" });
   });
 
   it("discards staged changes when save is rejected", async () => {

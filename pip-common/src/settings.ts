@@ -22,6 +22,7 @@ export interface SettingDefinition<T = any> {
   min?: number;
   max?: number;
   step?: number;
+  requiresReload?: boolean;
 }
 
 export interface SettingSection {
@@ -39,6 +40,15 @@ export interface SettingRow {
   path: string;
 }
 
+export interface SettingChange {
+  path: string;
+  section: string;
+  key: string;
+  previousValue: unknown;
+  value: unknown;
+}
+
+export type SettingsChangeListener = (changes: readonly SettingChange[]) => void;
 export type SettingsDefinition = Record<string, SettingDefinition>;
 
 export const DEFAULT_SETTINGS_PATH = pipPath("pip-settings.json");
@@ -103,7 +113,7 @@ export function writeSettingsFile(path: string, values: Record<string, Record<st
 }
 
 export const setting = {
-  boolean(options: boolean | { default: boolean; label?: string; description?: string; order?: number; labels?: { true?: string; false?: string } }, description?: string): SettingDefinition<boolean> {
+  boolean(options: boolean | { default: boolean; label?: string; description?: string; order?: number; labels?: { true?: string; false?: string }; requiresReload?: boolean }, description?: string): SettingDefinition<boolean> {
     if (typeof options === "object") {
       return {
         type: "boolean",
@@ -111,24 +121,25 @@ export const setting = {
         label: options.label,
         description: options.description,
         order: options.order,
+        requiresReload: options.requiresReload,
         choices: [true, false],
         choiceLabels: { true: options.labels?.true ?? "on", false: options.labels?.false ?? "off" },
       };
     }
     return { type: "boolean", default: options, description, choices: [true, false], choiceLabels: { true: "on", false: "off" } };
   },
-  string(options: string | { default: string; label?: string; description?: string; order?: number }, description?: string): SettingDefinition<string> {
-    if (typeof options === "object") return { type: "string", default: options.default, label: options.label, description: options.description, order: options.order };
+  string(options: string | { default: string; label?: string; description?: string; order?: number; requiresReload?: boolean }, description?: string): SettingDefinition<string> {
+    if (typeof options === "object") return { type: "string", default: options.default, label: options.label, description: options.description, order: options.order, requiresReload: options.requiresReload };
     return { type: "string", default: options, description };
   },
-  number(options: number | { default: number; label?: string; description?: string; order?: number; min?: number; max?: number; step?: number }, description?: string): SettingDefinition<number> {
+  number(options: number | { default: number; label?: string; description?: string; order?: number; min?: number; max?: number; step?: number; requiresReload?: boolean }, description?: string): SettingDefinition<number> {
     if (typeof options === "object") {
-      return { type: "number", default: options.default, label: options.label, description: options.description, order: options.order, min: options.min, max: options.max, step: options.step };
+      return { type: "number", default: options.default, label: options.label, description: options.description, order: options.order, min: options.min, max: options.max, step: options.step, requiresReload: options.requiresReload };
     }
     return { type: "number", default: options, description };
   },
   enum<const T extends string>(
-    options: T | { default: T; choices: readonly (T | SettingChoice<T>)[]; label?: string; description?: string; order?: number },
+    options: T | { default: T; choices: readonly (T | SettingChoice<T>)[]; label?: string; description?: string; order?: number; requiresReload?: boolean },
     choices?: readonly T[],
     description?: string
   ): SettingDefinition<T> {
@@ -136,7 +147,7 @@ export const setting = {
       const rawChoices = options.choices.map((choice) => (typeof choice === "object" ? choice.value : choice));
       const choiceLabels: Record<string, string> = {};
       for (const choice of options.choices) if (typeof choice === "object") choiceLabels[String(choice.value)] = choice.label;
-      return { type: "enum", default: options.default, choices: rawChoices, choiceLabels, label: options.label, description: options.description, order: options.order };
+      return { type: "enum", default: options.default, choices: rawChoices, choiceLabels, label: options.label, description: options.description, order: options.order, requiresReload: options.requiresReload };
     }
     return { type: "enum", default: options, choices, description };
   },
@@ -151,6 +162,7 @@ export function createSettingsRegistry(
   const values = new Map<string, Record<string, unknown>>(Object.entries(initialValues).map(([id, sectionValues]) => [id, { ...sectionValues }]));
   const persistPath = options.persistPath;
   const initialLoadError = options.loadError;
+  const changeListeners = new Set<SettingsChangeListener>();
 
   function ensureSection(plugin: string, target = values) {
     if (!target.has(plugin)) target.set(plugin, {});
@@ -165,13 +177,29 @@ export function createSettingsRegistry(
     if (persistPath && initialLoadError) throw initialLoadError;
   }
 
-  function commitUpdates(updates: Array<{ plugin: string; key: string; value: unknown }>): void {
+  function commitUpdates(updates: Array<{ plugin: string; key: string; value: unknown }>): SettingChange[] {
     assertWritable();
     const next = new Map<string, Record<string, unknown>>([...values.entries()].map(([id, sectionValues]) => [id, { ...sectionValues }]));
-    for (const update of updates) ensureSection(update.plugin, next)[update.key] = update.value;
+    const changes: SettingChange[] = [];
+    for (const update of updates) {
+      const sectionValues = ensureSection(update.plugin, next);
+      const previousValue = sectionValues[update.key];
+      if (Object.is(previousValue, update.value)) continue;
+      sectionValues[update.key] = update.value;
+      changes.push({ path: `${update.plugin}.${update.key}`, section: update.plugin, key: update.key, previousValue, value: update.value });
+    }
+    if (!changes.length) return changes;
     if (persistPath) writeSettingsFile(persistPath, valuesObject(next));
     values.clear();
     for (const [id, sectionValues] of next) values.set(id, sectionValues);
+    for (const listener of [...changeListeners]) {
+      try {
+        listener(changes);
+      } catch (error) {
+        console.error("pip settings change listener failed", error);
+      }
+    }
+    return changes;
   }
 
   const registry = {
@@ -222,7 +250,7 @@ export function createSettingsRegistry(
       if (!baseValidate(definition, value)) throw new Error(`Invalid value for setting: ${path}`);
       commitUpdates([{ plugin, key, value }]);
     },
-    apply(nextValues: Record<string, Record<string, unknown>>) {
+    apply(nextValues: Record<string, Record<string, unknown>>): SettingChange[] {
       const updates: Array<{ plugin: string; key: string; value: unknown }> = [];
       for (const [plugin, definition] of definitions) {
         const sectionValues = nextValues[plugin];
@@ -234,7 +262,7 @@ export function createSettingsRegistry(
           updates.push({ plugin, key, value });
         }
       }
-      if (updates.length) commitUpdates(updates);
+      return updates.length ? commitUpdates(updates) : [];
     },
     reset(path: string) {
       const [plugin, key] = path.split(".", 2);
@@ -270,6 +298,10 @@ export function createSettingsRegistry(
     },
     loadError() {
       return initialLoadError;
+    },
+    onChange(listener: SettingsChangeListener) {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
     },
   };
 

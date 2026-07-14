@@ -1,9 +1,10 @@
-import { pipSettings, type SettingSection } from "./settings.ts";
+import { pipSettings, type SettingChange, type SettingSection } from "./settings.ts";
 
 export interface ScopedSettings {
   readonly id: string;
   get<T>(key: string, fallback: T): T;
   path(key: string): string;
+  onChange(listener: (changes: readonly SettingChange[]) => void): () => void;
 }
 
 export function settingsFor(id: string): ScopedSettings {
@@ -18,6 +19,12 @@ export function settingsFor(id: string): ScopedSettings {
       } catch {
         return fallback;
       }
+    },
+    onChange(listener) {
+      return pipSettings.onChange((changes) => {
+        const scoped = changes.filter((change) => change.section === id);
+        if (scoped.length) listener(scoped);
+      });
     },
   };
 }

@@ -41,6 +41,7 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
   pi.registerCommand("tiny-mcp", {
     description: "Tiny stdio/HTTP MCP status/config/connect commands",
     handler: async (args: string, ctx: any) => {
+      if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Tiny MCP is disabled in /pip-settings.", "warning");
       const [subcommand, target] = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const cwd = ctx?.cwd ?? process.cwd();
       try {
@@ -88,7 +89,7 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event: any, ctx: any) => {
-    await autoConnectEligible(ctx);
+    if (settingValue("enabled", true)) await autoConnectEligible(ctx);
   });
 
   pi.on("session_shutdown", async () => {

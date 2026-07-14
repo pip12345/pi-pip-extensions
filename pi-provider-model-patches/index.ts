@@ -42,6 +42,7 @@ function registerPatchSettings(patches: ProviderModelPatch[]): void {
           label: patch.label,
           default: false,
           order: index + 1,
+          requiresReload: true,
           description: `Patch ${patch.provider}. Applies after /reload or the next launch; /model-patch applies immediately.`,
         }),
       ]),

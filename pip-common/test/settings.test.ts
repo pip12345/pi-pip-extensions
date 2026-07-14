@@ -65,6 +65,25 @@ describe("settings registry", () => {
     expect(registry.section("x")).toBeUndefined();
   });
 
+  it("emits one batched notification for changed values", () => {
+    const registry = createSettingsRegistry();
+    registry.register("x", { enabled: setting.boolean(true), count: setting.number(1) });
+    const notifications: any[] = [];
+    const unsubscribe = registry.onChange((changes) => notifications.push(changes));
+
+    expect(registry.apply({ x: { enabled: false, count: 2 } })).toHaveLength(2);
+    expect(notifications).toEqual([[
+      { path: "x.enabled", section: "x", key: "enabled", previousValue: true, value: false },
+      { path: "x.count", section: "x", key: "count", previousValue: 1, value: 2 },
+    ]]);
+
+    registry.apply({ x: { enabled: false, count: 2 } });
+    expect(notifications).toHaveLength(1);
+    unsubscribe();
+    registry.set("x.enabled", true);
+    expect(notifications).toHaveLength(1);
+  });
+
   it("preserves malformed files and refuses to overwrite them", () => {
     const dir = mkdtempSync(join(tmpdir(), "pip-settings-malformed-"));
     const path = join(dir, "pip-settings.json");

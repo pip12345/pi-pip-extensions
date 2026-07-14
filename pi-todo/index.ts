@@ -364,6 +364,8 @@ export default function todoExtension(pi: ExtensionAPI) {
     else ctx.ui.setWidget(WIDGET_KEY, linesFactory, { placement: settingValue<Placement>("placement", "above") === "below" ? "belowEditor" : "aboveEditor" });
   };
 
+  const unsubscribeSettings = scopedSettings.onChange(() => refreshWidget());
+
   const persist = (next: TodoState, ctx = currentCtx) => {
     state = normalizeState(next);
     pi.appendEntry(CUSTOM_TYPE, cloneState(state));
@@ -378,7 +380,10 @@ export default function todoExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event: any, ctx: any) => reconstruct(ctx));
   pi.on("session_tree", async (_event: any, ctx: any) => reconstruct(ctx));
-  pi.on("session_shutdown", async (_event: any, ctx: any) => ctx?.ui?.setWidget?.(WIDGET_KEY, undefined));
+  pi.on("session_shutdown", async (_event: any, ctx: any) => {
+    unsubscribeSettings();
+    ctx?.ui?.setWidget?.(WIDGET_KEY, undefined);
+  });
 
   registerPipTool(pi, {
     tool: {
@@ -394,6 +399,7 @@ export default function todoExtension(pi: ExtensionAPI) {
     ],
     parameters: TodoWriteParams,
     async execute(_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+      if (!settingValue("enabled", true)) return { content: [{ type: "text", text: "Todo is disabled in /pip-settings." }], details: { disabled: true } };
       const next = normalizeTodos(params.todos ?? []);
       persist(next, ctx);
       return { content: [{ type: "text", text: `Set ${stateSummary(state.todos)}` }], details: cloneState(state) };
@@ -425,6 +431,7 @@ export default function todoExtension(pi: ExtensionAPI) {
     promptSnippet: "Batch update existing session todos by id or text match",
     parameters: TodoUpdateParams,
     async execute(_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
+      if (!settingValue("enabled", true)) return { content: [{ type: "text", text: "Todo is disabled in /pip-settings." }], details: { disabled: true } };
       const result = applyUpdates(state, params.updates ?? []);
       if (result.changed) persist(result.state, ctx);
       const suffix = result.errors.length ? ` (${result.errors.join("; ")})` : "";
@@ -458,6 +465,7 @@ export default function todoExtension(pi: ExtensionAPI) {
     promptSnippet: "Read the current session todo list",
     parameters: Type.Object({}),
     async execute() {
+      if (!settingValue("enabled", true)) return { content: [{ type: "text", text: "Todo is disabled in /pip-settings." }], details: { disabled: true } };
       return { content: [{ type: "text", text: compactList(state.todos) }], details: cloneState(state) };
     },
     renderCall(_args: any, theme: any) {
@@ -481,6 +489,7 @@ export default function todoExtension(pi: ExtensionAPI) {
   pi.registerCommand("todo", {
     description: "Inspect and edit session todos",
     handler: async (args: string, ctx: any) => {
+      if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Todo is disabled in /pip-settings.", "warning");
       currentCtx = ctx;
       const [cmd = "", first = "", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const textRest = [first, ...rest].join(" ").trim();
