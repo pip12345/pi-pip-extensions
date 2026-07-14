@@ -1,8 +1,14 @@
 import { EventEmitter } from "node:events";
 
+function abortError(method: string): Error {
+  const error = new Error(`MCP request aborted: ${method}`);
+  error.name = "AbortError";
+  return error;
+}
+
 export type JsonRpcId = string | number;
 export type JsonRpcMessage = Record<string, any>;
-type SendFn = (message: JsonRpcMessage) => void;
+type SendFn = (message: JsonRpcMessage, signal?: AbortSignal) => void;
 type RequestHandler = (params: any) => Promise<any> | any;
 
 interface Pending {
@@ -10,6 +16,8 @@ interface Pending {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   method: string;
+  signal?: AbortSignal;
+  onAbort?: () => void;
 }
 
 export class JsonRpcPeer extends EventEmitter {
@@ -21,20 +29,33 @@ export class JsonRpcPeer extends EventEmitter {
     super();
   }
 
-  request(method: string, params?: any, timeoutMs = 30000): Promise<any> {
+  request(method: string, params?: any, timeoutMs = 30000, signal?: AbortSignal): Promise<any> {
+    if (signal?.aborted) return Promise.reject(abortError(method));
     const id = this.nextId++;
     const message: JsonRpcMessage = { jsonrpc: "2.0", id, method };
     if (params !== undefined) message.params = params;
-    const promise = new Promise<any>((resolve, reject) => {
+    return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        this.notify("notifications/cancelled", { requestId: id, reason: `Request timed out after ${timeoutMs}ms` });
+        const pending = this.takePending(id);
+        if (!pending) return;
+        try { this.notify("notifications/cancelled", { requestId: id, reason: `Request timed out after ${timeoutMs}ms` }); } catch {}
         reject(new Error(`MCP request timed out: ${method}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method });
+      const onAbort = signal ? () => {
+        const pending = this.takePending(id);
+        if (!pending) return;
+        try { this.notify("notifications/cancelled", { requestId: id, reason: "Client request aborted" }); } catch {}
+        reject(abortError(method));
+      } : undefined;
+      this.pending.set(id, { resolve, reject, timer, method, signal, onAbort });
+      signal?.addEventListener("abort", onAbort!, { once: true });
+      try {
+        this.sendMessage(message, signal);
+      } catch (error) {
+        this.takePending(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
-    this.sendMessage(message);
-    return promise;
   }
 
   notify(method: string, params?: any): void {
@@ -61,19 +82,25 @@ export class JsonRpcPeer extends EventEmitter {
 
   close(error = new Error("JSON-RPC peer closed")): void {
     for (const [id, pending] of this.pending) {
-      clearTimeout(pending.timer);
+      this.takePending(id);
       pending.reject(error);
-      this.pending.delete(id);
     }
   }
 
   private handleResponse(message: JsonRpcMessage): void {
-    const pending = this.pending.get(message.id);
+    const pending = this.takePending(message.id);
     if (!pending) return;
-    this.pending.delete(message.id);
-    clearTimeout(pending.timer);
     if (message.error) pending.reject(new Error(`MCP ${pending.method} failed: ${message.error.message ?? JSON.stringify(message.error)}`));
     else pending.resolve(message.result);
+  }
+
+  private takePending(id: JsonRpcId): Pending | undefined {
+    const pending = this.pending.get(id);
+    if (!pending) return undefined;
+    this.pending.delete(id);
+    clearTimeout(pending.timer);
+    if (pending.signal && pending.onAbort) pending.signal.removeEventListener("abort", pending.onAbort);
+    return pending;
   }
 
   private async handleRequest(message: JsonRpcMessage): Promise<void> {

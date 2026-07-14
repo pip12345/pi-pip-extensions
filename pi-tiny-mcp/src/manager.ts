@@ -66,7 +66,7 @@ export class TinyMcpManager {
     this.rebuildVisibleTools();
   }
 
-  async connect(serverName: string): Promise<void> {
+  async connect(serverName: string, signal?: AbortSignal): Promise<void> {
     const state = this.requireState(serverName);
     if (!state.runtime) setExplicitlyDisconnected([serverName], false);
     if (state.status === "connected") return;
@@ -83,9 +83,9 @@ export class TinyMcpManager {
     });
     try {
       state.client = client;
-      await client.connect();
+      await client.connect(signal);
       state.status = "connected";
-      await this.refreshTools(serverName);
+      await this.refreshTools(serverName, signal);
     } catch (error) {
       state.status = "error";
       state.lastError = error instanceof Error ? error.message : String(error);
@@ -94,31 +94,31 @@ export class TinyMcpManager {
     }
   }
 
-  async refreshTools(serverName: string): Promise<void> {
+  async refreshTools(serverName: string, signal?: AbortSignal): Promise<void> {
     const state = this.requireState(serverName);
     if (!state.client) return;
-    state.tools = await state.client.listTools();
+    state.tools = await state.client.listTools(signal);
     if (!state.runtime && this.settings.get("metadataCache", true)) updateCachedTools(serverName, state.tools);
     this.rebuildVisibleTools();
   }
 
-  async callVisibleTool(visibleName: string, args: Record<string, unknown>): Promise<any> {
+  async callVisibleTool(visibleName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
     const tool = this.findTool(visibleName);
     if (!tool) throw new Error(`Unknown MCP tool: ${visibleName}`);
-    await this.connect(tool.serverName);
+    await this.connect(tool.serverName, signal);
     const state = this.requireState(tool.serverName);
-    const result = await state.client!.callTool(tool.originalName, args);
+    const result = await state.client!.callTool(tool.originalName, args, signal);
     return result;
   }
 
-  async connectEligible(): Promise<{ connected: string[]; failed: { server: string; error: string }[] }> {
+  async connectEligible(signal?: AbortSignal): Promise<{ connected: string[]; failed: { server: string; error: string }[] }> {
     const connected: string[] = [];
     const failed: { server: string; error: string }[] = [];
     for (const serverName of this.serverNames()) {
       const state = this.requireState(serverName);
       if (!state.runtime && isExplicitlyDisconnected(serverName)) continue;
       try {
-        await this.connect(serverName);
+        await this.connect(serverName, signal);
         connected.push(serverName);
       } catch (error) {
         failed.push({ server: serverName, error: error instanceof Error ? error.message : String(error) });

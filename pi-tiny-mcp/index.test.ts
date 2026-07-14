@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import tinyMcp, { executeTinyMcp as executeWithRuntime, loadTinyMcpConfig, TinyMcpRuntime } from "./index.ts";
 import { readState, writeState } from "./src/state.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests } from "pip-common";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type SettingsRegistry } from "pip-common";
 import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
 
 const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fixtures", name);
@@ -50,9 +50,10 @@ function rpcResponse(id: string | number, result: unknown) {
 }
 
 let directRuntime: TinyMcpRuntime;
+let directSettings: SettingsRegistry;
 
-function executeTinyMcp(input: any, cwd?: string, options?: any) {
-  return executeWithRuntime(directRuntime, input, cwd, options);
+function executeTinyMcp(input: any, cwd?: string, options?: any, signal?: AbortSignal, ctx?: any) {
+  return executeWithRuntime(directRuntime, input, cwd, options, signal, ctx);
 }
 
 async function resetManager() {
@@ -64,6 +65,7 @@ beforeEach(() => {
   const pi = createMockPi();
   registerTinyMcpSettings(pi as any);
   const settings = getPipSettingsRegistry(pi);
+  directSettings = settings;
   settings.set("tiny-mcp.toolPrefix", "server");
   settings.set("tiny-mcp.metadataCache", false);
   settings.set("tiny-mcp.defaultTimeout", "30");
@@ -103,6 +105,28 @@ describe("pi-tiny-mcp", () => {
     await emitEvent(pi, "session_start", {}, ctx);
     await runCommand(pi, "tiny-mcp", "status", ctx);
     expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+  });
+
+  it("shuts down owned resources and rejects tool/command work when disabled live", async () => {
+    const dir = tempProject();
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));
+    const pi = createMockPi();
+    tinyMcp(pi as any);
+    flushPipTools(pi as any);
+    const ctx = createMockCtx({ cwd: dir });
+    const tool = getRegisteredTool(pi, "tiny-mcp");
+    await tool.execute("1", { connect: "basic" }, undefined, undefined, ctx);
+
+    const settings = getPipSettingsRegistry(pi);
+    settings.set("tiny-mcp.enabled", false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(tool.execute("2", { action: "status" }, undefined, undefined, ctx)).rejects.toThrow(/disabled/);
+    await runCommand(pi, "tiny-mcp", "status", ctx);
+    expect(ctx.ui.notifications.at(-1)?.message).toContain("disabled");
+
+    settings.set("tiny-mcp.enabled", true);
+    const status = await tool.execute("3", { action: "status" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("basic: disconnected");
   });
 
   it("loads project config only when project trust is allowed", () => {
@@ -162,6 +186,24 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ tool: "basic_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
   });
 
+  it("throws MCP tool failures and stores oversized full output in a bounded artifact", async () => {
+    const dir = tempProject();
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));
+    await executeTinyMcp({ connect: "basic" }, dir);
+
+    await expect(executeTinyMcp({ tool: "basic_echo", args: '{"fail":true}' }, dir)).rejects.toThrow("requested failure");
+
+    directSettings.set("tiny-mcp.resultLimit", "10000");
+    const full = "x".repeat(30_000);
+    const result = await executeTinyMcp({ tool: "basic_echo", args: JSON.stringify({ text: full }) }, dir, {}, undefined, createMockCtx());
+    expect(result.content[0].text.length).toBeLessThanOrEqual(10_000);
+    expect(result.details).toMatchObject({ action: "call", chars: 30_000, truncated: true });
+    expect(Object.keys(result.details).sort()).toEqual(["action", "artifactPath", "chars", "truncated"]);
+    expect(readFileSync(result.details.artifactPath!, "utf8")).toBe(full);
+    expect(result.content[0].text).toContain(result.details.artifactPath);
+    rmSync(result.details.artifactPath!, { force: true });
+  });
+
   it("adds a memory-only runtime MCP server", async () => {
     const dir = tempProject();
     const config = JSON.stringify({ command: "node", args: [fixture("basic-server.js")] });
@@ -218,6 +260,53 @@ describe("pi-tiny-mcp", () => {
       expect((await executeTinyMcp({ connect: "remote" }, dir)).content[0].text).toContain("remote_echo");
       expect((await executeTinyMcp({ describe: "remote_echo" }, dir)).content[0].text).toContain("Original: echo");
       expect((await executeTinyMcp({ tool: "remote_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
+      await executeTinyMcp({ action: "disconnect" }, dir);
+    });
+  });
+
+  it("aborts pending JSON-RPC and HTTP transport work with the tool signal", async () => {
+    let callClosed = false;
+    await withServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      const payload = await readBody(req);
+      res.setHeader("content-type", "application/json");
+      if (payload.method === "initialize") {
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-03-26", capabilities: {} }));
+        return;
+      }
+      if (payload.method === "notifications/initialized") {
+        res.statusCode = 202;
+        res.end();
+        return;
+      }
+      if (payload.method === "tools/list") {
+        res.end(rpcResponse(payload.id, { tools: [{ name: "slow", description: "Slow", inputSchema: { type: "object" } }] }));
+        return;
+      }
+      if (payload.method === "tools/call") {
+        const timer = setTimeout(() => res.end(rpcResponse(payload.id, { content: [{ type: "text", text: "late" }] })), 1000);
+        res.on("close", () => {
+          clearTimeout(timer);
+          if (!res.writableEnded) callClosed = true;
+        });
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: base } } }));
+      await executeTinyMcp({ connect: "remote" }, dir);
+      const controller = new AbortController();
+      const pending = executeTinyMcp({ tool: "remote_slow", args: "{}" }, dir, {}, controller.signal);
+      setTimeout(() => controller.abort(), 20);
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(callClosed).toBe(true);
       await executeTinyMcp({ action: "disconnect" }, dir);
     });
   });
@@ -378,9 +467,9 @@ describe("pi-tiny-mcp", () => {
   it("reports bad stdout JSON and timeouts", async () => {
     const dir = tempProject();
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { bad: { command: "node", args: [fixture("bad-json-server.js")], timeoutMs: 100 }, slow: { command: "node", args: [fixture("slow-server.js")], timeoutMs: 100 } } }));
-    expect((await executeTinyMcp({ connect: "bad" }, dir)).content[0].text).toMatch(/Invalid JSON|timed out/);
+    await expect(executeTinyMcp({ connect: "bad" }, dir)).rejects.toThrow(/Invalid JSON|timed out/);
     await resetManager();
-    expect((await executeTinyMcp({ connect: "slow" }, dir)).content[0].text).toContain("timed out");
+    await expect(executeTinyMcp({ connect: "slow" }, dir)).rejects.toThrow(/timed out/);
   }, 10_000);
 
   it("shows slash command help and hints", async () => {

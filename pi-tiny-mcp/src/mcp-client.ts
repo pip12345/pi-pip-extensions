@@ -23,7 +23,7 @@ export class TinyMcpClient extends EventEmitter {
   constructor(private options: McpClientOptions) {
     super();
     this.transport = options.config.url ? new HttpTransport({ config: options.config }) : new StdioTransport({ ...options.config, command: options.config.command ?? "", stderr: options.stderr });
-    this.peer = new JsonRpcPeer((message) => this.transport.send(message));
+    this.peer = new JsonRpcPeer((message, signal) => this.transport.send(message, signal));
     this.transport.on("message", (message) => {
       try {
         this.peer.handle(message);
@@ -44,14 +44,14 @@ export class TinyMcpClient extends EventEmitter {
     this.peer.onRequest("roots/list", () => ({ roots: [] }));
   }
 
-  async connect(): Promise<void> {
+  async connect(signal?: AbortSignal): Promise<void> {
     if (this.initialized) return;
     await this.transport.start();
     const result = await this.peer.request("initialize", {
       protocolVersion: this.protocolVersion,
       capabilities: {},
       clientInfo: { name: "pi-tiny-mcp", version: "0.1.0" },
-    }, Math.min(this.options.timeoutMs, 30000));
+    }, Math.min(this.options.timeoutMs, 30000), signal);
     const version = result?.protocolVersion;
     if (typeof version === "string") this.protocolVersion = version;
     this.transport.setProtocolVersion?.(this.protocolVersion);
@@ -60,20 +60,20 @@ export class TinyMcpClient extends EventEmitter {
     this.initialized = true;
   }
 
-  async listTools(): Promise<McpToolInfo[]> {
-    await this.connect();
-    const result = await this.peer.request("tools/list", {}, this.options.timeoutMs);
+  async listTools(signal?: AbortSignal): Promise<McpToolInfo[]> {
+    await this.connect(signal);
+    const result = await this.peer.request("tools/list", {}, this.options.timeoutMs, signal);
     return Array.isArray(result?.tools) ? result.tools : [];
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<McpCallResult> {
-    await this.connect();
-    return await this.peer.request("tools/call", { name, arguments: args }, this.options.config.timeoutMs ?? this.options.timeoutMs);
+  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpCallResult> {
+    await this.connect(signal);
+    return await this.peer.request("tools/call", { name, arguments: args }, this.options.config.timeoutMs ?? this.options.timeoutMs, signal);
   }
 
-  async ping(): Promise<void> {
-    await this.connect();
-    await this.peer.request("ping", {}, Math.min(this.options.timeoutMs, 10000));
+  async ping(signal?: AbortSignal): Promise<void> {
+    await this.connect(signal);
+    await this.peer.request("ping", {}, Math.min(this.options.timeoutMs, 10000), signal);
   }
 
   stderrTail(): string[] {

@@ -3,6 +3,7 @@ import { firstResultText, registerPipTool, type ScopedSettings } from "pip-commo
 import { parseTinyMcpServerConfig } from "./config.ts";
 import type { ResultLimitSetting } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
+import { writeTinyMcpArtifact } from "./artifacts.ts";
 import type { TinyMcpServerConfig, VisibleToolInfo } from "./types.ts";
 
 export interface TinyMcpExecutionOptions {
@@ -64,7 +65,7 @@ export function registerTinyMcpTool(pi: any, runtime: TinyMcpRuntime): void {
         config: Type.Optional(Type.String({ description: "JSON string MCP server config for action:add" })),
         action: Type.Optional(Type.String({ description: "status/disconnect/add" })),
       }),
-      execute: async (_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) => executeTinyMcp(runtime, params ?? {}, ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true }),
+      execute: async (_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: any) => executeTinyMcp(runtime, params ?? {}, ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true }, signal, ctx),
     },
     metadata: {
       pluginId: "tiny-mcp",
@@ -83,44 +84,42 @@ export function registerTinyMcpTool(pi: any, runtime: TinyMcpRuntime): void {
   });
 }
 
-export async function executeTinyMcp(runtime: TinyMcpRuntime, input: any, cwd = process.cwd(), options: TinyMcpExecutionOptions = {}) {
+export async function executeTinyMcp(runtime: TinyMcpRuntime, input: any, cwd = process.cwd(), options: TinyMcpExecutionOptions = {}, signal?: AbortSignal, ctx?: any) {
+  if (!runtime.settings.get("enabled", true)) throw new Error("Tiny MCP is disabled in /pip-settings.");
   const m = runtime.getManager(cwd, options);
-  try {
-    if (input.action === "add") {
-      const serverName = parseServerName(input.server);
-      const config = parseRuntimeServerConfig(input.config, serverName, cwd);
-      await m.addRuntimeServer(serverName, config);
-      if (input.connect === true || input.connect === "true" || input.connect === serverName) {
-        await m.connect(serverName);
-        return textResult(`Added memory-only MCP server ${serverName} and connected.\n${formatTools(m.allTools().filter((tool) => tool.serverName === serverName))}`);
-      }
-      return textResult(`Added memory-only MCP server ${serverName}. Use tiny-mcp({ connect: "${serverName}" }) to connect.`);
+  const result = (text: string, details: Record<string, unknown> = {}) => boundedResult(runtime, text, cwd, ctx, details);
+  if (input.action === "add") {
+    const serverName = parseServerName(input.server);
+    const config = parseRuntimeServerConfig(input.config, serverName, cwd);
+    await m.addRuntimeServer(serverName, config);
+    if (input.connect === true || input.connect === "true" || input.connect === serverName) {
+      await m.connect(serverName, signal);
+      return result(`Added memory-only MCP server ${serverName} and connected.\n${formatTools(m.allTools().filter((tool) => tool.serverName === serverName))}`, { action: "add", server: serverName });
     }
-    if (typeof input.connect === "boolean") throw new Error("connect:true is only valid with action:add; use connect:\"server\" otherwise");
-    if (input.connect) {
-      await m.connect(String(input.connect));
-      return textResult(`Connected ${input.connect}.\n${formatTools(m.allTools().filter((tool) => tool.serverName === input.connect))}`);
-    }
-    if (input.action === "disconnect") {
-      await m.disconnect(typeof input.server === "string" ? input.server : undefined);
-      return textResult("Disconnected MCP server(s).");
-    }
-    if (input.server) return textResult(formatTools(m.allTools().filter((tool) => tool.serverName === String(input.server))) || `No cached tools for ${input.server}. Try tiny-mcp({ connect: "${input.server}" }).`);
-    if (input.search) return textResult(formatTools(searchTools(m.allTools(), String(input.search))) || "No matching MCP tools.");
-    if (input.describe) {
-      const tool = m.findTool(String(input.describe));
-      if (!tool) throw new Error(`Unknown MCP tool: ${input.describe}`);
-      return textResult(describeTool(tool));
-    }
-    if (input.tool) {
-      const args = parseArgs(input.args);
-      const result = await m.callVisibleTool(String(input.tool), args);
-      return mcpResultToPi(result, runtime.settings);
-    }
-    return textResult(m.status());
-  } catch (error) {
-    return textResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    return result(`Added memory-only MCP server ${serverName}. Use tiny-mcp({ connect: "${serverName}" }) to connect.`, { action: "add", server: serverName });
   }
+  if (typeof input.connect === "boolean") throw new Error("connect:true is only valid with action:add; use connect:\"server\" otherwise");
+  if (input.connect) {
+    await m.connect(String(input.connect), signal);
+    return result(`Connected ${input.connect}.\n${formatTools(m.allTools().filter((tool) => tool.serverName === input.connect))}`, { action: "connect", server: String(input.connect) });
+  }
+  if (input.action === "disconnect") {
+    await m.disconnect(typeof input.server === "string" ? input.server : undefined);
+    return result("Disconnected MCP server(s).", { action: "disconnect" });
+  }
+  if (input.server) return result(formatTools(m.allTools().filter((tool) => tool.serverName === String(input.server))) || `No cached tools for ${input.server}. Try tiny-mcp({ connect: "${input.server}" }).`, { action: "list", server: String(input.server) });
+  if (input.search) return result(formatTools(searchTools(m.allTools(), String(input.search))) || "No matching MCP tools.", { action: "search" });
+  if (input.describe) {
+    const tool = m.findTool(String(input.describe));
+    if (!tool) throw new Error(`Unknown MCP tool: ${input.describe}`);
+    return result(describeTool(tool), { action: "describe", tool: tool.visibleName });
+  }
+  if (input.tool) {
+    const args = parseArgs(input.args);
+    const result = await m.callVisibleTool(String(input.tool), args, signal);
+    return mcpResultToPi(runtime, result, cwd, ctx);
+  }
+  return result(m.status(), { action: "status" });
 }
 
 function parseServerName(raw: unknown): string {
@@ -182,18 +181,29 @@ function formatSchemaSummary(schema: unknown): string {
   return names.length ? `\n  args: ${names.join(", ")}` : "";
 }
 
-function mcpResultToPi(result: any, settings: ScopedSettings) {
-  const text = blocksToText(result?.content ?? []);
-  const limit = Number(settings.get<ResultLimitSetting>("resultLimit", "20000"));
-  const shown = text.length > limit ? `${text.slice(0, limit)}\n...[truncated ${text.length - limit} chars]` : text;
-  return { content: [{ type: "text" as const, text: shown || JSON.stringify(result) }], details: result };
+function mcpResultToPi(runtime: TinyMcpRuntime, callResult: any, cwd: string, ctx?: any) {
+  const text = blocksToText(callResult?.content ?? []) || JSON.stringify(callResult);
+  if (callResult?.isError) throw new Error(text || "MCP tool call failed");
+  return boundedResult(runtime, text, cwd, ctx, { action: "call" });
 }
 
 function blocksToText(blocks: any[]): string {
   return blocks.map((block) => block?.type === "text" ? String(block.text ?? "") : `[${block?.type ?? "content"}]`).join("\n");
 }
 
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }], details: { text } };
+function boundedResult(runtime: TinyMcpRuntime, text: string, cwd: string, ctx: any, details: Record<string, unknown>) {
+  const limit = Math.max(1000, Number(runtime.settings.get<ResultLimitSetting>("resultLimit", "20000")) || 20000);
+  let shown = text;
+  let artifactPath: string | undefined;
+  if (text.length > limit) {
+    artifactPath = writeTinyMcpArtifact(text, ctx, cwd);
+    const suffix = `\n...[truncated; ${text.length} total chars; full output: ${artifactPath}]`;
+    shown = `${text.slice(0, Math.max(0, limit - suffix.length))}${suffix}`;
+  }
+  const boundedDetails = Object.fromEntries(Object.entries(details).map(([key, value]) => [key, typeof value === "string" ? value.slice(0, 500) : typeof value === "number" || typeof value === "boolean" ? value : String(value).slice(0, 500)]));
+  return {
+    content: [{ type: "text" as const, text: shown }],
+    details: { ...boundedDetails, chars: text.length, truncated: Boolean(artifactPath), artifactPath },
+  };
 }
 

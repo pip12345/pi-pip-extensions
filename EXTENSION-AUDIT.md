@@ -208,22 +208,11 @@ Settings whose registrations/resources cannot safely change in place carry decla
 
 ---
 
-### 15. Tiny MCP output handling is bounded only partially
+### 15. Tiny MCP output handling is bounded only partially — **resolved**
 
-**Evidence**
+Call, list, search, describe, connect, add, disconnect, and status now share one bounded-result path. `details` contains only bounded metadata (`action`, character count, truncation flag, and optional artifact path), while oversized full text is written under the managed Tiny MCP artifact root and linked from the result.
 
-- `pi-tiny-mcp/src/proxy-tool.ts:177-180` truncates called-tool text by characters but stores the full MCP result in `details`.
-- The truncated response gives no artifact path from which the full output can be recovered.
-- Status/list/search/describe paths use `textResult()` and have no shared output cap.
-- The tool ignores its `AbortSignal`; MCP requests continue until their own timeout.
-
-**Impact**
-
-Large details can bloat session JSONL files, list/describe output can exceed Pi’s required tool-output budget, truncated content is lost to the model, and Esc does not promptly cancel an MCP request.
-
-**Recommended direction**
-
-Create one shared bounded-result path using Pi’s line/byte truncation conventions, save full output to a managed artifact when needed, keep `details` bounded, and thread cancellation into JSON-RPC pending requests/transports.
+Execution and MCP `isError` failures are thrown so Pi marks tool errors at the framework level. `AbortSignal` now flows through the tool, manager, MCP client, JSON-RPC pending request, and HTTP POST/legacy transport; abort removes pending timers/listeners, sends cancellation notification where possible, and aborts fetch work. Live disable closes owned managers and blocks subsequent tool/command work.
 
 ---
 

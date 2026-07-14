@@ -29,7 +29,7 @@ function managerForContext(runtime: TinyMcpRuntime, ctx: any) {
 
 async function autoConnectEligible(runtime: TinyMcpRuntime, ctx: any): Promise<void> {
   const manager = managerForContext(runtime, ctx);
-  const result = await manager.connectEligible();
+  const result = await manager.connectEligible(ctx?.signal);
   if (result.failed.length) ctx.ui?.notify?.(`tiny-mcp failed to connect: ${result.failed.map((failure) => failure.server).join(", ")}. Use /tiny-mcp status for details.`, "warning");
 }
 
@@ -37,6 +37,9 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
   registerTinyMcpSettings(pi);
   const settings = tinyMcpSettings(pi);
   const runtime = new TinyMcpRuntime(settings);
+  const unsubscribeSettings = settings.onChange((changes) => {
+    if (changes.some((change) => change.key === "enabled" && change.value === false)) void runtime.shutdown();
+  });
   if (settings.get("enabled", true)) registerTinyMcpTool(pi, runtime);
 
   pi.registerCommand("tiny-mcp", {
@@ -62,10 +65,10 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
         const manager = managerForContext(runtime, ctx);
         if (subcommand === "connect") {
           if (target) {
-            await manager.connect(target);
+            await manager.connect(target, ctx?.signal);
             showOutput(pi, ctx, `Connected ${target}`);
           } else {
-            const result = await manager.connectEligible();
+            const result = await manager.connectEligible(ctx?.signal);
             const connected = result.connected.length ? `Connected ${result.connected.join(", ")}` : "No eligible MCP servers to connect";
             const failed = result.failed.length ? `\nFailed: ${result.failed.map((failure) => failure.server).join(", ")}` : "";
             showOutput(pi, ctx, `${connected}${failed}`);
@@ -94,6 +97,7 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    unsubscribeSettings();
     await runtime.shutdown();
   });
 }

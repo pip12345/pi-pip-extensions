@@ -96,12 +96,12 @@
 - [x] Replace unsafe manager reset with awaited shutdown followed by recreation.
 - [x] Give MCP managers explicit runtime ownership or reference-counted sharing.
 - [x] Ensure one runtime cannot close another runtime's managers.
-- [ ] Throw execution failures so Pi receives framework-level tool errors.
-- [ ] Add one shared bounded-result path for call, list, search, describe, and status output.
-- [ ] Keep `details` bounded.
-- [ ] Save full truncated output to managed artifacts and return the artifact path.
-- [ ] Thread `AbortSignal` through JSON-RPC requests and transports.
-- [ ] Ensure disabling Tiny MCP stops commands, tools, auto-connect, and owned resources.
+- [x] Throw execution failures so Pi receives framework-level tool errors.
+- [x] Add one shared bounded-result path for call, list, search, describe, and status output.
+- [x] Keep `details` bounded.
+- [x] Save full truncated output to managed artifacts and return the artifact path.
+- [x] Thread `AbortSignal` through JSON-RPC requests and transports.
+- [x] Ensure disabling Tiny MCP stops commands, tools, auto-connect, and owned resources.
 
 ## 8. Repair provider ownership and networking
 

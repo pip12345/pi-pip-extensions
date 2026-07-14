@@ -57,7 +57,7 @@ export class StdioTransport extends EventEmitter {
     });
   }
 
-  send(message: Record<string, unknown>): void {
+  send(message: Record<string, unknown>, _signal?: AbortSignal): void {
     if (!this.child || this.closed) throw new Error("MCP server process is not running");
     this.child.stdin.write(`${JSON.stringify(message)}\n`, "utf8");
   }
