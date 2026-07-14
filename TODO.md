@@ -56,9 +56,9 @@
 
 - [x] Prevent Tiny MCP from loading or auto-connecting project configuration when the project is untrusted.
 - [x] Prevent Subagents from loading project agent definitions when the project is untrusted.
-- [ ] Canonicalize existing Secrets Guard targets through `realpath`.
-- [ ] Canonicalize the nearest existing parent for write targets.
-- [ ] Prevent recursive grep/find/ls operations from traversing or returning guarded descendants.
+- [x] Canonicalize existing Secrets Guard targets through `realpath`.
+- [x] Canonicalize the nearest existing parent for write targets.
+- [x] Prevent recursive grep/find/ls operations from traversing or returning guarded descendants.
 - [ ] Recompute or validate restored subagent context paths before recursive deletion.
 - [ ] Quarantine malformed persisted subagent records instead of performing cleanup from untrusted fields.
 - [ ] Add trusted/untrusted, symlink, recursive traversal, and path-containment regression tests.

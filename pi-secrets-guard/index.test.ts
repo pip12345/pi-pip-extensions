@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -88,6 +88,41 @@ describe("secrets guard", () => {
     }
   });
 
+  it("blocks reads through symlinks to guarded files", async () => {
+    const dir = tempRepo();
+    try {
+      writeFileSync(join(dir, ".env"), "TOKEN=secret");
+      symlinkSync(join(dir, ".env"), join(dir, "safe-link"));
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir });
+
+      const [blocked] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "safe-link" }, toolCallId: "1" }, ctx);
+      expect(blocked).toMatchObject({ block: true });
+      expect(blocked.reason).toContain(join(dir, ".env"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("canonicalizes the nearest existing parent for writes", async () => {
+    const dir = tempRepo();
+    try {
+      writeFileSync(join(dir, ".secretignore"), "private/\n");
+      mkdirSync(join(dir, "private"));
+      symlinkSync(join(dir, "private"), join(dir, "alias"));
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir });
+
+      const [blocked] = await emitEvent(pi, "tool_call", { toolName: "write", input: { path: "alias/new.txt" }, toolCallId: "1" }, ctx);
+      expect(blocked).toMatchObject({ block: true });
+      expect(blocked.reason).toContain(".secretignore: private/");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks paths matched by project .secretignore", async () => {
     const dir = tempRepo();
     try {
@@ -105,6 +140,53 @@ describe("secrets guard", () => {
       expect(blocked.reason).toContain(".secretignore: private/");
 
       const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "important.txt" }, toolCallId: "2" }, ctx);
+      expect(allowed).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks search and listing roots that contain guarded descendants", async () => {
+    const dir = tempRepo();
+    try {
+      mkdirSync(join(dir, "src"));
+      mkdirSync(join(dir, "src", "nested"));
+      writeFileSync(join(dir, "src", "visible.txt"), "shown");
+      writeFileSync(join(dir, "src", "credentials.json"), "hidden");
+      writeFileSync(join(dir, "src", "nested", "secrets.yaml"), "hidden");
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir });
+
+      const [lsBlocked] = await emitEvent(pi, "tool_call", { toolName: "ls", input: { path: "src" }, toolCallId: "ls" }, ctx);
+      const [grepBlocked] = await emitEvent(pi, "tool_call", { toolName: "grep", input: { path: "src", pattern: "hidden" }, toolCallId: "grep" }, ctx);
+      const [findBlocked] = await emitEvent(pi, "tool_call", { toolName: "find", input: { path: "src", pattern: "*.txt" }, toolCallId: "find" }, ctx);
+
+      expect(lsBlocked).toMatchObject({ block: true });
+      expect(lsBlocked.reason).toContain("credentials.*");
+      expect(grepBlocked).toMatchObject({ block: true });
+      expect(findBlocked).toMatchObject({ block: true });
+
+      rmSync(join(dir, "src", "credentials.json"));
+      rmSync(join(dir, "src", "nested", "secrets.yaml"));
+      const [allowed] = await emitEvent(pi, "tool_call", { toolName: "grep", input: { path: "src", pattern: "shown" }, toolCallId: "allowed" }, ctx);
+      expect(allowed).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores project .secretignore rules when the project is untrusted", async () => {
+    const dir = tempRepo();
+    try {
+      writeFileSync(join(dir, ".secretignore"), "private/\n");
+      mkdirSync(join(dir, "private"));
+      writeFileSync(join(dir, "private", "notes.txt"), "project data");
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir, projectTrusted: false });
+
+      const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "private/notes.txt" }, toolCallId: "1" }, ctx);
       expect(allowed).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -12,6 +12,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Findings 6, 20, and 36 were resolved by producing self-contained standalone packages with bundled `pip-common`, explicit runtime allowlists, and isolated Pi-loader tests.
 - Removable feature boundaries are now enforced: production sibling imports and reverse `pip-common` dependencies fail tests, while each standalone feature loads with only Pi and its bundled common runtime.
 - Findings 3–4 were resolved by threading `ctx.isProjectTrusted()` into Tiny MCP config/manager creation and Subagent agent discovery.
+- Finding 5 was resolved with canonical path checks, nearest-existing-parent resolution for writes, and preflight blocking for search/list roots containing guarded descendants.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
@@ -55,26 +56,13 @@ Agent discovery now defaults to builtin/user definitions only. Every extension p
 
 ---
 
-### 5. Secrets Guard has containment gaps for symlinks and broad searches
+### 5. Secrets Guard has containment gaps for symlinks and broad searches — **resolved**
 
-**Evidence**
+Direct tool targets are now checked through both lexical and canonical paths. Existing targets resolve through `realpath`; new write/edit targets resolve through the nearest existing canonical parent, so symlink aliases cannot bypass common or `.secretignore` rules.
 
-- `pi-secrets-guard/index.ts:111-119` lexically resolves paths but does not canonicalize existing paths with `realpath`.
-- Guard matching is performed against the lexical path, so an innocently named symlink to `.env`, a private key, or a `.secretignore` target does not match the target path.
-- `pi-secrets-guard/index.ts:329-345` extracts only the explicit `path` argument.
-- `pi-secrets-guard/index.ts:412-435` blocks `grep`, `find`, or `ls` only when that explicit target itself is guarded.
+Before execution, `ls` inspects immediate entries and `grep`/`find` inspect recursive descendants. If any reachable path is guarded, the whole call is blocked rather than reading and attempting post-result redaction. Missing search paths default to `.`, and project `.secretignore` is read only when trust is explicitly true. Regression tests cover symlink reads, writes below symlinked parents, recursive search/list containment, clean roots, and untrusted project rules.
 
-**Impact**
-
-- `read safe-link` can follow a symlink into a guarded file.
-- A recursive `grep` rooted at an allowed directory can inspect matching non-hidden guarded files such as `credentials.json`, `secrets.yaml`, or `*.pem`.
-- `find` can list guarded descendants.
-
-The “best-effort” bash mode is intentionally bypassable, but the direct built-in tool gaps are more serious because those tools are presented as guarded.
-
-**Recommended direction**
-
-Canonicalize existing targets and the nearest existing parent for writes. For recursive tools, filter results or prevent traversal into guarded descendants rather than checking only the root argument. Add symlink, recursive grep, and recursive find tests.
+The explicitly best-effort Bash token classifier remains intentionally non-authoritative.
 
 ---
 

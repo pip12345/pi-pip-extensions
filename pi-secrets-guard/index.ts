@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSettingsSection, setting, settingsFor } from "pip-common";
@@ -82,7 +82,7 @@ registerSettingsSection({
     }),
     protectReads: setting.boolean({ label: "Protect reads", default: true, order: 5, description: "Block read tool calls for guarded paths." }),
     protectWrites: setting.boolean({ label: "Protect writes", default: true, order: 6, description: "Block write and edit tool calls for guarded paths." }),
-    protectSearchTargets: setting.boolean({ label: "Protect search/list", default: true, order: 7, description: "Block ls, grep, and find when their explicit target path is guarded." }),
+    protectSearchTargets: setting.boolean({ label: "Protect search/list", default: true, order: 7, description: "Block ls, grep, and find when their target or reachable descendants are guarded." }),
     bashGuard: setting.enum({
       label: "Bash guard",
       default: "best-effort",
@@ -281,51 +281,45 @@ async function secretignoreRules(cwd: string): Promise<IgnoreRule[]> {
 }
 
 function projectRulesAllowed(ctx: any): boolean {
-  const trusted = ctx?.isProjectTrusted?.();
-  return trusted !== false;
+  return ctx?.isProjectTrusted?.() === true;
 }
 
-async function commonSecretMatch(cwd: string, absolutePath: string): Promise<GuardMatch | undefined> {
-  const root = await projectRootFor(cwd);
-  const relativePath = pathForRoot(root, absolutePath);
-  const absoluteCandidate = stripLeadingSlash(normalizePath(resolve(absolutePath)));
-  const candidates = [relativePath, absoluteCandidate].filter((candidate): candidate is string => Boolean(candidate));
+type GuardMatcher = (absolutePath: string) => Promise<GuardMatch | undefined>;
 
-  for (const candidate of candidates) {
-    const match = matchIgnoreRules(candidate, COMMON_SECRET_RULES);
-    if (match) return { absolutePath, source: "common-secrets", pattern: match.pattern };
-  }
-  return undefined;
-}
-
-async function secretignoreMatch(ctx: any, absolutePath: string): Promise<GuardMatch | undefined> {
-  if (!projectRulesAllowed(ctx)) return undefined;
+async function createGuardMatcher(ctx: any): Promise<GuardMatcher> {
   const cwd = ctx?.cwd ?? process.cwd();
   const root = await projectRootFor(cwd);
-  const relativePath = pathForRoot(root, absolutePath);
-  if (!relativePath) return undefined;
-  const match = matchIgnoreRules(relativePath, await secretignoreRules(cwd));
-  return match ? { absolutePath, source: ".secretignore", pattern: match.pattern } : undefined;
+  const protectCommon = settingValue("protectCommonSecrets", true);
+  const protectSecretignore = settingValue("protectSecretignore", true) && projectRulesAllowed(ctx);
+  const protectGitignore = settingValue("protectGitignore", false);
+  const projectRules = protectSecretignore ? await secretignoreRules(cwd) : [];
+
+  return async (absolutePath: string) => {
+    if (protectCommon) {
+      const relativePath = pathForRoot(root, absolutePath);
+      const absoluteCandidate = stripLeadingSlash(normalizePath(resolve(absolutePath)));
+      const candidates = [relativePath, absoluteCandidate].filter((candidate): candidate is string => Boolean(candidate));
+      for (const candidate of candidates) {
+        const match = matchIgnoreRules(candidate, COMMON_SECRET_RULES);
+        if (match) return { absolutePath, source: "common-secrets", pattern: match.pattern };
+      }
+    }
+
+    if (projectRules.length) {
+      const relativePath = pathForRoot(root, absolutePath);
+      if (relativePath) {
+        const match = matchIgnoreRules(relativePath, projectRules);
+        if (match) return { absolutePath, source: ".secretignore", pattern: match.pattern };
+      }
+    }
+
+    if (protectGitignore && (await isGitIgnored(cwd, absolutePath))) return { absolutePath, source: ".gitignore" };
+    return undefined;
+  };
 }
 
 export async function guardedPathMatch(ctx: any, absolutePath: string): Promise<GuardMatch | undefined> {
-  const cwd = ctx?.cwd ?? process.cwd();
-
-  if (settingValue("protectCommonSecrets", true)) {
-    const match = await commonSecretMatch(cwd, absolutePath);
-    if (match) return match;
-  }
-
-  if (settingValue("protectSecretignore", true)) {
-    const match = await secretignoreMatch(ctx, absolutePath);
-    if (match) return match;
-  }
-
-  if (settingValue("protectGitignore", false) && (await isGitIgnored(cwd, absolutePath))) {
-    return { absolutePath, source: ".gitignore" };
-  }
-
-  return undefined;
+  return (await createGuardMatcher(ctx))(absolutePath);
 }
 
 function guardSourcesDescription(): string {
@@ -387,11 +381,81 @@ export function bashPathTokens(command: string): string[] {
   return tokens;
 }
 
-async function blockedGuardedPath(ctx: any, rawPath: unknown): Promise<GuardMatch | undefined> {
+async function canonicalWritePath(absolutePath: string): Promise<string> {
+  const suffix: string[] = [];
+  let current = absolutePath;
+  while (true) {
+    try {
+      return resolve(await realpath(current), ...suffix);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return absolutePath;
+      suffix.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+async function pathCandidates(cwd: string, rawPath: unknown, forWrite: boolean): Promise<string[]> {
+  const lexical = resolveToolPath(cwd, rawPath);
+  if (!lexical) return [];
+  let canonical = lexical;
+  try {
+    canonical = await realpath(lexical);
+  } catch {
+    if (forWrite) canonical = await canonicalWritePath(lexical);
+  }
+  return [...new Set([lexical, canonical])];
+}
+
+async function blockedGuardedPath(ctx: any, rawPath: unknown, forWrite = false, matcher?: GuardMatcher): Promise<GuardMatch | undefined> {
   const cwd = ctx?.cwd ?? process.cwd();
-  const absolutePath = resolveToolPath(cwd, rawPath);
-  if (!absolutePath) return undefined;
-  return guardedPathMatch(ctx, absolutePath);
+  const match = matcher ?? await createGuardMatcher(ctx);
+  for (const candidate of await pathCandidates(cwd, rawPath, forWrite)) {
+    const blocked = await match(candidate);
+    if (blocked) return blocked;
+  }
+  return undefined;
+}
+
+async function guardedDescendantMatch(ctx: any, rawRoot: unknown, recursive: boolean, matcher: GuardMatcher): Promise<GuardMatch | undefined> {
+  const cwd = ctx?.cwd ?? process.cwd();
+  const [root] = await pathCandidates(cwd, rawRoot ?? ".", false);
+  if (!root) return undefined;
+  try {
+    if (!(await stat(root)).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  const queue = [root];
+  const visited = new Set<string>();
+  while (queue.length) {
+    const directory = queue.shift()!;
+    let canonicalDirectory: string;
+    try {
+      canonicalDirectory = await realpath(directory);
+    } catch {
+      continue;
+    }
+    if (visited.has(canonicalDirectory)) continue;
+    visited.add(canonicalDirectory);
+
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const child = join(directory, entry.name);
+      const blocked = await blockedGuardedPath(ctx, child, false, matcher);
+      if (blocked) return blocked;
+      if (recursive && entry.isDirectory() && entry.name !== ".git") queue.push(child);
+    }
+    if (!recursive) break;
+  }
+  return undefined;
 }
 
 function blockReason(match: GuardMatch): string {
@@ -425,8 +489,12 @@ export default function secretsGuard(pi: ExtensionAPI) {
     }
 
     if (!protectionEnabled(event.toolName)) return;
-    const rawPath = explicitPathInput(event);
-    const blocked = await blockedGuardedPath(ctx, rawPath);
+    const matcher = await createGuardMatcher(ctx);
+    const searchTool = event.toolName === "ls" || event.toolName === "grep" || event.toolName === "find";
+    const rawPath = explicitPathInput(event) ?? (searchTool ? "." : undefined);
+    const forWrite = event.toolName === "write" || event.toolName === "edit";
+    let blocked = await blockedGuardedPath(ctx, rawPath, forWrite, matcher);
+    if (!blocked && searchTool) blocked = await guardedDescendantMatch(ctx, rawPath, event.toolName !== "ls", matcher);
     if (!blocked) return;
     ctx.ui?.notify?.(`Secrets Guard blocked ${event.toolName}: ${blocked.absolutePath}`, "warning");
     return { block: true, reason: blockReason(blocked) };
