@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import treeEdit from "./index.ts";
-import { pipSettings } from "../pip-common/index.ts";
-import { createMockPi, runCommand } from "../pip-common/testing.ts";
+import { pipSettings } from "pip-common";
+import { createMockPi, runCommand } from "pip-common/testing";
 
 describe("pi-tree-edit", () => {
   it("registers the tree-edit command", () => {

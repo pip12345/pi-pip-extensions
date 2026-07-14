@@ -1,4 +1,4 @@
-import { formatTokenCount } from "../../pip-common/index.ts";
+import { formatTokenCount } from "pip-common";
 import { fitSegment, renderBar } from "./layout.ts";
 import { getBranchTokens } from "./token/breakdown.ts";
 

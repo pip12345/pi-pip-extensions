@@ -7,8 +7,8 @@ import extension, { parseMcpResponse } from "./index.ts";
 import { formatChars } from "./src/limits.ts";
 import { formatWebSearchArtifact } from "./src/websearch-format.ts";
 import { rewriteGitHubUrl } from "./src/sites/github.ts";
-import { pipSettings } from "../pip-common/index.ts";
-import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
+import { pipSettings } from "pip-common";
+import { createMockPi, getRegisteredTool } from "pip-common/testing";
 
 async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void, test: (url: string) => Promise<void>) {
   const server = createServer(handler);

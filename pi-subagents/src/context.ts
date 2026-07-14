@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { pipPath } from "../../pip-common/index.ts";
+import { pipPath } from "pip-common";
 
 function safePart(value: string): string {
   const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";

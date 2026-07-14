@@ -1,5 +1,5 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { TokenUsage } from "../../pip-common/index.ts";
+import type { TokenUsage } from "pip-common";
 
 export type AgentTools = "all" | "none" | "builtins" | string[];
 export type AgentSource = "builtin" | "user" | "legacy" | "project";

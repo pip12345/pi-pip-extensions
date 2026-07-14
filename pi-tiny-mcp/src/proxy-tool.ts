@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { firstResultText, registerPipTool } from "../../pip-common/index.ts";
+import { firstResultText, registerPipTool } from "pip-common";
 import { parseTinyMcpServerConfig } from "./config.ts";
 import { resultLimit } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";

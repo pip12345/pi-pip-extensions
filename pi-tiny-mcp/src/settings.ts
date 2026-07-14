@@ -1,4 +1,4 @@
-import { registerSettingsSection, setting, settingsFor } from "../../pip-common/index.ts";
+import { registerSettingsSection, setting, settingsFor } from "pip-common";
 
 export const SETTINGS_ID = "tiny-mcp";
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { pipPath } from "../../../pip-common/index.ts";
+import { pipPath } from "pip-common";
 import { addEventToRollups, emptyRollups, mergeRollups, normalizeUsageRollups } from "./rollups.ts";
 import { readDailyUsage, writeDailyUsage } from "./daily.ts";
 import { normalizeUsageEvent } from "./events.ts";

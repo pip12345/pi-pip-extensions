@@ -2,7 +2,7 @@
 
 ## Repository shape
 
-This directory is a loose collection of Pi extensions plus shared helper code.
+This repository is one aggregate Pi package with separately filterable feature entrypoints. Each `pi-*` workspace is also maintained as a standalone package.
 
 - `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers
 - `pi-tool-ui` - compact rendering for built-in and Pip tools
@@ -18,7 +18,7 @@ This directory is a loose collection of Pi extensions plus shared helper code.
 - `pi-tiny-mcp` - tiny stdio/HTTP MCP adapter
 - `pi-webfetch-websearch` - cleaned web fetching and no-key web search
 
-Each `pi-*` folder is intended to work both when the whole repo is loaded as a raw extension folder and when packages are installed with dependencies. Shared code lives in `pip-common`; packages declare it as a dependency, but source files use relative imports so raw-folder loading does not require `npm install`.
+Shared code lives in `pip-common`. Feature sources import it by package name, and standalone tarballs bundle it under each feature's `node_modules`. Run `npm install` before loading a local checkout so npm creates the workspace links.
 
 ## `/pip-settings`
 
@@ -82,6 +82,16 @@ npm run typecheck
 npm test && npm run typecheck
 ```
 
+## Package tarballs
+
+Generate aggregate and standalone workspace tarballs through the staging command so each feature includes its bundled `pip-common` runtime:
+
+```bash
+npm run pack:workspaces -- --pack-destination <directory>
+```
+
+The package tests install every feature tarball in isolation and load it through Pi's package rules.
+
 ## Unit-test approach
 
 Tests use Vitest and mostly avoid launching Pi. Extensions are imported directly and passed a mocked `ExtensionAPI` from `pip-common/testing.ts`.
@@ -90,7 +100,7 @@ Example:
 
 ```ts
 import extension from "../index.ts";
-import { createMockPi } from "../pip-common/testing.ts";
+import { createMockPi } from "pip-common/testing";
 
 it("registers command", () => {
   const pi = createMockPi();
@@ -126,18 +136,27 @@ Minimal `package.json`:
   "name": "pi-example",
   "version": "0.1.0",
   "type": "module",
-  "pi": { "extensions": ["./index.ts"] },
+  "pi": {
+    "extensions": [
+      "node_modules/pip-common/index.ts",
+      "./index.ts"
+    ]
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
+  "dependencies": {
+    "pip-common": "0.1.0"
+  },
+  "bundledDependencies": ["pip-common"],
   "files": ["index.ts", "README.md"]
 }
 ```
 
-If the extension needs shared helpers, declare a `pip-common` dependency in `package.json`, but import it relatively in source so direct folder loading works without installing/linking workspace packages:
+If the extension needs shared helpers, declare and bundle the matching `pip-common` workspace version, load its bootstrap before the feature, and import it by package name:
 
 ```ts
-import { pipSettings } from "../pip-common/index.ts";
+import { pipSettings } from "pip-common";
 ```
 
-Keep `pip-common` dependency versions in sync with the workspace package version.
+Keep `pip-common` dependency versions in sync and use `npm run pack:workspaces` so the hoisted workspace dependency is staged into each tarball.

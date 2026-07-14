@@ -1,4 +1,4 @@
-import type { TokenUsage as Tokens } from "../../../pip-common/index.ts";
+import type { TokenUsage as Tokens } from "pip-common";
 
 export type RangeKey = "today" | "7d" | "30d" | "all";
 export type GroupBy = "model" | "provider" | "day";

@@ -1,4 +1,4 @@
-import { emptyUsage } from "../../pip-common/index.ts";
+import { emptyUsage } from "pip-common";
 import type { SubagentRun, SubagentSnapshot } from "./types.ts";
 
 export function snapshotRun(run: SubagentRun): SubagentSnapshot {

@@ -13,7 +13,7 @@ import {
   truncateToWidth,
   wrapAnsi,
   type TokenUsage,
-} from "../pip-common/index.ts";
+} from "pip-common";
 
 type ExtensionAPI = any;
 type Theme = any;

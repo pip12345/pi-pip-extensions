@@ -34,7 +34,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pack:workspaces": "node scripts/pack-workspaces.mjs"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.80.1",

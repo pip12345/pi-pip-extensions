@@ -70,6 +70,7 @@ function getState(pi: ExtensionAPI): PiState {
   for (const state of states()) if (state.pi === pi) return state;
   const state: PiState = { pi, registrations: [], registeredNames: new Set(), scheduled: undefined, flushed: false };
   states().add(state);
+  pi.on("session_shutdown", async () => disposeState(state));
   return state;
 }
 
@@ -148,10 +149,6 @@ export function flushPipTools(pi: ExtensionAPI): void {
     if (!isStalePiError(error)) throw error;
     disposeState(state);
   }
-}
-
-export function disposePipToolsForPi(pi: ExtensionAPI): void {
-  for (const state of [...states()]) if (state.pi === pi) disposeState(state);
 }
 
 export function listPipToolRegistrations(): PipToolRegistration[] {

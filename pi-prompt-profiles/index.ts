@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensurePipSubdir, pipPath, registerSettingsSection, setting, settingsFor } from "../pip-common/index.ts";
+import { ensurePipSubdir, pipPath, registerSettingsSection, setting, settingsFor } from "pip-common";
 
 type Mode = "append" | "prepend" | "replace";
 type ProfileSource = "bundled" | "user";

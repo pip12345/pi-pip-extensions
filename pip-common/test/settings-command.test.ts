@@ -1,15 +1,31 @@
 import { describe, expect, it } from "vitest";
 import pipCommon from "../index.ts";
-import { createMockPi } from "../src/testing.ts";
+import { createMockCtx, createMockPi, emitEvent } from "../src/testing.ts";
 import { createPipSettingsComponent, registerPipSettingsCommand } from "../src/settings-command.ts";
 import { visibleWidth } from "../src/keys.ts";
 import { createSettingsRegistry, setting } from "../src/settings.ts";
 
 describe("pip settings command", () => {
-  it("registers /pip-settings from pip-common extension", () => {
+  it("registers /pip-settings when the session starts", async () => {
     const pi = createMockPi();
     pipCommon(pi as any);
+    expect(pi.commands.has("pip-settings")).toBe(false);
+    await emitEvent(pi, "session_start", { reason: "startup" }, createMockCtx());
     expect(pi.commands.has("pip-settings")).toBe(true);
+  });
+
+  it("bootstraps each Pi runtime only once", async () => {
+    const pi = createMockPi();
+    const registerCommand = pi.registerCommand;
+    let registrations = 0;
+    pi.registerCommand = function (name: string, command: any) {
+      registrations += 1;
+      registerCommand.call(this, name, command);
+    };
+    pipCommon(pi as any);
+    pipCommon(pi as any);
+    await emitEvent(pi, "session_start", { reason: "startup" }, createMockCtx());
+    expect(registrations).toBe(1);
   });
 
   it("stages boolean and enum values until close", () => {

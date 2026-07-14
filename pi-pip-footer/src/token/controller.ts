@@ -1,4 +1,4 @@
-import { formatCost, formatTokenCount, normalizeUsage, pipSettings, truncateToWidth } from "../../../pip-common/index.ts";
+import { formatCost, formatTokenCount, normalizeUsage, pipSettings, truncateToWidth } from "pip-common";
 import { FOOTER_SETTINGS_ID, TOKEN_HIGHLIGHT_MS, TOKEN_RENDER_TICK_MS, TOKEN_SPINNER, TOKEN_SPINNER_FRAME_MS, WIDGET_KEY } from "../constants.ts";
 import { fitSegment } from "../layout.ts";
 import { addTokenBreakdown, diffTokenBreakdown, getHistoricalSessionTokens, interpolateTokenBreakdown, tokenBreakdownFromUsage, type TokenBreakdown } from "./breakdown.ts";

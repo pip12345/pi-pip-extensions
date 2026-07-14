@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hostname } from "node:os";
-import { pipPath } from "../../../pip-common/index.ts";
+import { pipPath } from "pip-common";
 
 export const USAGE_MAINTENANCE_LOCK_DIR = pipPath("usage", ".maintenance.lock");
 

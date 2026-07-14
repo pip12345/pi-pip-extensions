@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { themeFg, truncateToWidth } from "../../pip-common/index.ts";
+import { themeFg, truncateToWidth } from "pip-common";
 import { artifactPathLabel, artifactSummary, writeArtifact } from "./artifacts.ts";
 import { callMcpTool } from "./mcp.ts";
 import { formatChars, MAX_TIMEOUT_SECONDS, truncateContent } from "./limits.ts";

@@ -9,6 +9,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Findings 1–2 were resolved by removing `pi-plan-mode` and its shared read-only machinery.
 - Finding 27 was resolved by rendering Todo overflow counts in both directions and adding a regression test.
 - Finding 35 was resolved by deleting the unused capability, prompt, and status registries; the consumed footer registry remains supported.
+- Findings 6, 20, and 36 were resolved by producing self-contained standalone packages with bundled `pip-common`, explicit runtime allowlists, and isolated Pi-loader tests.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
@@ -103,24 +104,9 @@ Canonicalize existing targets and the nearest existing parent for writes. For re
 
 ---
 
-### 6. `pi-tree-edit` is broken when packed/published as its own package
+### 6. `pi-tree-edit` is broken when packed/published as its own package — **resolved**
 
-**Evidence**
-
-- `pi-tree-edit/package.json` declares `files: ["index.ts", "README.md"]`.
-- `pi-tree-edit/index.ts` imports `draft.ts`, `session.ts`, `tree.ts`, and `types.ts`.
-- `npm pack --dry-run` showed the tarball contains only:
-  - `README.md`
-  - `index.ts`
-  - `package.json`
-
-**Impact**
-
-The standalone package cannot load after installation because its imported implementation files are absent. The current manifest test imports from the monorepo source tree, so it misses this packaging failure.
-
-**Recommended direction**
-
-Include the implementation files (or move them under an included `src` directory). Extend `test/manifest.test.ts` to inspect packlists or install/import each generated tarball in an isolated temporary directory.
+Tree Edit's standalone allowlist now includes `draft.ts`, `session.ts`, `tree.ts`, and `types.ts`. The generated tarball is installed in an isolated temporary project and loaded through Pi's package rules as part of `test/package-tarballs.test.ts`.
 
 ---
 
@@ -376,28 +362,13 @@ Redact token-shaped fields in every error, make callback waits abort-aware, and 
 
 ## Additional verified findings from the continuation pass
 
-### 20. Every standalone extension package currently has an unresolved/unbundled `pip-common` dependency
+### 20. Every standalone extension package has an unresolved/unbundled `pip-common` dependency — **resolved**
 
-**Evidence**
+Every feature now imports `pip-common` by package name, declares it in `bundledDependencies`, and loads `node_modules/pip-common/index.ts` before its own entrypoint. Because npm hoists workspace dependencies, `scripts/pack-workspaces.mjs` stages the common package into each feature before packing and cleans the staging directories afterward.
 
-- Every `pi-*/package.json` declares `"pip-common": "0.1.0"` as a normal dependency.
-- None declares `bundledDependencies`, and the extension tarballs contain only their own files.
-- Pi’s installed package documentation (`docs/packages.md:166-184`) says other Pi packages must be bundled and their resources explicitly referenced because Pi package installs have separate module roots.
-- The aggregate root package that loads `pip-common/index.ts` is `private: true`, so it is not a publishable fallback.
-- `npm view pip-common@0.1.0` returned npm registry **404 Not Found** on 2026-07-09.
+The common settings bootstrap deduplicates by the shared `session_start` context when multiple physical standalone copies load in one runtime. Pip-tool broker states now register shutdown cleanup through their owning feature API rather than relying on the unrelated common API wrapper.
 
-**Impact**
-
-Published/packed standalone packages cannot currently install from npm without first publishing exactly this unscoped `pip-common` package. Even if it is published, npm installing it as a dependency does not automatically load `pip-common/index.ts`, so standalone users do not get `/pip-settings` or the `session_shutdown` cleanup that disposes shared Pi-tool registrations. This affects all 15 standalone extensions, not just the broken `pi-tree-edit` packlist.
-
-**Recommended direction**
-
-Choose and document one packaging model:
-
-1. publish a non-private aggregate Pi package and treat workspaces as internal modules; or
-2. make the common code a properly scoped bundled runtime library and add an idempotent bootstrap for settings/lifecycle ownership.
-
-Do not rely on an unbundled, unpublished unscoped workspace dependency. Test each generated tarball by installing it in an isolated directory and loading it through Pi’s package rules.
+`test/package-tarballs.test.ts` generates every tarball, verifies the bundle and runtime allowlist, installs all 15 features without registry access to `pip-common`, loads each through `DefaultResourceLoader`, and covers multiple standalone features in one runtime.
 
 ---
 
@@ -719,28 +690,16 @@ The capability, prompt, and status registries, their exports, and their self-onl
 
 ---
 
-### 36. Standalone package tarballs include test sources as runtime files
+### 36. Standalone package tarballs include test sources as runtime files — **resolved**
 
-**Evidence**
-
-- `pi-pip-footer/package.json:24-27` and `pi-stats/package.json:25-28` include their complete `src` directories in published files.
-- `npm pack --dry-run --json --workspaces` includes footer `src/*.test.ts` and `src/token/*.test.ts`, plus Stats `src/usage/compatibility.test.ts` and `src/usage/storage.test.ts`.
-- The existing manifest tests verify source-tree entrypoints but do not assert the generated tarball allowlist or isolated installed contents.
-
-**Impact**
-
-Standalone packages ship test code and fixtures unnecessarily, while `pi-tree-edit` simultaneously omits required runtime files. This is another sign that package contents are not tested as the distributable product.
-
-**Recommended direction**
-
-If standalone packages remain, move tests outside included runtime directories or use explicit file allowlists, then install/import every generated tarball in isolation. If the aggregate package is canonical, remove the misleading standalone publication surface instead of polishing tarballs that are not intended products.
+Every feature manifest now has an explicit runtime file allowlist. Footer and Stats no longer ship test sources, Tree Edit includes all required implementation files, and the isolated tarball test rejects any packed `*.test.ts` file.
 
 ---
 
 ## Suggested cleanup order
 
 1. **Trust/security boundary:** Tiny MCP project config, project subagent definitions, Secrets Guard canonicalization/recursive containment, restored-path deletion validation.
-2. **Product/composition boundary:** decide whether the aggregate Git package is canonical. If so, add one runtime composition root and make feature folders internal; otherwise build and test genuinely standalone bundled packages.
+2. **Removable feature boundaries:** enforce no sibling production imports, smoke-test each feature with only Pi plus `pip-common`, and verify optional integrations with either side absent.
 3. **Child/runtime ownership:** make shared services runtime-scoped, define a child-extension profile, prevent child Tiny MCP/footer resources from affecting the parent, and unify subagent launch/continue lifecycle.
 4. **Provider ownership:** compose model-catalog and proxy contributions through one provider-registration owner; reconcile and unregister owned providers during shutdown.
 5. **Runtime contracts:** throw tool errors, preserve built-in prompt metadata, honor cancellation, and bound all outputs/details/downloads.

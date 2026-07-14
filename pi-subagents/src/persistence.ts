@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { emptyUsage, pipPath, type TokenUsage } from "../../pip-common/index.ts";
+import { emptyUsage, pipPath, type TokenUsage } from "pip-common";
 import type { RunStatus, SubagentEvent, SubagentRun } from "./types.ts";
 import { privateSessionDir } from "./runner.ts";
 

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { pipPath } from "../pip-common/index.ts";
+import { pipPath } from "pip-common";
 
 export interface ProviderProxyConfig {
   enabled: boolean;

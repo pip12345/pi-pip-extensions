@@ -18,7 +18,7 @@ import {
   type ParsedSessionFile,
   type SessionEntry,
   type SessionRecord,
-} from "../pip-common/index.ts";
+} from "pip-common";
 
 interface RedoSlot {
   sessionFile: string;

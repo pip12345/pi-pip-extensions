@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMockCtx } from "../../../pip-common/testing.ts";
+import { createMockCtx } from "pip-common/testing";
 
 async function loadBreakdown() {
   vi.resetModules();

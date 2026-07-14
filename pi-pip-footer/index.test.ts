@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import pipFooter, { __test } from "./index.ts";
-import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
-import { pipSettings } from "../pip-common/index.ts";
+import { createMockCtx, createMockPi, emitEvent } from "pip-common/testing";
+import { pipSettings } from "pip-common";
 
 const theme = { fg: (_name: string, text: string) => text };
 

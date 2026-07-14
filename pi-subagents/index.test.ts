@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
-import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
-import { addUsage, flushPipTools, pipSettings, resetPipToolsForTests, type TokenUsage } from "../pip-common/index.ts";
+import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "pip-common/testing";
+import { addUsage, flushPipTools, pipSettings, resetPipToolsForTests, type TokenUsage } from "pip-common";
 import { createSubagentsExtension, resetManagerForTests } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";

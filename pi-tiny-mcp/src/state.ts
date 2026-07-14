@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { pipPath } from "../../pip-common/index.ts";
+import { pipPath } from "pip-common";
 
 export interface TinyMcpState {
   explicitlyDisconnected: string[];

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { disposePipToolsForPi, flushPipTools, listPipToolRegistrations, onPipToolRegistrationChange, registerPipTool, registerPipToolFinalizer, resetPipToolsForTests } from "../src/pip-tools.ts";
-import { createMockPi } from "../src/testing.ts";
+import { flushPipTools, listPipToolRegistrations, onPipToolRegistrationChange, registerPipTool, registerPipToolFinalizer, resetPipToolsForTests } from "../src/pip-tools.ts";
+import { createMockCtx, createMockPi, emitEvent } from "../src/testing.ts";
 
 const baseTool = (name: string): any => ({
   name,
@@ -57,10 +57,10 @@ describe("pip tool broker", () => {
     off();
   });
 
-  it("disposes registrations for a Pi instance on shutdown", () => {
+  it("disposes its owning registrations on shutdown", async () => {
     const pi = createMockPi();
     registerPipTool(pi as any, { tool: baseTool("x"), metadata: { pluginId: "test" } });
-    disposePipToolsForPi(pi as any);
+    await emitEvent(pi, "session_shutdown", {}, createMockCtx());
     expect(listPipToolRegistrations()).toEqual([]);
   });
 

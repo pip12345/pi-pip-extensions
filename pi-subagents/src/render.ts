@@ -1,5 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
-import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
+import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi } from "pip-common";
 import { settingValue } from "./settings.ts";
 import type { SubagentEvent, SubagentSnapshot } from "./types.ts";
 

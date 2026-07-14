@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createMockCtx } from "../../pip-common/testing.ts";
+import { createMockCtx } from "pip-common/testing";
 import { getContextInfo, renderContextLine } from "./context.ts";
 
 const theme = { fg: (_name: string, text: string) => text };

@@ -1,4 +1,4 @@
-import { boxLines, hasTuiCustom, PipCustomComponent, printableInput, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
+import { boxLines, hasTuiCustom, PipCustomComponent, printableInput, themeFg, truncateToWidth, wrapAnsi } from "pip-common";
 import type { QuestionAnswer, QuestionInfo } from "./schema.ts";
 import {
   createQuestionState,

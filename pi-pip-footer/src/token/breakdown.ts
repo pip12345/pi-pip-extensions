@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cacheHitRateFromUsage, normalizeUsage, pipPath, promptTokensFromUsage } from "../../../pip-common/index.ts";
+import { cacheHitRateFromUsage, normalizeUsage, pipPath, promptTokensFromUsage } from "pip-common";
 import { buildSessionContext } from "../session-context.ts";
 
 export interface TokenBreakdown {

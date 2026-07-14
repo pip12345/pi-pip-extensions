@@ -1,9 +1,20 @@
-import { disposePipToolsForPi } from "./src/pip-tools.ts";
 import { registerPipSettingsCommand } from "./src/settings-command.ts";
 
+const STARTED_CONTEXTS_KEY = Symbol.for("pip-common.started-contexts");
+
+function startedContexts(): WeakSet<object> {
+  const globalState = globalThis as any;
+  if (!globalState[STARTED_CONTEXTS_KEY]) globalState[STARTED_CONTEXTS_KEY] = new WeakSet<object>();
+  return globalState[STARTED_CONTEXTS_KEY];
+}
+
 export default function pipCommonExtension(pi: any) {
-  registerPipSettingsCommand(pi);
-  pi.on("session_shutdown", async () => disposePipToolsForPi(pi));
+  pi.on("session_start", async (_event: any, ctx: object) => {
+    const started = startedContexts();
+    if (started.has(ctx)) return;
+    started.add(ctx);
+    registerPipSettingsCommand(pi);
+  });
 }
 
 export * from "./src/content.ts";

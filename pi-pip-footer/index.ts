@@ -17,7 +17,7 @@ import {
   visibleWidth,
   type QuotaProviderSetting,
   type QuotaSnapshot as UsageSnapshot,
-} from "../pip-common/index.ts";
+} from "pip-common";
 import { FOOTER_KEY, FOOTER_SETTINGS_ID, USAGE_REFRESH_INTERVAL, WIDGET_KEY } from "./src/constants.ts";
 import { getContextInfo, renderContextLine } from "./src/context.ts";
 import { type GitState, parseGitStatus, readGitState, renderLocation } from "./src/git.ts";

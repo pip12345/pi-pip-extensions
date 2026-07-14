@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { pipPath, truncateToWidth } from "../../pip-common/index.ts";
+import { pipPath, truncateToWidth } from "pip-common";
 import { formatChars } from "./limits.ts";
 import { settingValue } from "./settings.ts";
 

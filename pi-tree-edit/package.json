@@ -21,14 +21,22 @@
   },
   "pi": {
     "extensions": [
+      "node_modules/pip-common/index.ts",
       "./index.ts"
     ]
   },
   "files": [
     "index.ts",
+    "draft.ts",
+    "session.ts",
+    "tree.ts",
+    "types.ts",
     "README.md"
   ],
   "dependencies": {
     "pip-common": "0.1.0"
-  }
+  },
+  "bundledDependencies": [
+    "pip-common"
+  ]
 }

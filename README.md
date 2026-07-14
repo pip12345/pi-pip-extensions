@@ -1,12 +1,10 @@
 # pi-pip-extensions
 
-A loose local collection of Pi extensions.
-
-
-You can point Pi at this folder and it will load the extensions inside it.
+One aggregate Pi package containing separately filterable extension features. Each `pi-*` feature also remains available as a standalone package.
 
 ## Dependencies
-No external dependencies. The collection only uses Pi's built-in extension packages, Node.js built-ins, and its own shared `pip-common` helpers.
+
+The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Git package installation runs `npm install` automatically; local checkouts must run `npm install` once to link the workspace packages.
 
 ## Install
 
@@ -26,7 +24,13 @@ pi update --extensions
 
 Then restart Pi or run `/reload`.
 
-For local development, you can point Pi directly at this folder in `settings.json`:
+For local development, install the workspace links and point Pi directly at this folder in `settings.json`:
+
+```bash
+npm install
+```
+
+Then configure:
 
 ```json
 {
@@ -37,6 +41,12 @@ For local development, you can point Pi directly at this folder in `settings.jso
 ```
 
 Relative paths are resolved from the settings file location. Use `.` when the settings file lives in this project root; use `./pi-pip-extensions` when it lives in the parent directory.
+
+Standalone feature tarballs bundle and load `pip-common` before their own entrypoint. Maintainers generate those tarballs with:
+
+```bash
+npm run pack:workspaces -- --pack-destination <directory>
+```
 
 ## What gets loaded
 

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import secretsGuard, { bashPathTokens, isGitIgnored, resolveToolPath, __test } from "./index.ts";
-import { pipSettings } from "../pip-common/index.ts";
-import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
+import { pipSettings } from "pip-common";
+import { createMockCtx, createMockPi, emitEvent } from "pip-common/testing";
 
 function resetGuardSettings() {
   pipSettings.set("gitignore-guard.enabled", true);

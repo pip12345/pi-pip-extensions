@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import extension, { __test } from "./index.ts";
-import { createMockCtx, createMockPi, runCommand } from "../pip-common/testing.ts";
+import { createMockCtx, createMockPi, runCommand } from "pip-common/testing";
 
 const theme = { fg: (_name: string, text: string) => text };
 

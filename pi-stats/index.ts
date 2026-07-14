@@ -17,7 +17,7 @@ import {
   textFromContent,
   truncateToWidth,
   type TokenUsage as Tokens,
-} from "../pip-common/index.ts";
+} from "pip-common";
 import { groupGlobal } from "./src/usage/rollups.ts";
 import { initializeUsageStorage, readRollups, updateRollups } from "./src/usage/storage.ts";
 import type { GroupBy, RangeKey } from "./src/usage/types.ts";

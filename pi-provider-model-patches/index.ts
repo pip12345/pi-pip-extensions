@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { pipSettings, registerSettingsSection, setting } from "../pip-common/index.ts";
+import { pipSettings, registerSettingsSection, setting } from "pip-common";
 import { loadUserModelPatches, mergeModelPatches, USER_PATCHES_PATH } from "./config.ts";
 import { BUILTIN_MODEL_PATCHES, getBuiltinPatchProviderCatalog } from "./presets.ts";
 import type { ModelPatchMetadata, PatchBuildResult, PatchModelDefinition, ProviderModelPatch } from "./types.ts";

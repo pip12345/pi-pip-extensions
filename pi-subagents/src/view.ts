@@ -1,4 +1,4 @@
-import { boxLines, normalizeInputKey, PipCustomComponent, printableInput, themeFg, truncateToWidth, visibleWidth, wrapAnsi } from "../../pip-common/index.ts";
+import { boxLines, normalizeInputKey, PipCustomComponent, printableInput, themeFg, truncateToWidth, visibleWidth, wrapAnsi } from "pip-common";
 import type { SubagentManager } from "./manager.ts";
 import type { SubagentRun, SubagentSnapshot } from "./types.ts";
 

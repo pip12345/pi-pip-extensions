@@ -27,18 +27,18 @@
 
 ## 2. Make standalone packages real
 
-- [ ] Define `pip-common` as the shared runtime package with a stable package identity.
-- [ ] Bundle `pip-common` into every standalone feature package according to Pi package rules.
-- [ ] Ensure a standalone feature loads the required `pip-common` extension bootstrap.
-- [ ] Replace source-relative `pip-common` imports with package imports that resolve in both workspace development and installed packages.
-- [ ] Make the shared bootstrap idempotent so aggregate and standalone loading cannot double-register commands or lifecycle handlers.
-- [ ] Correct every feature package's `files` allowlist.
-- [ ] Include all Tree Edit runtime source files in its tarball.
-- [ ] Exclude test sources and fixtures from Footer and Stats tarballs.
-- [ ] Generate every standalone tarball in tests.
-- [ ] Install every generated tarball in an isolated temporary directory.
-- [ ] Load every isolated package through Pi's package rules and verify its entrypoints.
-- [ ] Keep the aggregate Git package as the recommended installation path.
+- [x] Define `pip-common` as the shared runtime package with a stable package identity.
+- [x] Bundle `pip-common` into every standalone feature package according to Pi package rules.
+- [x] Ensure a standalone feature loads the required `pip-common` extension bootstrap.
+- [x] Replace source-relative `pip-common` imports with package imports that resolve in both workspace development and installed packages.
+- [x] Make the shared bootstrap idempotent so aggregate and standalone loading cannot double-register commands or lifecycle handlers.
+- [x] Correct every feature package's `files` allowlist.
+- [x] Include all Tree Edit runtime source files in its tarball.
+- [x] Exclude test sources and fixtures from Footer and Stats tarballs.
+- [x] Generate every standalone tarball in tests.
+- [x] Install every generated tarball in an isolated temporary directory.
+- [x] Load every isolated package through Pi's package rules and verify its entrypoints.
+- [x] Keep the aggregate Git package as the recommended installation path.
 
 ## 3. Enforce removable feature boundaries
 

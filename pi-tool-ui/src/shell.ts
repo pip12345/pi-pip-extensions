@@ -1,5 +1,5 @@
 import type { Component } from "@earendil-works/pi-tui";
-import { safePadToWidth, safeTruncateToWidth, themeBg, themeBold } from "../../pip-common/index.ts";
+import { safePadToWidth, safeTruncateToWidth, themeBg, themeBold } from "pip-common";
 
 const SAFE_CACHED = Symbol("tool-ui.safeCachedComponent");
 

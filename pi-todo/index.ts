@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { boxLines, branchEntries, firstResultText, hasTuiCustom, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
+import { boxLines, branchEntries, firstResultText, hasTuiCustom, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "pip-common";
 
 export type TodoStatus = "pending" | "active" | "done";
 

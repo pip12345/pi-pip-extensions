@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { normalizeUsage } from "../../../pip-common/index.ts";
-import { pipPath } from "../../../pip-common/index.ts";
+import { normalizeUsage } from "pip-common";
+import { pipPath } from "pip-common";
 import { addEventToRollups, dayKey, emptyRollups, mergeRollups } from "./rollups.ts";
 import type { GlobalUsageEvent, UsageRollups } from "./types.ts";
 

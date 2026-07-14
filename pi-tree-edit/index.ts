@@ -1,6 +1,6 @@
 import { copyFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "../pip-common/index.ts";
+import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "pip-common";
 import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
 import { parseSessionFile, timestampForFile, validateDraft } from "./session.ts";

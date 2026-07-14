@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename } from "node:path";
-import { pipSettings } from "../../pip-common/index.ts";
+import { pipSettings } from "pip-common";
 import { FOOTER_SETTINGS_ID } from "./constants.ts";
 
 export interface GitState {
