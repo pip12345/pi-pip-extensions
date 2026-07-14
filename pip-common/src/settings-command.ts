@@ -3,7 +3,7 @@ import { PipCustomComponent } from "./custom-component.ts";
 import { hasTuiCustom } from "./pi-api.ts";
 import { truncateToWidth } from "./keys.ts";
 import { moveSelection, selectionOffset } from "./scroll.ts";
-import { createSettingsRegistry, pipSettings, type SettingsRegistry, type SettingRow } from "./settings.ts";
+import { createSettingsRegistry, type SettingsRegistry, type SettingRow } from "./settings.ts";
 import { boxLines, padAnsi, themeFg, wrapAnsi } from "./tui.ts";
 
 function valueColor(row: SettingRow, value: string, theme: any, registry: SettingsRegistry): string {
@@ -66,7 +66,7 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   private readonly originalValues: Record<string, Record<string, unknown>>;
   private readonly searchInput = new Input();
 
-  constructor(tui: any, theme: any, done: (result?: PipSettingsResult) => void, private registry: SettingsRegistry = pipSettings) {
+  constructor(tui: any, theme: any, done: (result?: PipSettingsResult) => void, private registry: SettingsRegistry) {
     super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d"] });
     this.originalValues = registry.all();
   }
@@ -210,11 +210,11 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   }
 }
 
-export function createPipSettingsComponent(tui: any, theme: any, done: (result?: PipSettingsResult) => void, registry: SettingsRegistry = pipSettings) {
+export function createPipSettingsComponent(tui: any, theme: any, done: (result?: PipSettingsResult) => void, registry: SettingsRegistry) {
   return new PipSettingsComponent(tui, theme, done, createDraftRegistry(registry));
 }
 
-export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry = pipSettings): void {
+export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry): void {
   pi.registerCommand("pip-settings", {
     description: "Configure pip extension settings",
     handler: async (_args: string, ctx: any) => {

@@ -319,7 +319,6 @@ interface SettingsRuntimeState {
 }
 
 const SETTINGS_RUNTIME_STATES_KEY = Symbol.for("pip-common.settings.runtime-states");
-const LEGACY_SETTINGS_KEY = Symbol.for("pip-common.settings-registry");
 
 function settingsRuntimeStates(): WeakMap<object, SettingsRuntimeState> {
   const globalState = globalThis as any;
@@ -350,18 +349,6 @@ export function setPipSettingsRegistryForTests(pi: PiRuntimeOwner, registry: Set
   settingsRuntimeStates().set(piRuntimeKey(pi), { registry });
 }
 
-function getLegacySettingsRegistry(): SettingsRegistry {
-  const globalState = globalThis as any;
-  if (!globalState[LEGACY_SETTINGS_KEY]) globalState[LEGACY_SETTINGS_KEY] = createPersistedSettingsRegistry();
-  return globalState[LEGACY_SETTINGS_KEY];
-}
-
-/** @deprecated Pass the owning Pi API to getPipSettingsRegistry(). */
-export const pipSettings = getLegacySettingsRegistry();
-
-export function registerSettingsSection(section: SettingSection): void;
-export function registerSettingsSection(pi: PiRuntimeOwner, section: SettingSection): void;
-export function registerSettingsSection(piOrSection: PiRuntimeOwner | SettingSection, maybeSection?: SettingSection): void {
-  if (maybeSection) getPipSettingsRegistry(piOrSection as PiRuntimeOwner).registerSection(maybeSection);
-  else pipSettings.registerSection(piOrSection as SettingSection);
+export function registerSettingsSection(pi: PiRuntimeOwner, section: SettingSection): void {
+  getPipSettingsRegistry(pi).registerSection(section);
 }

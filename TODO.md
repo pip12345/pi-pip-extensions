@@ -74,8 +74,8 @@
 - [x] Validate defaults when settings sections register.
 - [x] Add shared setting-change notifications.
 - [x] Make each extension apply live setting changes or explicitly report that reload is required.
-- [ ] Scope shared tool, settings, footer, and lifecycle state by Pi runtime rather than process-global module state.
-- [ ] Preserve correct behavior across reloads and concurrent parent/child runtimes.
+- [x] Scope shared tool, settings, footer, and lifecycle state by Pi runtime rather than process-global module state.
+- [x] Preserve correct behavior across reloads and concurrent parent/child runtimes.
 
 ## 6. Repair child runtime and Subagent lifecycle
 

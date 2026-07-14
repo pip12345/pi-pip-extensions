@@ -15,6 +15,8 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Finding 5 was resolved with canonical path checks, nearest-existing-parent resolution for writes, and preflight blocking for search/list roots containing guarded descendants.
 - Finding 23 was resolved by removing derived context paths from persistence, validating restored records, quarantining malformed indexes, and deriving recursive deletion targets from managed roots.
 - Finding 9's corruption/data-loss paths and finding 32 were resolved with strict loads, unknown-section preservation, transactional atomic commits, batched UI saves, and central bound/default validation.
+- Finding 14 was resolved with batched settings notifications, live consumers, and declarative reload warnings.
+- The runtime-ownership half of findings 21 and 34 was resolved by keying common services to Pi's shared event bus and giving Tiny MCP/Subagents runtime-local managers.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
@@ -310,23 +312,21 @@ The common settings bootstrap deduplicates by the shared `session_start` context
 
 ---
 
-### 21. Subagent child sessions load Tiny MCP, whose global shutdown can close the parent’s MCP servers
+### 21. Subagent child sessions load Tiny MCP, whose global shutdown can close the parent’s MCP servers — **partially resolved**
 
-**Evidence**
+**Remaining evidence**
 
-- `pi-subagents/src/child-runtime.ts` excludes only `pi-subagents`; Tiny MCP and all other extensions are loaded in every child.
-- Pi’s installed extension loader caches and reuses extension factory/module state for the same CWD (`dist/core/extensions/loader.js:104-118,295-317,369-396`). Parent and child runtimes therefore share module-level state.
-- Tiny MCP’s module-level manager map is at `pi-tiny-mcp/src/proxy-tool.ts:8-17`.
-- Every Tiny MCP runtime auto-connects on `session_start` at `pi-tiny-mcp/index.ts:86-88`.
-- Every runtime calls the global `shutdownManager()` on `session_shutdown` at `pi-tiny-mcp/index.ts:90-92`; that function closes and clears **all** managers at `pi-tiny-mcp/src/proxy-tool.ts:20-22`.
+- `pi-subagents/src/child-runtime.ts` still uses path exclusions rather than an explicit capability profile, so Tiny MCP and UI-only extensions can load in children.
+- Every loaded Tiny MCP child runtime can still auto-connect its own project/user MCP servers on `session_start`, even when the child does not need MCP.
+- Headless child sessions can still load `pi-pip-footer`, which starts quota network work and a refresh interval despite having no UI.
 
-**Impact**
+**Remaining impact**
 
-A child session can auto-connect the parent’s project/user MCP servers even when the child agent does not have the Tiny MCP tool active. When that child runtime is later disposed, it can close the shared parent/sibling MCP processes and HTTP streams. Headless child sessions also load `pi-pip-footer`, which starts quota network work and a refresh interval even though `ctx.hasUI` is false.
+A child can create unnecessary MCP processes/HTTP streams and quota traffic. Runtime-local ownership now prevents that child from closing or mutating the parent’s resources, but the child should not start those resources in the first place.
 
-**Recommended direction**
+**Resolution status**
 
-Define an explicit child-extension allowlist/capability policy instead of excluding only two names. At minimum, exclude UI-only extensions and Tiny MCP unless the child explicitly needs them. If Tiny MCP must be shared, give manager connections reference-counted/runtime ownership so one child cannot globally shut down another runtime’s resources.
+Tiny MCP manager pools are now owned by each extension runtime, and Subagents no longer uses a process-global manager. Parent/child isolation tests prove that shutting down either child manager leaves the parent manager and work intact. The remaining half is child capability policy: child sessions still load and auto-connect Tiny MCP and still load UI-only extensions. That is tracked in section 6 of `TODO.md`.
 
 ---
 
@@ -565,23 +565,23 @@ Give provider registration one owner. The clean aggregate design is a provider-o
 
 ---
 
-### 34. The aggregate package has no composition root, so manifest order and module-global state act as an undocumented runtime API
+### 34. The aggregate package has no composition root, so manifest order and module-global state act as an undocumented runtime API — **substantially resolved**
 
-**Evidence**
+**Remaining evidence**
 
-- `package.json` loads 16 separate factories in a fixed literal order, with `pip-common` first and cross-cutting `pi-tool-ui` after the tool-producing extensions.
-- Shared settings are registered from module scope by many extensions before their factories receive an `ExtensionAPI`.
-- `pip-common/src/settings.ts`, `pip-common/src/pip-tools.ts`, and `pip-common/src/footer-registry.ts` keep shared state in module/global singletons rather than in a runtime-owned service.
-- `pi-tool-ui` depends on the global Pi-tool broker/finalizer to retroactively decorate tools registered by independently loaded factories.
-- Finding 21 shows the concrete parent/child failure mode: cached extension modules let subagent child runtimes share Tiny MCP and other module-level state with the parent.
+- `package.json` intentionally loads separate, filterable factories rather than one root factory.
+- Cross-cutting Tool UI decoration and settings discovery still coordinate through `pip-common`, although those services are now runtime-keyed and load-order safe.
+- Child extension selection is still implemented separately in Subagents through path filtering rather than a declared capability profile.
 
-**Impact**
+**Remaining impact**
 
-Extension load order, module caching, reload order, and process lifetime determine correctness. There is no single place that defines service ownership, startup order, child-runtime capabilities, or shutdown order. The code looks like independently installable plugins, but behaves as one coupled application.
+The aggregate and standalone packaging contracts are now compatible with runtime isolation, but child startup policy remains implicit. A future extension can still be accidentally loaded into children until section 6 introduces an explicit profile.
 
-**Recommended direction**
+**Resolution status**
 
-The product contract is one aggregate package with separately filterable extension entrypoints, while retaining supported standalone feature packages. Keep those entrypoints explicit so Pi package filtering can enable or disable individual features. Move shared state to runtime-scoped `pip-common` services and define an explicit child-runtime profile without collapsing every feature behind one root extension.
+Separate aggregate/standalone entrypoints remain intentional. Settings definitions now register inside factories, and settings, tool finalizers/registrations, footer providers, bootstrap lifecycle, Tiny MCP managers, and Subagent managers are scoped by Pi runtime rather than process lifetime. Multiple physical `pip-common` copies coordinate only through an event-bus-keyed runtime service.
+
+An explicit child-runtime capability profile is still missing, so extension selection in children remains load-order/path-policy driven. That remaining issue is tracked in section 6 of `TODO.md`; it no longer causes cross-runtime manager shutdown.
 
 ---
 

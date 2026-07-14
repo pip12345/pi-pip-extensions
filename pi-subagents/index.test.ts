@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "pip-common/testing";
-import { addUsage, flushPipTools, pipSettings, resetPipToolsForTests, type TokenUsage } from "pip-common";
-import { createSubagentsExtension, resetManagerForTests } from "./index.ts";
+import { addUsage, createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type TokenUsage } from "pip-common";
+import { createSubagentsExtension } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";
 import { RealRunner } from "./src/runner.ts";
@@ -114,17 +114,23 @@ class ModelRuntime implements ChildAgentRuntime {
   }
 }
 
-function setup(runner: Runner = new FakeRunner()) {
+function settingsWith(values: Record<string, unknown>) {
+  return { id: "subagents-test", path: (key: string) => key, get: <T>(key: string, fallback: T) => (values[key] ?? fallback) as T, onChange: () => () => undefined };
+}
+
+function setup(runner: Runner = new FakeRunner(), initialSettings: Record<string, unknown> = {}) {
   const pi = createMockPi();
+  setPipSettingsRegistryForTests(pi, createSettingsRegistry({ subagents: initialSettings }, { persistPath: false }));
   createSubagentsExtension({ runner })(pi as any);
   flushPipTools(pi as any);
   return { pi, runner, tool: getRegisteredTool(pi, "subagent") };
 }
 
-function persistedSetup(runner: Runner = new FakeRunner()) {
+function persistedSetup(runner: Runner = new FakeRunner(), initialSettings: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "pi-subagents-test-"));
   const manager = new SubagentManager({ runner, persistenceDir: dir });
   const pi = createMockPi();
+  setPipSettingsRegistryForTests(pi, createSettingsRegistry({ subagents: initialSettings }, { persistPath: false }));
   createSubagentsExtension({ manager })(pi as any);
   flushPipTools(pi as any);
   return { dir, manager, pi, runner, tool: getRegisteredTool(pi, "subagent"), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -164,11 +170,6 @@ function ctxForSession(sessionFile: string, cwd = process.cwd(), leafId?: string
 
 beforeEach(() => {
   resetPipToolsForTests();
-  resetManagerForTests();
-  pipSettings.set("subagents.enabled", true);
-  pipSettings.set("subagents.injectBackgroundResults", true);
-  pipSettings.set("subagents.alwaysKeep", false);
-  pipSettings.set("subagents.showUsageCost", true);
 });
 
 describe("pi-subagents", () => {
@@ -193,8 +194,7 @@ describe("pi-subagents", () => {
   });
 
   it("does not inject available agent names when subagents are disabled", async () => {
-    pipSettings.set("subagents.enabled", false);
-    const { pi } = setup();
+    const { pi } = setup(new FakeRunner(), { enabled: false });
     const [result] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, createMockCtx());
     expect(result).toBeUndefined();
   });
@@ -202,7 +202,7 @@ describe("pi-subagents", () => {
   it("blocks the command and shortcut when subagents are disabled", async () => {
     const { pi } = setup();
     const ctx = createMockCtx();
-    pipSettings.set("subagents.enabled", false);
+    getPipSettingsRegistry(pi).set("subagents.enabled", false);
 
     await runCommand(pi, "subagent", "", ctx);
     expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
@@ -372,10 +372,9 @@ describe("pi-subagents", () => {
   });
 
   it("can hide subagent usage cost", async () => {
-    pipSettings.set("subagents.showUsageCost", false);
     const runner = new FakeRunner();
     runner.usage = { input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 };
-    const { tool } = setup(runner);
+    const { tool } = setup(runner, { showUsageCost: false });
     const result = await tool.execute("1", { agent: "explore", prompt: "usage no cost" }, undefined, undefined, createMockCtx());
     expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k");
     expect(result.content[0].text).not.toContain("$0.42");
@@ -757,10 +756,9 @@ describe("pi-subagents", () => {
   });
 
   it("removes unkept run context on cleanup", async () => {
-    pipSettings.set("subagents.ephemeralTtlMinutes", 1);
     let now = 0;
     const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));
-    const manager = new SubagentManager({ runner: new FakeRunner(), now: () => now, contextDir });
+    const manager = new SubagentManager({ runner: new FakeRunner(), now: () => now, contextDir, settings: settingsWith({ ephemeralTtlMinutes: 1 }) });
     const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
     try {
       const run = manager.launch({ agent, prompt: "one", cwd: process.cwd(), parentSessionKey: "parent", keep: false, background: false });
@@ -826,9 +824,8 @@ describe("pi-subagents", () => {
   });
 
   it("message and steer refresh ephemeral TTL", async () => {
-    pipSettings.set("subagents.ephemeralTtlMinutes", 1);
     let now = 0;
-    const manager = new SubagentManager({ runner: new FakeRunner(), now: () => now });
+    const manager = new SubagentManager({ runner: new FakeRunner(), now: () => now, settings: settingsWith({ ephemeralTtlMinutes: 1 }) });
     const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
     const run = manager.launch({ agent, prompt: "one", cwd: process.cwd(), parentSessionKey: "parent", keep: false, background: false });
     await run.runPromise;
@@ -851,8 +848,7 @@ describe("pi-subagents", () => {
   });
 
   it("alwaysKeep makes new subagents reusable unless keep false", async () => {
-    pipSettings.set("subagents.alwaysKeep", true);
-    const { tool } = setup();
+    const { tool } = setup(new FakeRunner(), { alwaysKeep: true });
     const ctx = createMockCtx();
     const result = await tool.execute("1", { agent: "explore", prompt: "look", name: "auto" }, undefined, undefined, ctx);
     expect(result.content[0].text).toContain("keep: true");
@@ -865,6 +861,24 @@ describe("pi-subagents", () => {
     const forcedContinued = await tool.execute("4", { id, prompt: "again" }, undefined, undefined, ctx);
     expect(forcedContinued.isError).toBeFalsy();
     expect(forcedContinued.content[0].text).toContain("continued: again");
+  });
+
+  it("keeps parent and child managers isolated", async () => {
+    const parentRunner = new FakeRunner();
+    parentRunner.delay = 30;
+    const childRunner = new FakeRunner();
+    const parent = setup(parentRunner);
+    const child = setup(childRunner);
+    const parentCtx = createMockCtx();
+    const launched = await parent.tool.execute("1", { agent: "explore", prompt: "parent work", background: true }, undefined, undefined, parentCtx);
+    const id = launched.details.run.id;
+
+    await emitEvent(child.pi, "session_shutdown", { reason: "quit" }, createMockCtx());
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    const status = await parent.tool.execute("2", { action: "status", id }, undefined, undefined, parentCtx);
+    expect(status.details.run.status).toBe("completed");
+    await emitEvent(parent.pi, "session_shutdown", { reason: "quit" }, parentCtx);
   });
 
   it("does not shutdown manager on normal session replacement", async () => {

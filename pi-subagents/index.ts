@@ -2,18 +2,17 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AuthStorage, ModelRegistry, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { hasTuiCustom, registerPipTool } from "pip-common";
+import { hasTuiCustom, registerPipTool, type ScopedSettings } from "pip-common";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
-import { getManager, resetManagerForTests, shutdownGlobalManager, type SubagentManager } from "./src/manager.ts";
+import { SubagentManager } from "./src/manager.ts";
 import { RealRunner } from "./src/runner.ts";
 import { renderSubagentCall, renderSubagentResult, formatRunStatus } from "./src/render.ts";
 import { SubagentViewer } from "./src/view.ts";
 import { parseModelRef } from "./src/model-ref.ts";
 import { SubagentParams, type SubagentParamsType } from "./src/schema.ts";
-import { registerSubagentSettings, settingValue } from "./src/settings.ts";
+import { registerSubagentSettings, subagentSettings } from "./src/settings.ts";
 import type { AgentConfig, Runner, SubagentRun } from "./src/types.ts";
 
-registerSubagentSettings();
 
 function parentKey(ctx: any): string {
   return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.getSessionId?.() ?? "unknown";
@@ -143,14 +142,14 @@ function contextInfo(manager: SubagentManager, key: string, run?: SubagentRun): 
   return [`Subagent context root: ${root}`, `Shared folder: ${shared}`, "", "Shared files:", ...listDir(shared).map((line) => `- ${line}`)].join("\n");
 }
 
-async function showSubagentView(ctx: any, manager: SubagentManager, run: SubagentRun): Promise<void> {
+async function showSubagentView(ctx: any, manager: SubagentManager, run: SubagentRun, settings: ScopedSettings): Promise<void> {
   if (hasTuiCustom(ctx)) {
     await ctx.ui.custom((tui: any, theme: any, _kb: any, done: () => void) => new SubagentViewer(tui, theme, done, ctx, manager, run.id), {
       overlay: true,
       overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", margin: 0, minWidth: 70 },
     });
   } else {
-    ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
+    ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run), settings), "info");
   }
 }
 
@@ -168,8 +167,11 @@ export interface SubagentsExtensionOptions {
 
 export function createSubagentsExtension(options: SubagentsExtensionOptions = {}) {
   return function subagentsExtension(pi: ExtensionAPI) {
+    registerSubagentSettings(pi);
+    const settings = subagentSettings(pi);
     const runner = options.runner ?? new RealRunner();
-    const manager = options.manager ?? getManager({ runner });
+    const manager = options.manager ?? new SubagentManager({ runner, settings });
+    if (options.manager) manager.configure({ settings });
 
     const activate = (ctx: any) => {
       manager.configure({ inject: (_key, message) => pi.sendUserMessage(message, { deliverAs: "followUp" }) });
@@ -179,15 +181,14 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.on("session_start", async (_event: any, ctx: any) => activate(ctx));
     pi.on("session_tree", async (_event: any, ctx: any) => activate(ctx));
     pi.on("before_agent_start", async (event: any, ctx: any) => {
-      if (!settingValue("enabled", true)) return;
+      if (!settings.get("enabled", true)) return;
       const block = agentNamesPrompt(ctx?.cwd ?? process.cwd(), projectTrusted(ctx));
       if (!block) return;
       return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${block}`.trim() };
     });
     pi.on("session_shutdown", async (event: any, ctx: any) => {
       if (event?.reason === "quit" || event?.reason === "reload") {
-        if (options.manager) await manager.shutdown();
-        else await shutdownGlobalManager();
+        await manager.shutdown();
         return;
       }
       if (event?.reason === "resume" || event?.reason === "new" || event?.reason === "fork") manager.deactivateParent(parentKey(ctx));
@@ -196,7 +197,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerShortcut?.(Key.ctrlShift("b"), {
       description: "Move foreground subagents to background",
       handler: async (ctx: any) => {
-        if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
+        if (!settings.get("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
         activate(ctx);
         const detached = manager.detachAll(parentKey(ctx));
         ctx.ui?.notify?.(detached.length ? `Moved ${detached.length} subagent${detached.length === 1 ? "" : "s"} to background.` : "No foreground subagents running.", "info");
@@ -224,9 +225,9 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
         ],
         parameters: SubagentParams,
         renderCall: renderSubagentCall,
-        renderResult: renderSubagentResult,
+        renderResult: (result: any, renderOptions: any, theme: any) => renderSubagentResult(result, renderOptions, theme, settings),
         async execute(_toolCallId: string, params: SubagentParamsType, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-          if (!settingValue("enabled", true)) return textResult("Subagents are disabled in /pip-settings.", undefined, true);
+          if (!settings.get("enabled", true)) return textResult("Subagents are disabled in /pip-settings.", undefined, true);
           const cwd = ctx?.cwd ?? process.cwd();
           const trusted = projectTrusted(ctx);
           const key = parentKey(ctx);
@@ -249,7 +250,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               if (!run) throw new Error(`Subagent not found: ${params.id ?? "<missing id>"}`);
               if (params.wait && run.status === "running") await waitRun(run, params.timeoutMs ?? 60_000);
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
+              return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
             }
             if (action === "background") {
               const runs = params.id ? [manager.resolve(params.id, key)].filter((run): run is SubagentRun => Boolean(run)) : manager.detachAll(key);
@@ -262,7 +263,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               await manager.cancel(run);
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot), { run: snapshot });
+              return textResult(formatRunStatus(snapshot, settings), { run: snapshot });
             }
             if (action === "keep") {
               const run = manager.resolve(params.id, key);
@@ -288,21 +289,21 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent, trusted));
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
+              return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
             }
             if (!params.agent || !params.prompt) throw new Error("Launch requires agent and prompt, or use an action.");
             const agent = findAgent(cwd, params.agent, trusted);
-            const keep = params.keep ?? settingValue("alwaysKeep", false);
+            const keep = params.keep ?? settings.get("alwaysKeep", false);
             const explicitModel = launchModelOverride(params);
             const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: explicitModel ?? (agent.model ? undefined : currentModelString(ctx)), signal, onUpdate });
-            const backgroundHint = settingValue("injectBackgroundResults", true)
+            const backgroundHint = settings.get("injectBackgroundResults", true)
               ? "Result will arrive as a follow-up message when done; no routine status checks needed."
               : "Background result injection is disabled; use status/read later if needed.";
             if (run.background) return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nBackground subagent running. ${backgroundHint}`, { run: manager.snapshot(run) });
             const outcome = await waitRun(run);
             if (outcome === "detached") return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nMoved to background. ${backgroundHint}`, { run: manager.snapshot(run) });
             const snapshot = manager.snapshot(run);
-            return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
+            return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
           } catch (error) {
             return textResult(error instanceof Error ? error.message : String(error), undefined, true);
           }
@@ -329,7 +330,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerCommand("subagent", {
       description: "Inspect, view, steer, cancel, or background subagents",
       handler: async (args: string, ctx: any) => {
-        if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
+        if (!settings.get("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
         activate(ctx);
         const trusted = projectTrusted(ctx);
         const [cmd, ref, ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
@@ -345,8 +346,8 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             const actions = ["view", "background", "cancel", selectedRun.keep ? "forget" : "keep", "delete"];
             const action = await ctx.ui?.select?.(`Subagent ${selectedRun.id}`, actions);
             if (!action) return;
-            if (action === "view") await showSubagentView(ctx, manager, selectedRun);
-            else if (action === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(selectedRun)), "info");
+            if (action === "view") await showSubagentView(ctx, manager, selectedRun, settings);
+            else if (action === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(selectedRun), settings), "info");
             else if (action === "steer") {
               const message = await ctx.ui?.input?.("Steer subagent", "");
               if (!message) return;
@@ -390,13 +391,13 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           const run = manager.resolve(ref, parentKey(ctx));
           if (cmd === "list") return ctx.ui?.notify?.(listRuns(manager, parentKey(ctx)), "info");
           if (!run) throw new Error(`Subagent not found: ${ref}`);
-          if (cmd === "view") await showSubagentView(ctx, manager, run);
+          if (cmd === "view") await showSubagentView(ctx, manager, run, settings);
           else if (cmd === "steer") {
             const message = rest.join(" ");
             if (!message) throw new Error("steer requires a message.");
             await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent, trusted));
             ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
-          } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
+          } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run), settings), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }
           else if (cmd === "forget") { manager.forget(run); ctx.ui?.notify?.(`Forgot ${run.id}; it is ephemeral now.`, "info"); }
           else if (cmd === "cancel") { await manager.cancel(run); ctx.ui?.notify?.(`Cancelled ${run.id}.`, "info"); }
@@ -414,6 +415,5 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
 }
 
 export default createSubagentsExtension();
-export { resetManagerForTests };
 export { discoverAgents } from "./src/agents.ts";
 export { SubagentManager } from "./src/manager.ts";

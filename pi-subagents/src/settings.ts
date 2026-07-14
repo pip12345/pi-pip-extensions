@@ -1,9 +1,10 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSettingsSection, setting, settingsFor } from "pip-common";
 
 export const SETTINGS_ID = "subagents";
 
-export function registerSubagentSettings(): void {
-  registerSettingsSection({
+export function registerSubagentSettings(pi: ExtensionAPI): void {
+  registerSettingsSection(pi, {
     id: SETTINGS_ID,
     title: "Subagents",
     description: "Minimal quiet child task runs with isolated context.",
@@ -20,5 +21,6 @@ export function registerSubagentSettings(): void {
   });
 }
 
-const scopedSettings = settingsFor(SETTINGS_ID);
-export const settingValue = scopedSettings.get;
+export function subagentSettings(pi: ExtensionAPI) {
+  return settingsFor(pi, SETTINGS_ID);
+}

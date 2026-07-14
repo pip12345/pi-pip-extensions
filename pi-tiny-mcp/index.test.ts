@@ -4,10 +4,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import tinyMcp, { executeTinyMcp, loadTinyMcpConfig, resetManager } from "./index.ts";
+import tinyMcp, { executeTinyMcp as executeWithRuntime, loadTinyMcpConfig, TinyMcpRuntime } from "./index.ts";
 import { readState, writeState } from "./src/state.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { flushPipTools, pipSettings, resetPipToolsForTests } from "pip-common";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests } from "pip-common";
+import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
 
 const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fixtures", name);
 
@@ -48,19 +49,30 @@ function rpcResponse(id: string | number, result: unknown) {
   return JSON.stringify({ jsonrpc: "2.0", id, result });
 }
 
+let directRuntime: TinyMcpRuntime;
+
+function executeTinyMcp(input: any, cwd?: string, options?: any) {
+  return executeWithRuntime(directRuntime, input, cwd, options);
+}
+
+async function resetManager() {
+  await directRuntime.reset();
+}
+
 beforeEach(() => {
-  resetManager();
   resetPipToolsForTests();
-  pipSettings.set("tiny-mcp.enabled", true);
-  pipSettings.set("tiny-mcp.toolPrefix", "server");
-  pipSettings.set("tiny-mcp.metadataCache", false);
-  pipSettings.set("tiny-mcp.defaultTimeout", "30");
+  const pi = createMockPi();
+  registerTinyMcpSettings(pi as any);
+  const settings = getPipSettingsRegistry(pi);
+  settings.set("tiny-mcp.toolPrefix", "server");
+  settings.set("tiny-mcp.metadataCache", false);
+  settings.set("tiny-mcp.defaultTimeout", "30");
+  directRuntime = new TinyMcpRuntime(tinyMcpSettings(pi as any));
   writeState({ explicitlyDisconnected: [] });
 });
 
 afterEach(async () => {
-  await executeTinyMcp({ action: "disconnect" });
-  resetManager();
+  await directRuntime.shutdown();
   writeState({ explicitlyDisconnected: [] });
 });
 
@@ -69,7 +81,7 @@ describe("pi-tiny-mcp", () => {
     const pi = createMockPi();
     tinyMcp(pi as any);
     flushPipTools(pi as any);
-    expect(pipSettings.section("tiny-mcp")?.title).toBe("Tiny MCP");
+    expect(getPipSettingsRegistry(pi).section("tiny-mcp")?.title).toBe("Tiny MCP");
     expect(pi.commands.has("tiny-mcp")).toBe(true);
     const tool = getRegisteredTool(pi, "tiny-mcp");
     expect(tool).toBeTruthy();
@@ -81,9 +93,9 @@ describe("pi-tiny-mcp", () => {
   });
 
   it("does not register or auto-connect the tool while disabled", async () => {
-    pipSettings.set("tiny-mcp.enabled", false);
     const pi = createMockPi();
     const ctx = createMockCtx();
+    setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "tiny-mcp": { enabled: false } }, { persistPath: false }));
     tinyMcp(pi as any);
     flushPipTools(pi as any);
 
@@ -157,7 +169,7 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("scratch: connected, 1 tools [runtime]");
     expect((await executeTinyMcp({ tool: "scratch_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
     await executeTinyMcp({ action: "disconnect", server: "scratch" }, dir);
-    resetManager();
+    await resetManager();
     expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("none configured");
   });
 
@@ -367,7 +379,7 @@ describe("pi-tiny-mcp", () => {
     const dir = tempProject();
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { bad: { command: "node", args: [fixture("bad-json-server.js")], timeoutMs: 100 }, slow: { command: "node", args: [fixture("slow-server.js")], timeoutMs: 100 } } }));
     expect((await executeTinyMcp({ connect: "bad" }, dir)).content[0].text).toMatch(/Invalid JSON|timed out/);
-    resetManager();
+    await resetManager();
     expect((await executeTinyMcp({ connect: "slow" }, dir)).content[0].text).toContain("timed out");
   }, 10_000);
 
@@ -408,10 +420,33 @@ describe("pi-tiny-mcp", () => {
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));
     const pi = createMockPi();
     tinyMcp(pi as any);
+    const ctx = createMockCtx({ cwd: dir });
 
-    await emitEvent(pi, "session_start", { reason: "resume" }, createMockCtx({ cwd: dir }));
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
 
-    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("basic: connected");
+    const status = await getRegisteredTool(pi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("basic: connected");
+  });
+
+  it("keeps parent and child manager pools isolated", async () => {
+    const dir = tempProject();
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));
+    const parentPi = createMockPi();
+    const childPi = createMockPi();
+    tinyMcp(parentPi as any);
+    tinyMcp(childPi as any);
+    const parentCtx = createMockCtx({ cwd: dir });
+    const childCtx = createMockCtx({ cwd: dir });
+
+    await emitEvent(parentPi, "session_start", { reason: "startup" }, parentCtx);
+    await emitEvent(childPi, "session_start", { reason: "startup" }, childCtx);
+    await emitEvent(childPi, "session_shutdown", { reason: "quit" }, childCtx);
+
+    const parentStatus = await getRegisteredTool(parentPi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, parentCtx);
+    const childStatus = await getRegisteredTool(childPi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, childCtx);
+    expect(parentStatus.content[0].text).toContain("basic: connected");
+    expect(childStatus.content[0].text).toContain("basic: disconnected");
+    await emitEvent(parentPi, "session_shutdown", { reason: "quit" }, parentCtx);
   });
 
   it("does not load or auto-connect project servers when the project is untrusted", async () => {
@@ -434,13 +469,14 @@ describe("pi-tiny-mcp", () => {
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));
     const pi = createMockPi();
     tinyMcp(pi as any);
-    await executeTinyMcp({ connect: "basic" }, dir);
-
-    await emitEvent(pi, "session_shutdown", { reason: "resume" }, createMockCtx({ cwd: dir }));
+    const ctx = createMockCtx({ cwd: dir });
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
+    await emitEvent(pi, "session_shutdown", { reason: "resume" }, ctx);
     expect(readState().explicitlyDisconnected).not.toContain("basic");
-    await emitEvent(pi, "session_start", { reason: "resume" }, createMockCtx({ cwd: dir }));
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
 
-    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("basic: connected");
+    const status = await getRegisteredTool(pi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("basic: connected");
   });
 
   it("does not auto-connect explicitly disconnected servers", async () => {
@@ -449,13 +485,15 @@ describe("pi-tiny-mcp", () => {
     await executeTinyMcp({ connect: "basic" }, dir);
     await executeTinyMcp({ action: "disconnect", server: "basic" }, dir);
     expect(readState().explicitlyDisconnected).toContain("basic");
-    resetManager();
+    await resetManager();
     const pi = createMockPi();
     tinyMcp(pi as any);
+    const ctx = createMockCtx({ cwd: dir });
 
-    await emitEvent(pi, "session_start", { reason: "resume" }, createMockCtx({ cwd: dir }));
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
 
-    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("basic: disconnected");
+    const status = await getRegisteredTool(pi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("basic: disconnected");
   });
 
   it("skips config-disabled servers during auto-connect", async () => {
@@ -463,10 +501,12 @@ describe("pi-tiny-mcp", () => {
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { disabled: true } } }));
     const pi = createMockPi();
     tinyMcp(pi as any);
+    const ctx = createMockCtx({ cwd: dir });
 
-    await emitEvent(pi, "session_start", { reason: "resume" }, createMockCtx({ cwd: dir }));
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
 
-    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("none configured");
+    const status = await getRegisteredTool(pi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("none configured");
   });
 
   it("reports auto-connect failures without blocking session start", async () => {
@@ -480,7 +520,8 @@ describe("pi-tiny-mcp", () => {
 
     expect(ctx.ui.notifications.at(-1)).toMatchObject({ level: "warning" });
     expect(ctx.ui.notifications.at(-1)?.message).toContain("broken");
-    expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("broken: error");
+    const status = await getRegisteredTool(pi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, ctx);
+    expect(status.content[0].text).toContain("broken: error");
   });
 
   it("cleans manager on session shutdown", async () => {

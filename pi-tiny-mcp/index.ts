@@ -1,10 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { configPathForTarget } from "./src/config.ts";
 import { openInEditor } from "./src/editor.ts";
-import { getManager, registerTinyMcpTool, resetManager, shutdownManager } from "./src/proxy-tool.ts";
-import { registerTinyMcpSettings, settingValue, type ConfigTarget } from "./src/settings.ts";
-
-registerTinyMcpSettings();
+import { registerTinyMcpTool, TinyMcpRuntime } from "./src/proxy-tool.ts";
+import { registerTinyMcpSettings, tinyMcpSettings, type ConfigTarget } from "./src/settings.ts";
 
 const HELP_TEXT = `Tiny MCP commands:
   /tiny-mcp                         Show all MCP servers and status
@@ -25,23 +23,26 @@ function showOutput(_pi: ExtensionAPI, ctx: any, output: string): void {
   else console.log(output);
 }
 
-function managerForContext(ctx: any) {
-  return getManager(ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true });
+function managerForContext(runtime: TinyMcpRuntime, ctx: any) {
+  return runtime.getManager(ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true });
 }
 
-async function autoConnectEligible(ctx: any): Promise<void> {
-  const manager = managerForContext(ctx);
+async function autoConnectEligible(runtime: TinyMcpRuntime, ctx: any): Promise<void> {
+  const manager = managerForContext(runtime, ctx);
   const result = await manager.connectEligible();
   if (result.failed.length) ctx.ui?.notify?.(`tiny-mcp failed to connect: ${result.failed.map((failure) => failure.server).join(", ")}. Use /tiny-mcp status for details.`, "warning");
 }
 
 export default function tinyMcpExtension(pi: ExtensionAPI) {
-  if (settingValue("enabled", true)) registerTinyMcpTool(pi);
+  registerTinyMcpSettings(pi);
+  const settings = tinyMcpSettings(pi);
+  const runtime = new TinyMcpRuntime(settings);
+  if (settings.get("enabled", true)) registerTinyMcpTool(pi, runtime);
 
   pi.registerCommand("tiny-mcp", {
     description: "Tiny stdio/HTTP MCP status/config/connect commands",
     handler: async (args: string, ctx: any) => {
-      if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Tiny MCP is disabled in /pip-settings.", "warning");
+      if (!settings.get("enabled", true)) return ctx.ui?.notify?.("Tiny MCP is disabled in /pip-settings.", "warning");
       const [subcommand, target] = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const cwd = ctx?.cwd ?? process.cwd();
       try {
@@ -50,15 +51,15 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
           return;
         }
         if (subcommand === "config" || subcommand === "edit") {
-          const selected = (target as ConfigTarget | undefined) ?? settingValue<ConfigTarget>("configTarget", "pip");
+          const selected = (target as ConfigTarget | undefined) ?? settings.get<ConfigTarget>("configTarget", "pip");
           if (!["pip", "global", "project"].includes(selected)) throw new Error("Usage: /tiny-mcp config [pip|global|project]");
           const path = configPathForTarget(selected, cwd);
           await openInEditor(path);
-          resetManager();
+          await runtime.reset();
           showOutput(pi, ctx, `Edited ${path}`);
           return;
         }
-        const manager = managerForContext(ctx);
+        const manager = managerForContext(runtime, ctx);
         if (subcommand === "connect") {
           if (target) {
             await manager.connect(target);
@@ -89,14 +90,14 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event: any, ctx: any) => {
-    if (settingValue("enabled", true)) await autoConnectEligible(ctx);
+    if (settings.get("enabled", true)) await autoConnectEligible(runtime, ctx);
   });
 
   pi.on("session_shutdown", async () => {
-    await shutdownManager();
+    await runtime.shutdown();
   });
 }
 
-export { executeTinyMcp, resetManager, shutdownManager } from "./src/proxy-tool.ts";
+export { executeTinyMcp, TinyMcpRuntime } from "./src/proxy-tool.ts";
 export { loadTinyMcpConfig } from "./src/config.ts";
 export { TinyMcpManager } from "./src/manager.ts";

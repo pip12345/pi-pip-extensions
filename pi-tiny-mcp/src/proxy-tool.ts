@@ -1,37 +1,41 @@
 import { Type } from "typebox";
-import { firstResultText, registerPipTool } from "pip-common";
+import { firstResultText, registerPipTool, type ScopedSettings } from "pip-common";
 import { parseTinyMcpServerConfig } from "./config.ts";
-import { resultLimit } from "./settings.ts";
+import type { ResultLimitSetting } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
 import type { TinyMcpServerConfig, VisibleToolInfo } from "./types.ts";
-
-const managers = new Map<string, TinyMcpManager>();
 
 export interface TinyMcpExecutionOptions {
   projectTrusted?: boolean;
 }
 
-export function getManager(cwd = process.cwd(), options: TinyMcpExecutionOptions = {}): TinyMcpManager {
-  const projectTrusted = options.projectTrusted !== false;
-  const key = `${projectTrusted ? "trusted" : "untrusted"}\0${cwd}`;
-  let manager = managers.get(key);
-  if (!manager) {
-    manager = new TinyMcpManager(cwd, { projectTrusted });
-    managers.set(key, manager);
+export class TinyMcpRuntime {
+  private managers = new Map<string, TinyMcpManager>();
+
+  constructor(readonly settings: ScopedSettings) {}
+
+  getManager(cwd = process.cwd(), options: TinyMcpExecutionOptions = {}): TinyMcpManager {
+    const projectTrusted = options.projectTrusted !== false;
+    const key = `${projectTrusted ? "trusted" : "untrusted"}\0${cwd}`;
+    let manager = this.managers.get(key);
+    if (!manager) {
+      manager = new TinyMcpManager(cwd, this.settings, { projectTrusted });
+      this.managers.set(key, manager);
+    }
+    return manager;
   }
-  return manager;
+
+  async shutdown(): Promise<void> {
+    await Promise.all([...this.managers.values()].map((manager) => manager.close().catch(() => undefined)));
+    this.managers.clear();
+  }
+
+  async reset(): Promise<void> {
+    await this.shutdown();
+  }
 }
 
-export async function shutdownManager(): Promise<void> {
-  await Promise.all([...managers.values()].map((manager) => manager.close().catch(() => undefined)));
-  managers.clear();
-}
-
-export function resetManager(): void {
-  managers.clear();
-}
-
-export function registerTinyMcpTool(pi: any): void {
+export function registerTinyMcpTool(pi: any, runtime: TinyMcpRuntime): void {
   registerPipTool(pi, {
     tool: {
       name: "tiny-mcp",
@@ -60,7 +64,7 @@ export function registerTinyMcpTool(pi: any): void {
         config: Type.Optional(Type.String({ description: "JSON string MCP server config for action:add" })),
         action: Type.Optional(Type.String({ description: "status/disconnect/add" })),
       }),
-      execute: async (_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) => executeTinyMcp(params ?? {}, ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true }),
+      execute: async (_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) => executeTinyMcp(runtime, params ?? {}, ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true }),
     },
     metadata: {
       pluginId: "tiny-mcp",
@@ -79,8 +83,8 @@ export function registerTinyMcpTool(pi: any): void {
   });
 }
 
-export async function executeTinyMcp(input: any, cwd = process.cwd(), options: TinyMcpExecutionOptions = {}) {
-  const m = getManager(cwd, options);
+export async function executeTinyMcp(runtime: TinyMcpRuntime, input: any, cwd = process.cwd(), options: TinyMcpExecutionOptions = {}) {
+  const m = runtime.getManager(cwd, options);
   try {
     if (input.action === "add") {
       const serverName = parseServerName(input.server);
@@ -111,7 +115,7 @@ export async function executeTinyMcp(input: any, cwd = process.cwd(), options: T
     if (input.tool) {
       const args = parseArgs(input.args);
       const result = await m.callVisibleTool(String(input.tool), args);
-      return mcpResultToPi(result);
+      return mcpResultToPi(result, runtime.settings);
     }
     return textResult(m.status());
   } catch (error) {
@@ -178,9 +182,9 @@ function formatSchemaSummary(schema: unknown): string {
   return names.length ? `\n  args: ${names.join(", ")}` : "";
 }
 
-function mcpResultToPi(result: any) {
+function mcpResultToPi(result: any, settings: ScopedSettings) {
   const text = blocksToText(result?.content ?? []);
-  const limit = resultLimit();
+  const limit = Number(settings.get<ResultLimitSetting>("resultLimit", "20000"));
   const shown = text.length > limit ? `${text.slice(0, limit)}\n...[truncated ${text.length - limit} chars]` : text;
   return { content: [{ type: "text" as const, text: shown || JSON.stringify(result) }], details: result };
 }

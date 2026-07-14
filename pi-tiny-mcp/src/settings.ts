@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSettingsSection, setting, settingsFor } from "pip-common";
 
 export const SETTINGS_ID = "tiny-mcp";
@@ -8,8 +9,8 @@ export type ToolPrefix = "server" | "none";
 export type TimeoutSetting = "30" | "60" | "120" | "300";
 export type ResultLimitSetting = "10000" | "20000" | "40000";
 
-export function registerTinyMcpSettings(): void {
-  registerSettingsSection({
+export function registerTinyMcpSettings(pi: ExtensionAPI): void {
+  registerSettingsSection(pi, {
     id: SETTINGS_ID,
     title: "Tiny MCP",
     description: "Tiny stdio/HTTP MCP adapter. No OAuth, UI bridge, or SDK dependency refrigerator.",
@@ -26,13 +27,6 @@ export function registerTinyMcpSettings(): void {
   });
 }
 
-const scopedSettings = settingsFor(SETTINGS_ID);
-export const settingValue = scopedSettings.get;
-
-export function defaultTimeoutMs(): number {
-  return Number(settingValue<TimeoutSetting>("defaultTimeout", "120")) * 1000;
-}
-
-export function resultLimit(): number {
-  return Number(settingValue<ResultLimitSetting>("resultLimit", "20000"));
+export function tinyMcpSettings(pi: ExtensionAPI) {
+  return settingsFor(pi, SETTINGS_ID);
 }

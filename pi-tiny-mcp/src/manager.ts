@@ -1,6 +1,7 @@
+import type { ScopedSettings } from "pip-common";
 import { loadTinyMcpConfig } from "./config.ts";
 import { readCache, updateCachedTools } from "./cache.ts";
-import { defaultTimeoutMs, settingValue, type StderrMode, type ToolPrefix } from "./settings.ts";
+import type { StderrMode, TimeoutSetting, ToolPrefix } from "./settings.ts";
 import { TinyMcpClient } from "./mcp-client.ts";
 import { isExplicitlyDisconnected, setExplicitlyDisconnected } from "./state.ts";
 import type { McpToolInfo, ServerStatus, TinyMcpConfig, VisibleToolInfo } from "./types.ts";
@@ -19,9 +20,9 @@ export class TinyMcpManager {
   private states = new Map<string, ServerState>();
   private visibleTools = new Map<string, VisibleToolInfo>();
 
-  constructor(cwd = process.cwd(), options: { projectTrusted?: boolean } = {}) {
+  constructor(cwd = process.cwd(), private readonly settings: ScopedSettings, options: { projectTrusted?: boolean } = {}) {
     this.config = loadTinyMcpConfig(cwd, options);
-    const cache = settingValue("metadataCache", true) ? readCache() : { servers: {} };
+    const cache = settings.get("metadataCache", true) ? readCache() : { servers: {} };
     for (const [name, server] of Object.entries(this.config.mcpServers)) {
       if (server.disabled) continue;
       this.states.set(name, { name, status: "disconnected", tools: cache.servers[name]?.tools ?? [] });
@@ -73,7 +74,7 @@ export class TinyMcpManager {
     if (!config || config.disabled) throw new Error(`Server not configured: ${serverName}`);
     state.status = "connecting";
     state.lastError = undefined;
-    const client = new TinyMcpClient({ name: serverName, config, timeoutMs: config.timeoutMs ?? defaultTimeoutMs(), stderr: settingValue<StderrMode>("stderr", "tail") });
+    const client = new TinyMcpClient({ name: serverName, config, timeoutMs: config.timeoutMs ?? Number(this.settings.get<TimeoutSetting>("defaultTimeout", "120")) * 1000, stderr: this.settings.get<StderrMode>("stderr", "tail") });
     client.on("notification", (method) => {
       if (method === "notifications/tools/list_changed") void this.refreshTools(serverName).catch((error) => { state.lastError = error instanceof Error ? error.message : String(error); });
     });
@@ -97,7 +98,7 @@ export class TinyMcpManager {
     const state = this.requireState(serverName);
     if (!state.client) return;
     state.tools = await state.client.listTools();
-    if (!state.runtime && settingValue("metadataCache", true)) updateCachedTools(serverName, state.tools);
+    if (!state.runtime && this.settings.get("metadataCache", true)) updateCachedTools(serverName, state.tools);
     this.rebuildVisibleTools();
   }
 
@@ -155,7 +156,7 @@ export class TinyMcpManager {
   private rebuildVisibleTools(): void {
     const next = new Map<string, VisibleToolInfo>();
     const used = new Set<string>();
-    const prefix = settingValue<ToolPrefix>("toolPrefix", "server");
+    const prefix = this.settings.get<ToolPrefix>("toolPrefix", "server");
     for (const state of this.states.values()) {
       for (const tool of state.tools) {
         const base = normalizeName(prefix === "server" ? `${state.name}_${tool.name}` : tool.name);

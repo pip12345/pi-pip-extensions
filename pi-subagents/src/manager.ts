@@ -1,14 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { emptyUsage } from "pip-common";
+import { emptyUsage, type ScopedSettings } from "pip-common";
 import type { AgentConfig, LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";
 import { appendWorkspaceGuidance, contextRoot, runContextDir } from "./context.ts";
-import { settingValue } from "./settings.ts";
 import { deleteManagedChildSession, deleteParentPersistence, gcOrphanedParents, readParentRuns, restoredRun, toPersistedRun, writeParentRuns } from "./persistence.ts";
-
-const KEY = Symbol.for("pip-subagents.manager");
 
 export interface ManagerOptions {
   runner: Runner;
@@ -16,6 +13,7 @@ export interface ManagerOptions {
   inject?: (parentSessionKey: string, message: string) => void;
   persistenceDir?: string;
   contextDir?: string;
+  settings?: ScopedSettings;
 }
 
 function id(): string {
@@ -51,6 +49,7 @@ export class SubagentManager {
   contextDir?: string;
   loadedParents = new Set<string>();
   parentBranches = new Map<string, Set<string>>();
+  private settings: ScopedSettings;
 
   constructor(options: ManagerOptions) {
     this.runner = options.runner;
@@ -58,6 +57,7 @@ export class SubagentManager {
     this.inject = options.inject;
     this.persistenceDir = options.persistenceDir;
     this.contextDir = options.contextDir;
+    this.settings = options.settings ?? { id: "subagents-defaults", path: (key) => key, get: (_key, fallback) => fallback, onChange: () => () => undefined };
   }
 
   configure(options: Partial<ManagerOptions>): void {
@@ -66,6 +66,7 @@ export class SubagentManager {
     if (options.inject) this.inject = options.inject;
     if (options.persistenceDir) this.persistenceDir = options.persistenceDir;
     if (options.contextDir) this.contextDir = options.contextDir;
+    if (options.settings) this.settings = options.settings;
   }
 
   setActiveParent(key: string, parentSessionFile?: string, branchIds?: string[]): void {
@@ -183,7 +184,7 @@ export class SubagentManager {
   launch(input: LaunchInput): SubagentRun {
     if (this.shuttingDown) throw new Error("Subagent manager is shutting down.");
     this.cleanup();
-    const maxRunning = settingValue("maxRunning", 6);
+    const maxRunning = this.settings.get("maxRunning", 6);
     if (this.runningCount() >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
     this.ensureNameAvailable(input.name, input.parentSessionKey);
     const runId = id();
@@ -390,7 +391,7 @@ export class SubagentManager {
   }
 
   completeBackground(run: SubagentRun): void {
-    if (!settingValue("injectBackgroundResults", true)) return;
+    if (!this.settings.get("injectBackgroundResults", true)) return;
     const message = this.completionMessage(run);
     if (this.activeParentSessionKey === run.parentSessionKey && this.inject) this.inject(run.parentSessionKey, message);
     else this.pendingCompletions.set(run.parentSessionKey, [...(this.pendingCompletions.get(run.parentSessionKey) ?? []), message]);
@@ -404,7 +405,7 @@ export class SubagentManager {
   }
 
   cleanup(parentSessionKey?: string): void {
-    const ttlMs = settingValue("ephemeralTtlMinutes", 30) * 60_000;
+    const ttlMs = this.settings.get("ephemeralTtlMinutes", 30) * 60_000;
     const now = this.now();
     const candidates = [...this.runs.values()].filter((run) => !parentSessionKey || run.parentSessionKey === parentSessionKey);
     for (const run of candidates) {
@@ -416,7 +417,7 @@ export class SubagentManager {
       }
       if (run.status !== "running" && now - run.updatedAt > ttlMs) this.pruneEphemeral(run);
     }
-    const max = settingValue("maxRecentPerParent", 20);
+    const max = this.settings.get("maxRecentPerParent", 20);
     const groups = new Map<string, SubagentRun[]>();
     for (const run of this.runs.values()) {
       if (parentSessionKey && run.parentSessionKey !== parentSessionKey) continue;
@@ -460,24 +461,4 @@ export class SubagentManager {
     this.foreground.clear();
     this.pendingCompletions.clear();
   }
-}
-
-export function getManager(options: ManagerOptions): SubagentManager {
-  const globalState = globalThis as any;
-  const current = globalState[KEY];
-  if (!current) globalState[KEY] = new SubagentManager(options);
-  else current.configure(options);
-  return globalState[KEY];
-}
-
-export async function shutdownGlobalManager(): Promise<void> {
-  const globalState = globalThis as any;
-  const current = globalState[KEY];
-  delete globalState[KEY];
-  if (current && typeof current.shutdown === "function") await current.shutdown();
-}
-
-export function resetManagerForTests(): void {
-  const globalState = globalThis as any;
-  delete globalState[KEY];
 }

@@ -1,4 +1,4 @@
-import { getPipSettingsRegistry, pipSettings, type SettingChange, type SettingSection, type SettingsRegistry } from "./settings.ts";
+import { getPipSettingsRegistry, type SettingChange, type SettingSection, type SettingsRegistry } from "./settings.ts";
 import type { PiRuntimeOwner } from "./runtime.ts";
 
 export interface ScopedSettings {
@@ -30,16 +30,10 @@ function scopedSettings(registry: SettingsRegistry, id: string): ScopedSettings 
   };
 }
 
-export function settingsFor(id: string): ScopedSettings;
-export function settingsFor(pi: PiRuntimeOwner, id: string): ScopedSettings;
-export function settingsFor(piOrId: PiRuntimeOwner | string, maybeId?: string): ScopedSettings {
-  if (typeof piOrId === "string") return scopedSettings(pipSettings, piOrId);
-  return scopedSettings(getPipSettingsRegistry(piOrId), maybeId!);
+export function settingsFor(pi: PiRuntimeOwner, id: string): ScopedSettings {
+  return scopedSettings(getPipSettingsRegistry(pi), id);
 }
 
-export function settingsForSection(section: Pick<SettingSection, "id">): ScopedSettings;
-export function settingsForSection(pi: PiRuntimeOwner, section: Pick<SettingSection, "id">): ScopedSettings;
-export function settingsForSection(piOrSection: PiRuntimeOwner | Pick<SettingSection, "id">, maybeSection?: Pick<SettingSection, "id">): ScopedSettings {
-  if (maybeSection) return settingsFor(piOrSection as PiRuntimeOwner, maybeSection.id);
-  return settingsFor((piOrSection as Pick<SettingSection, "id">).id);
+export function settingsForSection(pi: PiRuntimeOwner, section: Pick<SettingSection, "id">): ScopedSettings {
+  return settingsFor(pi, section.id);
 }
