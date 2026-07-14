@@ -48,7 +48,7 @@ describe("pi-stats", () => {
       entries: [
         { type: "message", id: "u1", message: { role: "user", content: "do work", timestamp: Date.UTC(2026, 5, 1, 12) } },
         { type: "message", id: "a1", parentId: "u1", message: { role: "assistant", provider: "openai", model: "gpt", usage: { input: 10, output: 5, cacheRead: 2, cost: { total: 0.01 } } } },
-        { type: "message", id: "tr1", parentId: "a1", message: { role: "toolResult", toolName: "subagent", details: { run: { usage: { input: 20, output: 6, cacheRead: 3, cost: 0.02 } } } } },
+        { type: "message", id: "tr1", parentId: "a1", message: { role: "toolResult", toolName: "subagent", details: { run: { id: "sa_1", usage: { input: 20, output: 6, cacheRead: 3, cost: 0.02 } } } } },
       ],
       model: { contextWindow: 1000 },
     });
@@ -61,6 +61,32 @@ describe("pi-stats", () => {
     expect(__test.formatCacheWithHit(rows[0], true)).toBe("5/14%");
     expect(__test.formatCacheHit(rows[0].parent)).toBe("17%");
     expect(__test.formatCacheHit(rows[0].subagents)).toBe("13%");
+  });
+
+  it("deduplicates cumulative subagent usage by run id and applies continuation deltas", async () => {
+    const { __test } = await loadStatsModule();
+    const snapshot = (input: number, output: number, cost: number) => ({ type: "message", message: { role: "toolResult", toolName: "subagent", details: { run: { id: "sa_1", usage: { input, output, cacheRead: 0, cost } } } } });
+    const ctx = createMockCtx({
+      entries: [
+        { type: "message", message: { role: "user", content: "launch" } },
+        snapshot(20, 6, 0.02),
+        snapshot(20, 6, 0.02),
+        { type: "message", message: { role: "user", content: "continue" } },
+        snapshot(25, 8, 0.03),
+        snapshot(25, 8, 0.03),
+      ],
+      model: { contextWindow: 1000 },
+    });
+
+    const rows = __test.buildSessionRows(ctx);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].subagents).toMatchObject({ input: 20, output: 6, cost: 0.02 });
+    expect(rows[0].subagentCount).toBe(1);
+    expect(rows[1].subagents.input).toBe(5);
+    expect(rows[1].subagents.output).toBe(2);
+    expect(rows[1].subagents.cost).toBeCloseTo(0.01);
+    expect(rows[1].subagentCount).toBe(1);
+    expect(rows[1].cumulative).toMatchObject({ input: 25, output: 8, cost: 0.03 });
   });
 
   it("formats cache hit rate from prompt-side cache reads", async () => {

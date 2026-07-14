@@ -1,6 +1,7 @@
 import { Text } from "@earendil-works/pi-tui";
 import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi, type ScopedSettings } from "pip-common";
 import type { SubagentEvent, SubagentSnapshot } from "./types.ts";
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_STATUS_CHARS } from "./bounds.ts";
 
 type SettingsReader = Pick<ScopedSettings, "get">;
 const DEFAULT_SETTINGS: SettingsReader = { get: (_key, fallback) => fallback };
@@ -117,6 +118,8 @@ export function renderSubagentResult(result: any, options: any, theme: any, sett
 
 export function formatRunStatus(run: SubagentSnapshot, settings: SettingsReader = DEFAULT_SETTINGS): string {
   const usage = formatCompactUsage(run.usage, { includeCost: showUsageCost(settings), inputMode: "raw" });
-  const text = run.errorText ? `\nError: ${run.errorText}` : run.resultText ? `\n\n<subagent_result>\n${run.resultText}\n</subagent_result>` : "";
-  return [`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, run.model ? `model: ${run.model}` : undefined, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n");
+  const text = run.errorText
+    ? `\nError: ${boundSubagentText(run.errorText, MAX_SUBAGENT_ERROR_CHARS, 40)}`
+    : run.resultText ? `\n\n<subagent_result>\n${boundSubagentResult(run.resultText, run.sessionFile, MAX_SUBAGENT_STATUS_CHARS - 1000)}\n</subagent_result>` : "";
+  return boundSubagentText([`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, run.model ? `model: ${run.model}` : undefined, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n"), MAX_SUBAGENT_STATUS_CHARS, 220);
 }

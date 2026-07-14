@@ -130,17 +130,34 @@ function emptySessionRow(modelWindow: number, prompt: string, timestamp: number)
   };
 }
 
-function subagentUsagesFromToolResult(msg: any): Tokens[] {
+interface SubagentUsageSnapshot {
+  id?: string;
+  usage: Tokens;
+}
+
+function subagentUsagesFromToolResult(msg: any): SubagentUsageSnapshot[] {
   if (msg?.role !== "toolResult" || msg?.toolName !== "subagent") return [];
-  const out: Tokens[] = [];
+  const out: SubagentUsageSnapshot[] = [];
   const add = (value: any) => {
-    const usage = normalizeUsage(value);
-    if (usage) out.push(usage);
+    const usage = normalizeUsage(value?.usage);
+    if (usage) out.push({ id: typeof value?.id === "string" ? value.id : undefined, usage });
   };
-  add(msg.details?.run?.usage);
-  for (const run of Array.isArray(msg.details?.runs) ? msg.details.runs : []) add(run?.usage);
-  for (const result of Array.isArray(msg.details?.results) ? msg.details.results : []) add(result?.usage);
+  add(msg.details?.run);
+  for (const run of Array.isArray(msg.details?.runs) ? msg.details.runs : []) add(run);
+  for (const result of Array.isArray(msg.details?.results) ? msg.details.results : []) add(result);
   return out;
+}
+
+const USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite", "cache", "total", "cost"] as const;
+
+function positiveUsageDelta(current: Tokens, previous?: Tokens): Tokens {
+  const delta = emptyTokens();
+  for (const key of USAGE_KEYS) delta[key] = Math.max(0, current[key] - (previous?.[key] ?? 0));
+  return delta;
+}
+
+function hasUsage(usage: Tokens): boolean {
+  return USAGE_KEYS.some((key) => usage[key] > 0);
 }
 
 function buildSessionRows(ctx: any): SessionRow[] {
@@ -151,6 +168,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
   let current: SessionRow | null = null;
 
   const cumulative = emptyTokens();
+  const subagentUsageByRun = new Map<string, Tokens>();
 
   const ensureCurrent = (entry: any, prompt = "(no prompt)") => {
     current ??= emptySessionRow(modelWindow, prompt, Date.parse(entry?.timestamp) || Date.now());
@@ -197,7 +215,15 @@ function buildSessionRows(ctx: any): SessionRow[] {
       const usages = subagentUsagesFromToolResult(msg);
       if (!usages.length) continue;
       const row = ensureCurrent(entry);
-      for (const usage of usages) {
+      for (const snapshot of usages) {
+        const previous = snapshot.id ? subagentUsageByRun.get(snapshot.id) : undefined;
+        const usage = positiveUsageDelta(snapshot.usage, previous);
+        if (snapshot.id) {
+          const highWater = previous ? { ...previous } : emptyTokens();
+          for (const key of USAGE_KEYS) highWater[key] = Math.max(highWater[key], snapshot.usage[key]);
+          subagentUsageByRun.set(snapshot.id, highWater);
+        }
+        if (!hasUsage(usage)) continue;
         addTokens(row, usage);
         addTokens(row.subagents, usage);
         row.subagentCount += 1;

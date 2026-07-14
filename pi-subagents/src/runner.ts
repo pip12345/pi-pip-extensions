@@ -7,6 +7,7 @@ import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { parseModelRef } from "./model-ref.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { PiChildAgentRuntime, type ChildAgentRuntime, type ChildAgentRuntimeSession } from "./child-runtime.ts";
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_EVENT_TEXT_CHARS, MAX_SUBAGENT_EVENTS, MAX_SUBAGENT_RESULT_CHARS } from "./bounds.ts";
 
 function safePart(value: string): string {
   const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
@@ -32,7 +33,15 @@ function summarizeArgs(args: any): string {
 }
 
 function textFromMessage(msg: any): string {
-  return (msg?.content ?? []).filter((part: any) => part?.type === "text").map((part: any) => part.text ?? "").join("\n");
+  const parts: string[] = [];
+  let remaining = MAX_SUBAGENT_RESULT_CHARS;
+  for (const part of Array.isArray(msg?.content) ? msg.content : []) {
+    if (part?.type !== "text" || remaining <= 0) continue;
+    const text = String(part.text ?? "").slice(0, remaining);
+    if (text) parts.push(text);
+    remaining -= text.length + 1;
+  }
+  return boundSubagentText(parts.join("\n"), MAX_SUBAGENT_RESULT_CHARS);
 }
 
 function appendBounded(out: string[], value: unknown, remaining: () => number): void {
@@ -69,20 +78,23 @@ function summarizeToolResult(result: any): string | undefined {
 }
 
 function pushEvent(run: SubagentRun, event: SubagentRun["events"][number]): number {
+  if (event.type === "text_delta" || event.type === "steer") event = { ...event, text: boundSubagentText(event.text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40) };
+  else if (event.type === "tool_start") event = { ...event, id: boundSubagentText(event.id, 200, 1), name: boundSubagentText(event.name, 200, 1), argsSummary: boundSubagentText(event.argsSummary, 500, 4) };
+  else event = { ...event, id: boundSubagentText(event.id, 200, 1), resultSummary: event.resultSummary ? boundSubagentText(event.resultSummary, 500, 4) : undefined };
   const previous = run.events.at(-1);
   if (previous?.type === "text_delta" && event.type === "text_delta") {
-    previous.text += event.text;
+    previous.text = boundSubagentText(previous.text + event.text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40);
     previous.at = event.at;
     return run.events.length - 1;
   }
   run.events.push(event);
-  if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
+  if (run.events.length > MAX_SUBAGENT_EVENTS) run.events.splice(0, run.events.length - MAX_SUBAGENT_EVENTS);
   return run.events.indexOf(event);
 }
 
 function replaceTextEvent(run: SubagentRun, index: number | undefined, text: string, at: number): number {
   if (index != null && run.events[index]?.type === "text_delta") {
-    run.events[index] = { type: "text_delta", text, at };
+    run.events[index] = { type: "text_delta", text: boundSubagentText(text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40), at };
     return index;
   }
   return pushEvent(run, { type: "text_delta", text, at });
@@ -149,7 +161,7 @@ export class RealRunner implements Runner {
         } else if (event.type === "message_end" && event.message?.role === "assistant") {
           const text = textFromMessage(event.message);
           lastAssistantText = text;
-          if (text) run.resultText = text;
+          if (text) run.resultText = boundSubagentResult(text, run.sessionFile);
           const usage = normalizeUsage(event.message.usage);
           if (usage) {
             run.usage ??= emptyUsage();

@@ -27,6 +27,7 @@
   "files": [
     "index.ts",
     "src/agents.ts",
+    "src/bounds.ts",
     "src/child-runtime.ts",
     "src/context.ts",
     "src/manager.ts",

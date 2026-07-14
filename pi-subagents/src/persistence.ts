@@ -5,8 +5,9 @@ import { emptyUsage, pipPath, type TokenUsage } from "pip-common";
 import type { RunStatus, SubagentEvent, SubagentRun } from "./types.ts";
 import { isSafeRunId } from "./context.ts";
 import { privateSessionDir } from "./runner.ts";
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_EVENTS, MAX_SUBAGENT_EVENT_TEXT_CHARS, MAX_SUBAGENT_PERSISTED_PROMPT_CHARS } from "./bounds.ts";
 
-const VERSION = 3;
+const VERSION = 4;
 
 function safePart(value: string): string {
   const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
@@ -27,7 +28,7 @@ export function parentIndexPath(parentSessionKey: string, baseDir?: string): str
 }
 
 export interface PersistedRun {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   id: string;
   name?: string;
   agent: string;
@@ -54,7 +55,7 @@ export interface PersistedRun {
 }
 
 interface ParentIndex {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   parentSessionKey: string;
   parentSessionFile: string;
   runs: PersistedRun[];
@@ -64,15 +65,22 @@ export function canPersist(run: SubagentRun): run is SubagentRun & { parentSessi
   return typeof run.parentSessionFile === "string" && run.parentSessionFile.length > 0;
 }
 
+function boundedEvent(event: SubagentEvent): SubagentEvent {
+  if (event.type === "steer" || event.type === "text_delta") return { ...event, text: boundSubagentText(event.text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40) };
+  if (event.type === "tool_start") return { ...event, id: boundSubagentText(event.id, 200, 1), name: boundSubagentText(event.name, 200, 1), argsSummary: boundSubagentText(event.argsSummary, 500, 4) };
+  return { ...event, id: boundSubagentText(event.id, 200, 1), resultSummary: event.resultSummary ? boundSubagentText(event.resultSummary, 500, 4) : undefined };
+}
+
 export function toPersistedRun(run: SubagentRun): PersistedRun | undefined {
   if (!canPersist(run)) return undefined;
+  const events = run.resultText ? run.events.filter((event) => event.type !== "text_delta") : run.events;
   return {
     version: VERSION,
     id: run.id,
     name: run.name,
     agent: run.agent,
     model: run.model,
-    prompt: run.prompt,
+    prompt: boundSubagentText(run.prompt, MAX_SUBAGENT_PERSISTED_PROMPT_CHARS, 100),
     cwd: run.cwd,
     parentSessionKey: run.parentSessionKey,
     parentSessionFile: run.parentSessionFile,
@@ -85,10 +93,10 @@ export function toPersistedRun(run: SubagentRun): PersistedRun | undefined {
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
     sessionFile: run.sessionFile,
-    resultText: run.resultText,
-    errorText: run.errorText,
+    resultText: run.resultText ? boundSubagentResult(run.resultText, run.sessionFile) : undefined,
+    errorText: run.errorText ? boundSubagentText(run.errorText, MAX_SUBAGENT_ERROR_CHARS, 40) : undefined,
     usage: { ...run.usage },
-    events: run.events.slice(-300).map((event) => ({ ...event })),
+    events: events.slice(-MAX_SUBAGENT_EVENTS).map(boundedEvent),
   };
 }
 
@@ -99,7 +107,7 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
     name: record.name,
     agent: record.agent,
     model: record.model,
-    prompt: record.prompt,
+    prompt: boundSubagentText(record.prompt, MAX_SUBAGENT_PERSISTED_PROMPT_CHARS, 100),
     cwd: record.cwd,
     parentSessionKey: record.parentSessionKey,
     parentSessionFile: record.parentSessionFile,
@@ -112,10 +120,10 @@ export function restoredRun(record: PersistedRun, now: number): SubagentRun {
     updatedAt: wasRunning ? now : record.updatedAt,
     completedAt: wasRunning ? now : record.completedAt,
     sessionFile: record.sessionFile,
-    resultText: record.resultText,
-    errorText: wasRunning ? "Subagent was interrupted by parent process shutdown/restart." : record.errorText,
+    resultText: record.resultText ? boundSubagentResult(record.resultText, record.sessionFile) : undefined,
+    errorText: wasRunning ? "Subagent was interrupted by parent process shutdown/restart." : record.errorText ? boundSubagentText(record.errorText, MAX_SUBAGENT_ERROR_CHARS, 40) : undefined,
     usage: { ...(record.usage ?? emptyUsage()) },
-    events: record.events.slice(-300).map((event) => ({ ...event })),
+    events: record.events.slice(-MAX_SUBAGENT_EVENTS).map(boundedEvent),
     abortController: new AbortController(),
     forwarding: false,
   };
@@ -154,7 +162,7 @@ function validPersistedRun(value: unknown, index: ParentIndex): value is Persist
   if (!value || typeof value !== "object") return false;
   const run = value as Record<string, unknown>;
   return (
-    (run.version === 2 || run.version === VERSION) &&
+    (run.version === 2 || run.version === 3 || run.version === VERSION) &&
     isSafeRunId(run.id) &&
     typeof run.agent === "string" && run.agent.length > 0 &&
     typeof run.prompt === "string" &&
@@ -184,7 +192,7 @@ function validPersistedRun(value: unknown, index: ParentIndex): value is Persist
 function validateIndex(value: unknown, expectedParentKey: string): { index: ParentIndex; invalidRuns: boolean } {
   if (!value || typeof value !== "object") throw new Error(`Invalid subagent persistence index for parent ${expectedParentKey}`);
   const raw = value as Record<string, unknown>;
-  if ((raw.version !== 2 && raw.version !== VERSION) || raw.parentSessionKey !== expectedParentKey || typeof raw.parentSessionFile !== "string" || !raw.parentSessionFile || !Array.isArray(raw.runs)) {
+  if ((raw.version !== 2 && raw.version !== 3 && raw.version !== VERSION) || raw.parentSessionKey !== expectedParentKey || typeof raw.parentSessionFile !== "string" || !raw.parentSessionFile || !Array.isArray(raw.runs)) {
     throw new Error(`Invalid subagent persistence index for parent ${expectedParentKey}`);
   }
   const index = raw as unknown as ParentIndex;

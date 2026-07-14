@@ -9,7 +9,9 @@ import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";
 import { RealRunner } from "./src/runner.ts";
 import { runContextDir } from "./src/context.ts";
-import { parentIndexPath } from "./src/persistence.ts";
+import { parentIndexPath, toPersistedRun } from "./src/persistence.ts";
+import { formatRunStatus } from "./src/render.ts";
+import { MAX_SUBAGENT_COMPLETION_CHARS, MAX_SUBAGENT_RESULT_CHARS, MAX_SUBAGENT_STATUS_CHARS } from "./src/bounds.ts";
 import { applyChildExtensionProfile, childExtensionAllowed, type ChildAgentRuntime } from "./src/child-runtime.ts";
 import type { Runner, SubagentRun } from "./src/types.ts";
 
@@ -400,6 +402,36 @@ describe("pi-subagents", () => {
     const result = await tool.execute("1", { agent: "explore", prompt: "usage no cost" }, undefined, undefined, createMockCtx());
     expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k");
     expect(result.content[0].text).not.toContain("$0.42");
+  });
+
+  it("bounds parent snapshots, persistence, status, and completion while retaining the child transcript path", async () => {
+    const runner: Runner = {
+      async launch(_input, run) {
+        run.sessionFile = `/tmp/${run.id}.jsonl`;
+        run.resultText = "result line\n".repeat(10_000);
+        run.events = Array.from({ length: 300 }, (_, index) => ({ type: "text_delta" as const, text: `event ${index} ${"x".repeat(5_000)}`, at: index }));
+        run.status = "completed";
+        return run;
+      },
+    };
+    const manager = new SubagentManager({ runner });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    const run = manager.launch({ agent, prompt: "large", cwd: process.cwd(), parentSessionKey: "parent", parentSessionFile: "/tmp/parent.jsonl", keep: true, background: false });
+    await run.runPromise;
+
+    const snapshot = manager.snapshot(run);
+    const persisted = toPersistedRun(run)!;
+    const status = formatRunStatus(snapshot);
+    const completion = manager.completionMessage(run);
+    expect(snapshot.resultText!.length).toBeLessThanOrEqual(MAX_SUBAGENT_RESULT_CHARS);
+    expect(snapshot.resultText).toContain("full child transcript");
+    expect(snapshot.events.some((event) => event.type === "text_delta")).toBe(false);
+    expect(persisted.resultText!.length).toBeLessThanOrEqual(MAX_SUBAGENT_RESULT_CHARS);
+    expect(persisted.events.some((event) => event.type === "text_delta")).toBe(false);
+    expect(status.length).toBeLessThanOrEqual(MAX_SUBAGENT_STATUS_CHARS);
+    expect(status).toContain("full child transcript");
+    expect(completion.length).toBeLessThanOrEqual(MAX_SUBAGENT_COMPLETION_CHARS);
+    expect(completion).toContain("full child transcript");
   });
 
   it("recomputes persisted context paths before recursive deletion", () => {

@@ -6,6 +6,7 @@ import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";
 import { appendWorkspaceGuidance, contextRoot, runContextDir } from "./context.ts";
 import { deleteManagedChildSession, deleteParentPersistence, gcOrphanedParents, readParentRuns, restoredRun, toPersistedRun, writeParentRuns } from "./persistence.ts";
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_COMPLETION_CHARS, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_EVENT_TEXT_CHARS, MAX_SUBAGENT_EVENTS } from "./bounds.ts";
 
 export interface ManagerOptions {
   runner: Runner;
@@ -240,7 +241,7 @@ export class SubagentManager {
       .catch((error) => {
         if (run.generation !== generation) return run;
         run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-        run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
+        run.errorText = run.status === "cancelled" ? "Cancelled" : boundSubagentText(error instanceof Error ? error.message : String(error), MAX_SUBAGENT_ERROR_CHARS, 40);
         return run;
       })
       .then((finished) => {
@@ -250,6 +251,9 @@ export class SubagentManager {
         this.foreground.delete(run.id);
         if (this.shuttingDown || this.runs.get(run.id) !== run) return finished;
         if (run.status === "running") run.status = run.abortController.signal.aborted ? "cancelled" : "completed";
+        if (run.resultText) run.resultText = boundSubagentResult(run.resultText, run.sessionFile);
+        if (run.errorText) run.errorText = boundSubagentText(run.errorText, MAX_SUBAGENT_ERROR_CHARS, 40);
+        run.events = snapshotRun(run).events;
         run.completedAt = this.now();
         run.updatedAt = run.completedAt;
         run.prompt = options.displayPrompt ?? options.prompt;
@@ -330,8 +334,8 @@ export class SubagentManager {
   async steer(run: SubagentRun, message: string, agent?: AgentConfig, signal?: AbortSignal): Promise<void> {
     const steeringPrompt = wrapSteerMessage(message);
     const at = this.now();
-    run.events.push({ type: "steer", text: message, at });
-    if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
+    run.events.push({ type: "steer", text: boundSubagentText(message, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40), at });
+    if (run.events.length > MAX_SUBAGENT_EVENTS) run.events.splice(0, run.events.length - MAX_SUBAGENT_EVENTS);
     this.touchRun(run, at);
 
     if (run.status !== "running") {
@@ -405,8 +409,10 @@ export class SubagentManager {
 
   completionMessage(run: SubagentRun): string {
     const title = run.status === "completed" ? "completed" : "failed";
-    const body = run.status === "completed" ? `<subagent_result>\n${run.resultText ?? "(no output)"}\n</subagent_result>` : `Error: ${run.errorText ?? "unknown"}`;
-    return [`**Background subagent ${title}: ${run.id}** (${[run.agent, run.model, `${((run.completedAt ?? this.now()) - run.createdAt) / 1000}s`].filter(Boolean).join(", ")})`, `> ${run.prompt.slice(0, 160)}`, "", body].join("\n");
+    const body = run.status === "completed"
+      ? `<subagent_result>\n${boundSubagentResult(run.resultText ?? "(no output)", run.sessionFile, MAX_SUBAGENT_COMPLETION_CHARS - 1000)}\n</subagent_result>`
+      : `Error: ${boundSubagentText(run.errorText ?? "unknown", MAX_SUBAGENT_ERROR_CHARS, 40)}`;
+    return boundSubagentText([`**Background subagent ${title}: ${run.id}** (${[run.agent, run.model, `${((run.completedAt ?? this.now()) - run.createdAt) / 1000}s`].filter(Boolean).join(", ")})`, `> ${run.prompt.slice(0, 160)}`, "", body].join("\n"), MAX_SUBAGENT_COMPLETION_CHARS, 220);
   }
 
   completeBackground(run: SubagentRun): void {

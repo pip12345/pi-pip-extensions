@@ -87,9 +87,9 @@
 - [x] Link and clean up parent cancellation for resumed foreground runs.
 - [x] Refresh run and detach promises for every generation.
 - [x] Clear `waitRun()` timeout timers in `finally`.
-- [ ] Bound event text, persisted results, status output, and parent completion injection.
-- [ ] Keep full transcripts in child sessions or artifacts rather than duplicating them in parent persistence.
-- [ ] Deduplicate Stats usage by stable subagent run ID and cumulative deltas.
+- [x] Bound event text, persisted results, status output, and parent completion injection.
+- [x] Keep full transcripts in child sessions or artifacts rather than duplicating them in parent persistence.
+- [x] Deduplicate Stats usage by stable subagent run ID and cumulative deltas.
 
 ## 7. Repair Tiny MCP lifecycle and output contracts
 

@@ -227,21 +227,11 @@ Create one shared bounded-result path using Pi’s line/byte truncation conventi
 
 ---
 
-### 16. Subagent result/event persistence is effectively unbounded
+### 16. Subagent result/event persistence is effectively unbounded — **resolved**
 
-**Evidence**
+Subagent text now has shared character, line, event-count, status, and completion bounds applied at ingestion and again at snapshot/persistence boundaries. Completed snapshots omit duplicated text-delta events when bounded `resultText` exists. Persistence version 4 stores bounded prompts, results, errors, and operational events.
 
-- `pi-subagents/src/runner.ts:74-82` limits event count, but adjacent text deltas are merged into one ever-growing string.
-- Run persistence stores both `resultText` and recent event payloads in `pi-subagents/src/persistence.ts:65-93`.
-- Background completion injection includes the full `resultText` in `pi-subagents/src/manager.ts`’s `completionMessage()`.
-
-**Impact**
-
-A verbose child can produce very large persistence files and inject a huge follow-up into the parent context, bypassing normal tool-output budgets. The same assistant text may be duplicated in `resultText` and events.
-
-**Recommended direction**
-
-Apply explicit byte/line caps at ingestion, persistence, status rendering, tool result, and parent injection boundaries. Store full transcripts only in child session/artifact files and return a bounded summary plus path.
+The child session file remains the authoritative full transcript. Truncated tool/status/completion output names that transcript path. Regression coverage feeds oversized custom-runner output through in-memory state, snapshots, persistence, status rendering, and parent completion injection.
 
 ---
 
@@ -336,21 +326,9 @@ Malformed indexes or records are moved to a quarantine file outside the parent p
 
 ---
 
-### 24. Session stats repeatedly count the same subagent’s cumulative usage
+### 24. Session stats repeatedly count the same subagent’s cumulative usage — **resolved**
 
-**Evidence**
-
-- `pi-stats/index.ts:131-144` extracts cumulative usage from `details.run`, every item in `details.runs`, and every item in `details.results` for any `subagent` tool result.
-- `pi-stats/index.ts:175-186` adds every extracted snapshot directly into the current row with no run-ID deduplication or delta calculation.
-- Subagent `status`, `read`, `cancel`, `keep`, `steer`, continuation, and launch results commonly include `details.run` (`pi-subagents/index.ts:239-316`).
-
-**Impact**
-
-Polling or reading the same run twice counts the complete child usage twice. A later cumulative snapshot after continuation counts all earlier usage again and attributes it to whichever parent prompt contained the status call. The session inspector’s totals and per-prompt breakdown become materially wrong, even though global stats record child assistant messages separately.
-
-**Recommended direction**
-
-Track usage by stable run ID and apply only positive deltas between successive cumulative snapshots, or derive subagent usage from child session files once. Add tests covering launch + repeated status/read + continuation.
+Session Stats now tracks cumulative Subagent usage by stable run ID, applies only positive deltas against a per-branch high-water mark, and ignores repeated status/read snapshots with no new usage. A regression test covers duplicate launch snapshots, continuation growth, duplicate continuation snapshots, per-row attribution, and cumulative totals.
 
 ---
 
