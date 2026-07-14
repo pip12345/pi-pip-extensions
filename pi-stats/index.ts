@@ -420,7 +420,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("message_end", async (event: any, ctx: any) => {
     const msg = event.message;
-    if (msg?.role !== "assistant" || msg.stopReason === "aborted" || msg.stopReason === "error") return;
+    if (msg?.role !== "assistant") return;
     await applyTemporaryLiveModelsDevCostFallback(msg);
     const tokens = normalizeUsage(msg.usage);
     if (!tokens) return;

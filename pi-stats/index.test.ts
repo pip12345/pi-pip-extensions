@@ -106,4 +106,36 @@ describe("pi-stats", () => {
       cost: 0.01,
     });
   });
+
+  it("records aborted assistant usage so cancelled subagent cost remains billable", async () => {
+    const stats = await loadStats();
+    const pi = createMockPi();
+    stats(pi as any);
+
+    await emitEvent(
+      pi,
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          stopReason: "aborted",
+          timestamp: Date.UTC(2026, 5, 1, 12),
+          provider: "anthropic",
+          model: "claude-sonnet",
+          usage: { input: 20, output: 4, cacheRead: 6, total: 30, cost: 0.02 },
+        },
+      },
+      createMockCtx({ cwd: "/workspace" })
+    );
+
+    const { readRollups } = await loadStorage();
+    expect(readRollups().buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({
+      turns: 1,
+      input: 20,
+      output: 4,
+      cacheRead: 6,
+      total: 30,
+      cost: 0.02,
+    });
+  });
 });
