@@ -92,6 +92,7 @@ export function createMockCtx(options: any = {}) {
       custom: options.custom ?? (async () => undefined),
     },
     isIdle: () => options.idle ?? true,
+    isProjectTrusted: () => options.projectTrusted ?? true,
     abort: () => undefined,
     hasPendingMessages: () => false,
     shutdown: () => undefined,

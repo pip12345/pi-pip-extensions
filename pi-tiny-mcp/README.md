@@ -58,6 +58,8 @@ Read order, later overrides earlier by server name:
 3. `.mcp.json`
 4. `.pi/tiny-mcp.json`
 
+Project files (`.mcp.json` and `.pi/tiny-mcp.json`) are ignored unless Pi reports the project as trusted. Untrusted project commands are never loaded or auto-connected.
+
 `/tiny-mcp config` opens the target selected in `/pip-settings`.
 
 Useful commands:

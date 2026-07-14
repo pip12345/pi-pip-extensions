@@ -48,6 +48,8 @@ Legacy compatibility:
 
 - `.agents/*.md`
 
+Project and legacy project agent files are ignored until Pi reports the project as trusted. Builtin and user agent files remain available in untrusted projects.
+
 Schema:
 
 ```md

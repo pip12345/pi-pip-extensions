@@ -89,19 +89,28 @@ function nearest(cwd: string, rel: string): string | undefined {
   }
 }
 
-export function agentSearchDirs(cwd: string): Array<{ dir: string; source: AgentSource }> {
-  return [
-    { dir: BUILTIN_DIR, source: "builtin" },
-    { dir: join(homedir(), ".pi", "agent", "agents"), source: "user" },
-    ...(nearest(cwd, ".agents") ? [{ dir: nearest(cwd, ".agents")!, source: "legacy" as const }] : []),
-    ...(nearest(cwd, join(".pi", "agents")) ? [{ dir: nearest(cwd, join(".pi", "agents"))!, source: "project" as const }] : []),
-  ];
+export interface AgentDiscoveryOptions {
+  projectTrusted?: boolean;
 }
 
-export function discoverAgents(cwd: string): AgentDiscoveryResult {
+export function agentSearchDirs(cwd: string, options: AgentDiscoveryOptions = {}): Array<{ dir: string; source: AgentSource }> {
+  const dirs: Array<{ dir: string; source: AgentSource }> = [
+    { dir: BUILTIN_DIR, source: "builtin" },
+    { dir: join(homedir(), ".pi", "agent", "agents"), source: "user" },
+  ];
+  if (options.projectTrusted === true) {
+    const legacyDir = nearest(cwd, ".agents");
+    const projectDir = nearest(cwd, join(".pi", "agents"));
+    if (legacyDir) dirs.push({ dir: legacyDir, source: "legacy" });
+    if (projectDir) dirs.push({ dir: projectDir, source: "project" });
+  }
+  return dirs;
+}
+
+export function discoverAgents(cwd: string, options: AgentDiscoveryOptions = {}): AgentDiscoveryResult {
   const byName = new Map<string, AgentConfig>();
   const diagnostics: AgentDiagnostic[] = [];
-  for (const item of agentSearchDirs(cwd)) {
+  for (const item of agentSearchDirs(cwd, options)) {
     const loaded = loadDir(item.dir, item.source);
     diagnostics.push(...loaded.diagnostics);
     for (const agent of loaded.agents) byName.set(agent.name, agent);

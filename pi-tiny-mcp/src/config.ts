@@ -16,13 +16,22 @@ export function configPathForTarget(target: ConfigTarget, cwd = process.cwd()): 
   return pipPath("tiny-mcp.json");
 }
 
-export function configSources(cwd = process.cwd()): ConfigSource[] {
-  return [
+export interface ConfigSourceOptions {
+  projectTrusted?: boolean;
+}
+
+export function configSources(cwd = process.cwd(), options: ConfigSourceOptions = {}): ConfigSource[] {
+  const sources: ConfigSource[] = [
     { kind: "global", path: join(homedir(), ".config", "mcp", "mcp.json") },
     { kind: "pip", path: pipPath("tiny-mcp.json") },
-    { kind: "project", path: join(cwd, ".mcp.json") },
-    { kind: "project-pip", path: join(cwd, ".pi", "tiny-mcp.json") },
   ];
+  if (options.projectTrusted !== false) {
+    sources.push(
+      { kind: "project", path: join(cwd, ".mcp.json") },
+      { kind: "project-pip", path: join(cwd, ".pi", "tiny-mcp.json") },
+    );
+  }
+  return sources;
 }
 
 function readJson(path: string): unknown {
@@ -143,9 +152,9 @@ export function parseTinyMcpServerConfig(name: string, raw: unknown, cwd = proce
   return server;
 }
 
-export function loadTinyMcpConfig(cwd = process.cwd()): TinyMcpConfig & { sources: string[] } {
+export function loadTinyMcpConfig(cwd = process.cwd(), options: ConfigSourceOptions = {}): TinyMcpConfig & { sources: string[] } {
   const merged: TinyMcpConfig & { sources: string[] } = { mcpServers: {}, sources: [] };
-  for (const source of configSources(cwd)) {
+  for (const source of configSources(cwd, options)) {
     if (!existsSync(source.path)) continue;
     const parsed = parseConfig(source.path, readJson(source.path));
     merged.sources.push(source.path);

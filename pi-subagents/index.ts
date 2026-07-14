@@ -56,8 +56,12 @@ function textResult(text: string, details?: any, isError = false) {
   return { content: [{ type: "text" as const, text }], details, isError };
 }
 
-function findAgent(cwd: string, name: string): AgentConfig {
-  const discovered = discoverAgents(cwd);
+function projectTrusted(ctx: any): boolean {
+  return ctx?.isProjectTrusted?.() === true;
+}
+
+function findAgent(cwd: string, name: string, trusted: boolean): AgentConfig {
+  const discovered = discoverAgents(cwd, { projectTrusted: trusted });
   const agent = discovered.agents.find((item) => item.name === name);
   if (!agent) {
     const diagnostics = discovered.diagnostics.length ? `\n\nDiagnostics:\n${discovered.diagnostics.map((d) => `- ${d.path}: ${d.message}`).join("\n")}` : "";
@@ -66,18 +70,20 @@ function findAgent(cwd: string, name: string): AgentConfig {
   return agent;
 }
 
-function agentNamesPrompt(cwd: string): string {
-  const names = discoverAgents(cwd).agents.map((agent) => agent.name);
+function agentNamesPrompt(cwd: string, trusted: boolean): string {
+  const names = discoverAgents(cwd, { projectTrusted: trusted }).agents.map((agent) => agent.name);
   if (!names.length) return "";
   return [`Available subagent agents: ${names.join(", ")}.`, "Use only these subagent agent names; do not invent names."].join("\n");
 }
 
-function listAgents(cwd: string): string {
-  const discovered = discoverAgents(cwd);
+function listAgents(cwd: string, trusted: boolean): string {
+  const discovered = discoverAgents(cwd, { projectTrusted: trusted });
   const lines = ["Agents:"];
   for (const agent of discovered.agents) lines.push(`- ${agent.name} [${agent.source}] ${agent.description} (${agent.filePath})`);
   if (!discovered.agents.length) lines.push("(none)");
-  lines.push("", "Create project agents in .pi/agents/<name>.md or user agents in ~/.pi/agent/agents/<name>.md. Legacy .agents/*.md is also scanned.", "", "Template:", AGENT_TEMPLATE.trim());
+  lines.push("", trusted
+    ? "Create project agents in .pi/agents/<name>.md or user agents in ~/.pi/agent/agents/<name>.md. Legacy .agents/*.md is also scanned."
+    : "Project agent files are ignored until the project is trusted. User agents live in ~/.pi/agent/agents/<name>.md.", "", "Template:", AGENT_TEMPLATE.trim());
   if (discovered.diagnostics.length) lines.push("", "Diagnostics:", ...discovered.diagnostics.map((d) => `- ${d.path}: ${d.message}`));
   return lines.join("\n");
 }
@@ -174,7 +180,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.on("session_tree", async (_event: any, ctx: any) => activate(ctx));
     pi.on("before_agent_start", async (event: any, ctx: any) => {
       if (!settingValue("enabled", true)) return;
-      const block = agentNamesPrompt(ctx?.cwd ?? process.cwd());
+      const block = agentNamesPrompt(ctx?.cwd ?? process.cwd(), projectTrusted(ctx));
       if (!block) return;
       return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${block}`.trim() };
     });
@@ -221,19 +227,20 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
         async execute(_toolCallId: string, params: SubagentParamsType, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
           if (!settingValue("enabled", true)) return textResult("Subagents are disabled in /pip-settings.", undefined, true);
           const cwd = ctx?.cwd ?? process.cwd();
+          const trusted = projectTrusted(ctx);
           const key = parentKey(ctx);
           activate(ctx);
           try {
             const action = params.action;
             if (modelOverrideRequested(params) && !isLaunchRequest(params)) throw new Error("model overrides are only supported when launching a subagent.");
-            if (action === "agents") return textResult(listAgents(cwd));
+            if (action === "agents") return textResult(listAgents(cwd, trusted));
             if (action === "models") {
               const available = await availableSubagentModels(ctx, params.query);
               return textResult(available.text, { models: available.models });
             }
             if (action === "get_agent") {
               if (!params.agent) throw new Error("get_agent requires agent.");
-              return textResult(formatAgent(findAgent(cwd, params.agent)));
+              return textResult(formatAgent(findAgent(cwd, params.agent, trusted)));
             }
             if (action === "list" || (!action && !params.agent && !params.id && !params.prompt)) return textResult(listRuns(manager, key));
             if (action === "status" || action === "read") {
@@ -272,18 +279,18 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               if (!params.message) throw new Error("steer requires message.");
-              await manager.steer(run, params.message, findAgent(cwd, run.agent));
+              await manager.steer(run, params.message, findAgent(cwd, run.agent, trusted));
               return textResult(`Steered subagent ${run.id}.`, { run: manager.snapshot(run) });
             }
             if (params.id && params.prompt) {
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
-              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent));
+              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent, trusted));
               const snapshot = manager.snapshot(run);
               return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
             }
             if (!params.agent || !params.prompt) throw new Error("Launch requires agent and prompt, or use an action.");
-            const agent = findAgent(cwd, params.agent);
+            const agent = findAgent(cwd, params.agent, trusted);
             const keep = params.keep ?? settingValue("alwaysKeep", false);
             const explicitModel = launchModelOverride(params);
             const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: explicitModel ?? (agent.model ? undefined : currentModelString(ctx)), signal, onUpdate });
@@ -322,6 +329,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
       description: "Inspect, view, steer, cancel, or background subagents",
       handler: async (args: string, ctx: any) => {
         activate(ctx);
+        const trusted = projectTrusted(ctx);
         const [cmd, ref, ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
         try {
           if (!cmd) {
@@ -340,7 +348,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             else if (action === "steer") {
               const message = await ctx.ui?.input?.("Steer subagent", "");
               if (!message) return;
-              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent));
+              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent, trusted));
               ctx.ui?.notify?.(`Steered ${selectedRun.id}.`, "info");
             } else if (action === "background") { manager.detach(selectedRun); ctx.ui?.notify?.(`Moved ${selectedRun.id} to background.`, "info"); }
             else if (action === "cancel") { await manager.cancel(selectedRun); ctx.ui?.notify?.(`Cancelled ${selectedRun.id}.`, "info"); }
@@ -353,8 +361,8 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             return;
           }
           if (cmd === "agents") {
-            if (ref) ctx.ui?.notify?.(formatAgent(findAgent(ctx.cwd ?? process.cwd(), ref)), "info");
-            else ctx.ui?.notify?.(listAgents(ctx.cwd ?? process.cwd()), "info");
+            if (ref) ctx.ui?.notify?.(formatAgent(findAgent(ctx.cwd ?? process.cwd(), ref, trusted)), "info");
+            else ctx.ui?.notify?.(listAgents(ctx.cwd ?? process.cwd(), trusted), "info");
             return;
           }
           if (cmd === "context") {
@@ -384,7 +392,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           else if (cmd === "steer") {
             const message = rest.join(" ");
             if (!message) throw new Error("steer requires a message.");
-            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent));
+            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent, trusted));
             ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
           } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }

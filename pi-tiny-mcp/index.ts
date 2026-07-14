@@ -25,8 +25,12 @@ function showOutput(_pi: ExtensionAPI, ctx: any, output: string): void {
   else console.log(output);
 }
 
+function managerForContext(ctx: any) {
+  return getManager(ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true });
+}
+
 async function autoConnectEligible(ctx: any): Promise<void> {
-  const manager = getManager(ctx?.cwd ?? process.cwd());
+  const manager = managerForContext(ctx);
   const result = await manager.connectEligible();
   if (result.failed.length) ctx.ui?.notify?.(`tiny-mcp failed to connect: ${result.failed.map((failure) => failure.server).join(", ")}. Use /tiny-mcp status for details.`, "warning");
 }
@@ -53,7 +57,7 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
           showOutput(pi, ctx, `Edited ${path}`);
           return;
         }
-        const manager = getManager(cwd);
+        const manager = managerForContext(ctx);
         if (subcommand === "connect") {
           if (target) {
             await manager.connect(target);

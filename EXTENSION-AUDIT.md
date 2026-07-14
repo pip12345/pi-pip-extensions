@@ -11,6 +11,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Finding 35 was resolved by deleting the unused capability, prompt, and status registries; the consumed footer registry remains supported.
 - Findings 6, 20, and 36 were resolved by producing self-contained standalone packages with bundled `pip-common`, explicit runtime allowlists, and isolated Pi-loader tests.
 - Removable feature boundaries are now enforced: production sibling imports and reverse `pip-common` dependencies fail tests, while each standalone feature loads with only Pi and its bundled common runtime.
+- Findings 3–4 were resolved by threading `ctx.isProjectTrusted()` into Tiny MCP config/manager creation and Subagent agent discovery.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
@@ -42,43 +43,15 @@ The original runtime evidence remains the reason for removal: the purported read
 
 ---
 
-### 3. `pi-tiny-mcp` can honor and auto-run project MCP configuration without checking project trust
+### 3. `pi-tiny-mcp` can honor and auto-run project MCP configuration without checking project trust — **resolved**
 
-**Evidence**
-
-- `pi-tiny-mcp/src/config.ts:19-25` always includes project `.mcp.json` and `.pi/tiny-mcp.json` sources.
-- `pi-tiny-mcp/src/config.ts:146-151` loads every existing source unconditionally.
-- `pi-tiny-mcp/index.ts:28-31` connects eligible configured servers.
-- `pi-tiny-mcp/index.ts:86-88` does that automatically on every `session_start`.
-- No `ctx.isProjectTrusted()` check exists in this path.
-- Current Pi documentation explicitly requires global/user extensions to check `ctx.isProjectTrusted()` before honoring project-local extension configuration.
-
-**Impact**
-
-When this package is installed as a user/global extension, entering an untrusted directory containing `.mcp.json` can cause a configured stdio command to be spawned automatically. That defeats Pi’s project trust boundary and is a local code-execution risk.
-
-**Recommended direction**
-
-Pass trust state into config loading and exclude project sources unless `ctx.isProjectTrusted()` is true. Auto-connect must never instantiate project-defined stdio servers in an untrusted project. Add a regression test with an untrusted context and a project MCP command.
+Tiny MCP now creates trust-specific managers from `ctx.isProjectTrusted()`. Untrusted managers exclude `.mcp.json` and `.pi/tiny-mcp.json` before server discovery, tool execution, commands, or auto-connect. Regression tests cover direct config loading and `session_start` with an untrusted project server.
 
 ---
 
-### 4. `pi-subagents` also reads project agent definitions without checking project trust
+### 4. `pi-subagents` also reads project agent definitions without checking project trust — **resolved**
 
-**Evidence**
-
-- `pi-subagents/src/agents.ts:92-98` searches `.agents` and `.pi/agents` up the directory tree.
-- `pi-subagents/src/agents.ts:101-109` loads those files unconditionally.
-- `pi-subagents/index.ts:59-76`, `:235-236`, and `:285-286` consume discovered project agent definitions.
-- There is no `ctx.isProjectTrusted()` check in discovery or launch.
-
-**Impact**
-
-A project agent file is executable prompt/configuration: it supplies a child system prompt, model, and active-tool selection. In an untrusted project this is a prompt-injection and capability-escalation path.
-
-**Recommended direction**
-
-Separate builtin/user discovery from project discovery. Include project and legacy project agents only when the current context is trusted. Do not infer trust from the extension merely being loaded.
+Agent discovery now defaults to builtin/user definitions only. Every extension path—prompt injection, listing, details, launch, continuation, and steering—passes explicit project trust from the current context. Both `.pi/agents` and legacy `.agents` are ignored when untrusted, with trusted/untrusted regression coverage.
 
 ---
 

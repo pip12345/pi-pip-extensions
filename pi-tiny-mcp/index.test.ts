@@ -80,11 +80,14 @@ describe("pi-tiny-mcp", () => {
     expect(hints).toContain("args");
   });
 
-  it("loads and validates stdio config", () => {
+  it("loads project config only when project trust is allowed", () => {
     const dir = tempProject();
     writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { basic: { command: "node", args: [fixture("basic-server.js")] } } }));
-    const config = loadTinyMcpConfig(dir);
-    expect(config.mcpServers.basic.command).toBe("node");
+    const trusted = loadTinyMcpConfig(dir, { projectTrusted: true });
+    expect(trusted.mcpServers.basic.command).toBe("node");
+    const untrusted = loadTinyMcpConfig(dir, { projectTrusted: false });
+    expect(untrusted.mcpServers.basic).toBeUndefined();
+    expect(untrusted.sources).not.toContain(join(dir, ".mcp.json"));
   });
 
   it("loads and validates HTTP config while rejecting OAuth", () => {
@@ -396,6 +399,21 @@ describe("pi-tiny-mcp", () => {
     await emitEvent(pi, "session_start", { reason: "resume" }, createMockCtx({ cwd: dir }));
 
     expect((await executeTinyMcp({ action: "status" }, dir)).content[0].text).toContain("basic: connected");
+  });
+
+  it("does not load or auto-connect project servers when the project is untrusted", async () => {
+    const dir = tempProject();
+    writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { project_server: { command: "node", args: [fixture("basic-server.js")] } } }));
+    const pi = createMockPi();
+    tinyMcp(pi as any);
+    flushPipTools(pi as any);
+    const ctx = createMockCtx({ cwd: dir, projectTrusted: false });
+
+    await emitEvent(pi, "session_start", { reason: "resume" }, ctx);
+    const status = await getRegisteredTool(pi, "tiny-mcp").execute("1", { action: "status" }, undefined, undefined, ctx);
+
+    expect(status.content[0].text).not.toContain("project_server");
+    expect(ctx.ui.notifications).toEqual([]);
   });
 
   it("auto-connects after resume shutdown without recording lifecycle close as explicit disconnect", async () => {

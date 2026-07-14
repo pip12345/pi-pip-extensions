@@ -54,8 +54,8 @@
 
 ## 4. Repair trust and filesystem boundaries
 
-- [ ] Prevent Tiny MCP from loading or auto-connecting project configuration when the project is untrusted.
-- [ ] Prevent Subagents from loading project agent definitions when the project is untrusted.
+- [x] Prevent Tiny MCP from loading or auto-connecting project configuration when the project is untrusted.
+- [x] Prevent Subagents from loading project agent definitions when the project is untrusted.
 - [ ] Canonicalize existing Secrets Guard targets through `realpath`.
 - [ ] Canonicalize the nearest existing parent for write targets.
 - [ ] Prevent recursive grep/find/ls operations from traversing or returning guarded descendants.

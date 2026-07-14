@@ -7,11 +7,16 @@ import type { TinyMcpServerConfig, VisibleToolInfo } from "./types.ts";
 
 const managers = new Map<string, TinyMcpManager>();
 
-export function getManager(cwd = process.cwd()): TinyMcpManager {
-  const key = cwd;
+export interface TinyMcpExecutionOptions {
+  projectTrusted?: boolean;
+}
+
+export function getManager(cwd = process.cwd(), options: TinyMcpExecutionOptions = {}): TinyMcpManager {
+  const projectTrusted = options.projectTrusted !== false;
+  const key = `${projectTrusted ? "trusted" : "untrusted"}\0${cwd}`;
   let manager = managers.get(key);
   if (!manager) {
-    manager = new TinyMcpManager(cwd);
+    manager = new TinyMcpManager(cwd, { projectTrusted });
     managers.set(key, manager);
   }
   return manager;
@@ -55,7 +60,7 @@ export function registerTinyMcpTool(pi: any): void {
         config: Type.Optional(Type.String({ description: "JSON string MCP server config for action:add" })),
         action: Type.Optional(Type.String({ description: "status/disconnect/add" })),
       }),
-      execute: async (_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) => executeTinyMcp(params ?? {}, ctx?.cwd ?? process.cwd()),
+      execute: async (_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) => executeTinyMcp(params ?? {}, ctx?.cwd ?? process.cwd(), { projectTrusted: ctx?.isProjectTrusted?.() === true }),
     },
     metadata: {
       pluginId: "tiny-mcp",
@@ -74,8 +79,8 @@ export function registerTinyMcpTool(pi: any): void {
   });
 }
 
-export async function executeTinyMcp(input: any, cwd = process.cwd()) {
-  const m = getManager(cwd);
+export async function executeTinyMcp(input: any, cwd = process.cwd(), options: TinyMcpExecutionOptions = {}) {
+  const m = getManager(cwd, options);
   try {
     if (input.action === "add") {
       const serverName = parseServerName(input.server);
