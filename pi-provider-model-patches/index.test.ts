@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -171,6 +171,11 @@ describe("provider model patch definitions", () => {
         ]),
       },
     });
+  });
+
+  it("avoids pi-ai provider subpaths that Pi's extension loader prefix-rewrites", () => {
+    const source = readFileSync(join(import.meta.dirname, "presets.ts"), "utf8");
+    expect(source).not.toMatch(/@earendil-works\/pi-ai\/providers\//);
   });
 
   it("uses bundled fallback metadata when Pi does not know the source models", () => {

@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { githubCopilotOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
 import type { ProviderModelPatch } from "./types.ts";
 
 export interface BuiltinPatchProviderCatalog {
@@ -11,10 +11,9 @@ export interface BuiltinPatchProviderCatalog {
 export function getBuiltinPatchProviderCatalog(provider: string): BuiltinPatchProviderCatalog | undefined {
   if (provider !== "github-copilot") return undefined;
 
-  const builtinProvider = githubCopilotProvider();
   const { id: _id, ...oauth } = githubCopilotOAuthProvider;
   return {
-    models: [...builtinProvider.getModels()] as Model<Api>[],
+    models: getModels("github-copilot") as Model<Api>[],
     oauth,
   };
 }
