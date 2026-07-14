@@ -3,7 +3,7 @@ import { createEditTool, createFindTool, createGrepTool, createLsTool, createRea
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth } from "../pip-common/index.ts";
-import { blockLine, safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
+import { safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 
 const HOME = homedir();
@@ -80,10 +80,6 @@ function adapterEnabled(key: string): boolean {
 
 function builtinRenderFallback(name: BuiltinName, kind: "renderCall" | "renderResult", args: any[], fallback: Component): Component {
   return (getBuiltInTools(process.cwd())[name] as any)[kind]?.(...args) ?? fallback;
-}
-
-function builtinForContext(name: BuiltinName, context: any): ToolDefinition<any, any, any> {
-  return getBuiltInTools(context?.cwd ?? process.cwd())[name];
 }
 
 function renderErrorIfCollapsed(result: any, theme: any): Component {
@@ -253,10 +249,9 @@ function registerToolUiSettings(): void {
     order: 50,
     settings: {
       enabled: setting.boolean({ label: "Enabled", default: true, description: "Enable Tool UI rendering adapters.", order: 1 }),
-      preset: setting.enum({ label: "Preset", default: "quiet", choices: ["quiet", "balanced", "verbose"] as const, description: "Default display density for tool calls and results.", order: 2 }),
-      diffLayout: setting.enum({ label: "Diff layout", default: "auto", choices: ["auto", "split", "unified"] as const, description: "Preferred layout for edit diffs.", order: 3 }),
-      diffSplitMinWidth: setting.number({ label: "Split diff width", default: 120, min: 80, max: 240, step: 10, description: "Minimum terminal width before auto layout uses side-by-side edit diffs.", order: 4 }),
-      diffMaxLines: setting.number({ label: "Diff max lines", default: 80, min: 20, max: 1000, step: 20, description: "Maximum edit diff lines shown in Tool UI rendering.", order: 5 }),
+      diffLayout: setting.enum({ label: "Diff layout", default: "auto", choices: ["auto", "split", "unified"] as const, description: "Preferred layout for edit diffs.", order: 2 }),
+      diffSplitMinWidth: setting.number({ label: "Split diff width", default: 120, min: 80, max: 240, step: 10, description: "Minimum terminal width before auto layout uses side-by-side edit diffs.", order: 3 }),
+      diffMaxLines: setting.number({ label: "Diff max lines", default: 80, min: 20, max: 1000, step: 20, description: "Maximum edit diff lines shown in Tool UI rendering.", order: 4 }),
       ...dynamicSettings,
     },
   });

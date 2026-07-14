@@ -4,6 +4,14 @@ Date: 2026-07-09
 
 This is a read-only audit checkpoint of the current Pi extensions in `/workspace`. It records the important findings verified so far, including the continuation pass performed after the initial checkpoint. Narrow parallel reviews are still running, so this is not yet the final exhaustive report.
 
+## Cleanup progress — 2026-07-14
+
+- Findings 1–2 were resolved by removing `pi-plan-mode` and its shared read-only machinery.
+- Finding 27 was resolved by rendering Todo overflow counts in both directions and adding a regression test.
+- Finding 35 was resolved by deleting the unused capability, prompt, and status registries; the consumed footer registry remains supported.
+- The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
+- All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
+
 ## Validation completed
 
 - `npm test`: **39 files, 329 tests passed**
@@ -329,21 +337,22 @@ Prefer session-local persisted metadata if possible. Otherwise use per-session f
 
 ---
 
-### 18. Tree Edit has unfinished state and uses a non-atomic destructive save
+### 18. Tree Edit has untyped operation state and uses a non-atomic destructive save — **partially resolved**
 
-**Evidence**
+The empty highlight timer scaffold was removed during cleanup.
 
-- `pi-tree-edit/index.ts:78` contains an empty, unused `ensureHighlightTimer()` and `highlightTimer` scaffold.
-- `pi-tree-edit/index.ts:193` and `:502-503` pass operation state through ad-hoc `as any` properties named `__lastFoldedIds` and `__lastVisibleRangeEntries`.
-- `pi-tree-edit/index.ts:428-430` makes a backup and then overwrites the live session directly with `writeFileSync` instead of the existing atomic session writer in `pip-common`.
+**Remaining evidence**
+
+- `pi-tree-edit/index.ts` passes operation state through ad-hoc `as any` properties named `__lastFoldedIds` and `__lastVisibleRangeEntries`.
+- Tree Edit makes a backup and then overwrites the live session directly with `writeFileSync` instead of the existing atomic session writer in `pip-common`.
 
 **Impact**
 
-The UI carries dead/incomplete highlight behavior, internal state bypasses its type model, and a crash/interruption during save can corrupt the active session file despite the backup.
+Internal state bypasses its type model, and a crash/interruption during save can corrupt the active session file despite the backup.
 
 **Recommended direction**
 
-Delete or complete the highlight mechanism, put summarize-range data in a typed result/state field, and use the shared atomic session-file abstraction for save.
+Put summarize-range data in a typed result/state field and use the shared atomic session-file abstraction for save.
 
 ---
 
@@ -515,7 +524,7 @@ Detect subscription quota from the actual auth/provider capability, not broad pr
 
 ---
 
-### 27. Todo’s compact viewport drops the “hidden above” count
+### 27. Todo’s compact viewport drops the “hidden above” count — **resolved**
 
 **Evidence**
 
@@ -527,9 +536,9 @@ Detect subscription quota from the actual auth/provider capability, not broad pr
 
 When the active/pending window starts in the middle or near the end of a long todo list, earlier hidden todos are not indicated. If nothing is hidden below, the widget can even reserve an item slot and pad it blank while giving no indication that items exist above.
 
-**Recommended direction**
+**Resolution**
 
-Render both directions in the overflow row and test active items near the beginning, middle, and end. The same extension’s `enabled` setting should also gate its tools and command, not only its widget.
+`renderCompactTodos()` now reports both `hiddenAbove` and `hiddenBelow`, with a regression test for an active item near the end of the list. Todo's incomplete `enabled` behavior remains tracked under finding 14.
 
 ---
 
@@ -629,21 +638,20 @@ Enforce min/max in the central validator and validate defaults at registration. 
 
 ## Verified stale/dead-code and documentation drift
 
-- `README.md:53`, `DEVELOPMENT.md:8,69`, `pip-common/README.md:5`, and `pi-todo/README.md:13` still refer to removed `pi-quiet-tools`.
-- The actual replacement, `pi-tool-ui`, is absent from the top-level extension list.
-- `pi-pip-footer/index.ts:208` registers nonexistent Pi event `session_end`; Pi 0.80.1 exposes `session_shutdown`, not `session_end`.
-- `pi-tool-ui` exposes a `preset` setting at `pi-tool-ui/index.ts:256`, but no code reads it.
-- `pi-tool-ui/README.md:5` says the extension owns adapters for `bash` and `write`; `BUILTIN_ADAPTERS` only contains `read`, `grep`, `find`, `ls`, and `edit`.
-- Tiny MCP parses and merges a top-level config `settings` object at `pi-tiny-mcp/src/config.ts:105-111,146-153`, but no runtime code reads `manager.config.settings`.
-- `pi-tree-edit/index.ts:78` has an empty unused method.
-- Strict unused-code checking found 21 diagnostics, including unused production imports/helpers in `pi-question`, `pi-stats`, `pi-subagents`, `pi-tiny-mcp`, `pi-tool-ui`, `pi-tree-edit`, `pi-webfetch-websearch`, and `pip-common`.
+Resolved during cleanup:
 
-These are not all equally important, but they show that the current `typecheck` configuration gives a cleaner signal than the code deserves. Enabling unused checks after a cleanup pass would prevent this drift.
+- Replaced stale `pi-quiet-tools` documentation with `pi-tool-ui` and restored Tool UI to the top-level extension list.
+- Removed Footer's nonexistent `session_end` registration.
+- Removed Tool UI's unused `preset` setting.
+- Corrected Tool UI's built-in adapter documentation.
+- Removed Tiny MCP's unused top-level config `settings` merge.
+- Removed Tree Edit's empty highlight scaffold.
+- Resolved all strict unused-code diagnostics and enabled `noUnusedLocals` plus `noUnusedParameters` in `tsconfig.json`.
+- Corrected the top-level local-development path example.
 
-Additional documentation gaps found during the collection-level index:
+Remaining documentation gaps:
 
-- `pi-context`, `pi-secrets-guard`, and `pi-stats` have no package README, while the other 13 `pi-*` extensions do.
-- `README.md:29-39` says `./pi-pip-extensions` is the correct local path when the settings file is in this repository root. From this repository root the package path is `.`, while `./pi-pip-extensions` only works when the settings file is in the parent directory.
+- `pi-context`, `pi-secrets-guard`, and `pi-stats` have no package README, while the other feature packages do.
 
 ---
 
@@ -688,11 +696,11 @@ Extension load order, module caching, reload order, and process lifetime determi
 
 **Recommended direction**
 
-If the aggregate Git package is the intended product, load one root extension that creates per-runtime services and invokes internal feature factories explicitly. Keep feature folders for code ownership, but stop treating every folder as an independently bootstrapped application. Define a separate explicit child-runtime profile rather than filtering loaded extension paths by substring.
+The product contract is one aggregate package with separately filterable extension entrypoints, while retaining supported standalone feature packages. Keep those entrypoints explicit so Pi package filtering can enable or disable individual features. Move shared state to runtime-scoped `pip-common` services and define an explicit child-runtime profile without collapsing every feature behind one root extension.
 
 ---
 
-### 35. `pip-common` exposes speculative registries with no production consumers
+### 35. `pip-common` exposes speculative registries with no production consumers — **resolved**
 
 **Evidence**
 
@@ -705,9 +713,9 @@ If the aggregate Git package is the intended product, load one root extension th
 
 `pip-common` is becoming a kitchen-sink framework in anticipation of abstractions the extensions do not actually use. This increases the apparent API surface and makes it harder to tell which shared mechanisms are authoritative—the exact ambiguity visible in settings, prompt injection, statuses, and footer ownership.
 
-**Recommended direction**
+**Resolution**
 
-Delete unused registries unless the composition-root work immediately adopts them as the one owning mechanism. Do not preserve parallel abstractions merely because they have tests. Move domain-specific common code, such as quota/provider behavior, closer to the features that own it unless multiple current consumers require one shared implementation.
+The capability, prompt, and status registries, their exports, and their self-only tests were deleted. The footer registry remains because the footer consumes it as a supported optional extension point. Domain-specific common code remains subject to the same current-consumer test.
 
 ---
 

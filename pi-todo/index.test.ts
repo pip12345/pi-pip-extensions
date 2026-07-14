@@ -142,6 +142,30 @@ describe("pi-todo", () => {
     expect(stripAnsi(lines[2])).toContain("╰ … 2 below");
   });
 
+  it("reports todos hidden above and below the active window", () => {
+    const lines = renderCompactTodos(
+      {
+        todos: [
+          { id: 1, text: "One", status: "pending" },
+          { id: 2, text: "Two", status: "pending" },
+          { id: 3, text: "Three", status: "pending" },
+          { id: 4, text: "Four", status: "pending" },
+          { id: 5, text: "Active", status: "active" },
+          { id: 6, text: "Six", status: "pending" },
+        ],
+        nextId: 7,
+        updatedAt: 0,
+      },
+      80,
+      theme,
+      { rows: 3 },
+    );
+
+    expect(stripAnsi(lines[0])).toContain("#4 Four");
+    expect(stripAnsi(lines[1])).toContain("#5 Active");
+    expect(stripAnsi(lines[2])).toContain("… 3 above · 1 below");
+  });
+
   it("honors showCompleted never and hideWhenAllDone", () => {
     const state = {
       todos: [

@@ -19,7 +19,7 @@ export class TinyMcpManager {
   private states = new Map<string, ServerState>();
   private visibleTools = new Map<string, VisibleToolInfo>();
 
-  constructor(private cwd = process.cwd()) {
+  constructor(cwd = process.cwd()) {
     this.config = loadTinyMcpConfig(cwd);
     const cache = settingValue("metadataCache", true) ? readCache() : { servers: {} };
     for (const [name, server] of Object.entries(this.config.mcpServers)) {

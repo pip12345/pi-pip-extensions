@@ -11,19 +11,19 @@
 
 ## 1. Dead-code and compiler-signal cleanup
 
-- [ ] Delete the unused `pip-common` capability registry.
-- [ ] Delete the unused `pip-common` prompt registry.
-- [ ] Delete the unused `pip-common` status broker.
-- [ ] Keep the footer registry as a supported extension point.
-- [ ] Remove the unused Tool UI `preset` setting.
-- [ ] Remove Tiny MCP's parsed-but-unused top-level config `settings` object.
-- [ ] Remove Tree Edit's empty highlight timer scaffold without removing Tree Edit behavior.
-- [ ] Remove Footer's nonexistent `session_end` handler.
-- [ ] Remove stale `pi-quiet-tools` documentation and replace it with current `pi-tool-ui` references where appropriate.
-- [ ] Review every strict unused-code diagnostic; delete genuinely dead code and fix diagnostics that reveal behavior bugs.
-- [ ] Fix Todo's unused `hiddenAbove` value by rendering both overflow directions.
-- [ ] Enable `noUnusedLocals` and `noUnusedParameters` after the diagnostic count reaches zero.
-- [ ] Run the full test suite and typecheck.
+- [x] Delete the unused `pip-common` capability registry.
+- [x] Delete the unused `pip-common` prompt registry.
+- [x] Delete the unused `pip-common` status broker.
+- [x] Keep the footer registry as a supported extension point.
+- [x] Remove the unused Tool UI `preset` setting.
+- [x] Remove Tiny MCP's parsed-but-unused top-level config `settings` object.
+- [x] Remove Tree Edit's empty highlight timer scaffold without removing Tree Edit behavior.
+- [x] Remove Footer's nonexistent `session_end` handler.
+- [x] Remove stale `pi-quiet-tools` documentation and replace it with current `pi-tool-ui` references where appropriate.
+- [x] Review every strict unused-code diagnostic; delete genuinely dead code and fix diagnostics that reveal behavior bugs.
+- [x] Fix Todo's unused `hiddenAbove` value by rendering both overflow directions.
+- [x] Enable `noUnusedLocals` and `noUnusedParameters` after the diagnostic count reaches zero.
+- [x] Run the full test suite and typecheck.
 
 ## 2. Make standalone packages real
 

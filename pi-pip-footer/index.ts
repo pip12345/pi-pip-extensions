@@ -205,7 +205,6 @@ export default function (pi: ExtensionAPI) {
     restoreWidgetRestacker = undefined;
   };
   pi.on("session_shutdown", shutdown);
-  pi.on("session_end", shutdown);
 
   pi.on("model_select", async (_event: any, ctx: any) => {
     refreshUsageForModel(ctx);

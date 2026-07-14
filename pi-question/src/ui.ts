@@ -6,7 +6,6 @@ import {
   questionInfo,
   questionInput,
   questionMove,
-  questionOther,
   questionSaveCustom,
   questionSelect,
   questionSetTab,

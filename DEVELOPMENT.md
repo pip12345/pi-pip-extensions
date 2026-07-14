@@ -5,7 +5,7 @@
 This directory is a loose collection of Pi extensions plus shared helper code.
 
 - `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers
-- `pi-quiet-tools` - compact rendering for built-in read/grep/find/ls tools
+- `pi-tool-ui` - compact rendering for built-in and Pip tools
 - `pi-stats` - interactive token/session/global usage inspector
 - `pi-provider-model-patches` - generic persistent opt-in patches for stale provider model catalogs
 - `pi-pip-footer` - footer with token counter, context gauge, model status, and quota usage
@@ -66,7 +66,7 @@ Run one package/file:
 
 ```bash
 npx vitest run pip-common
-npx vitest run pi-quiet-tools
+npx vitest run pi-tool-ui
 npx vitest run pi-tree-edit/index.test.ts
 ```
 

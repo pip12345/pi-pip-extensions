@@ -59,7 +59,7 @@ export function compactLine(run: SubagentSnapshot, width: number, theme: any): s
   return truncateToWidth(themeFg(theme, "dim", `› subagent ${run.agent} ${run.id}: `) + `${taskSummary(run.prompt, 48)} · ${state} · ${elapsed(run)} · ${tools} tools${usagePart}${keep}${bg}${err}`, width);
 }
 
-export function renderSubagentCall(args: any, theme: any, context: any) {
+export function renderSubagentCall(args: any, theme: any) {
   const label = `subagent ${args?.agent ?? args?.action ?? args?.id ?? ""}`.trim();
   const model = args?.model ? String(args.model) : undefined;
   const flags = [model ? `model ${model}` : undefined, args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");

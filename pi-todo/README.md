@@ -10,7 +10,7 @@ Minimal session-scoped todo tools for pi.
 
 Todos are flat and use three states: `pending`, `active`, and `done`. Prefer batch writes/updates to avoid tool-call spam.
 
-When `pi-quiet-tools` is installed and enabled, todo tool rows render compactly while the always-on todo widget remains the main progress display.
+When `pi-tool-ui` is installed and enabled, todo tool rows render compactly while the always-on todo widget remains the main progress display.
 
 ## Command
 

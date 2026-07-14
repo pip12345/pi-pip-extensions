@@ -75,7 +75,7 @@ export function extractTitle(html: string): string | undefined {
 export function extractHtml(html: string, mode: HtmlExtractMode = "auto"): string {
   if (mode === "all") return firstTagContent(html, "body") ?? html;
   if (mode === "nav") return extractNavHtml(html);
-  const candidates = collectCandidates(html, mode);
+  const candidates = collectCandidates(html);
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0]?.html ?? firstTagContent(html, "body") ?? html;
 }
@@ -86,7 +86,7 @@ function extractNavHtml(html: string): string {
   return firstTagContent(html, "body") ?? html;
 }
 
-function collectCandidates(html: string, mode: HtmlExtractMode): Candidate[] {
+function collectCandidates(html: string): Candidate[] {
   const out: Candidate[] = [];
   const tags = ["article", "main", "section", "div", "body"];
   for (const tag of tags) {

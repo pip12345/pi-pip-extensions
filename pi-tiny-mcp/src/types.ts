@@ -13,7 +13,6 @@ export interface TinyMcpServerConfig {
 }
 
 export interface TinyMcpConfig {
-  settings?: Record<string, unknown>;
   mcpServers: Record<string, TinyMcpServerConfig>;
 }
 

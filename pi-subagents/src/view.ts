@@ -1,6 +1,6 @@
 import { boxLines, normalizeInputKey, PipCustomComponent, printableInput, themeFg, truncateToWidth, visibleWidth, wrapAnsi } from "../../pip-common/index.ts";
 import type { SubagentManager } from "./manager.ts";
-import type { SubagentEvent, SubagentRun, SubagentSnapshot } from "./types.ts";
+import type { SubagentRun, SubagentSnapshot } from "./types.ts";
 
 function elapsed(run: SubagentSnapshot): string {
   const end = run.completedAt ?? Date.now();

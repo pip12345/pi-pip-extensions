@@ -1,7 +1,7 @@
 import { copyFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, pipSettings, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "../pip-common/index.ts";
-import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type SnapshotToolResults, type Theme, type TreeRow } from "./types.ts";
+import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "../pip-common/index.ts";
+import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
 import { parseSessionFile, timestampForFile, validateDraft } from "./session.ts";
 import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
@@ -43,7 +43,6 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   private flashSeenNonce = 0;
   private flashOn = false;
   private flashTimer: ReturnType<typeof setInterval> | null = null;
-  private highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(draft: DraftSession, ctx: Ctx, tui: any, theme: Theme, done: (result?: ExitResult) => void) {
     super(tui, theme, done, { closeKeys: [] });
@@ -75,16 +74,10 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     }, 120);
   }
 
-  private ensureHighlightTimer(): void {}
-
   dispose(): void {
     if (this.flashTimer) {
       clearInterval(this.flashTimer);
       this.flashTimer = null;
-    }
-    if (this.highlightTimer) {
-      clearTimeout(this.highlightTimer);
-      this.highlightTimer = null;
     }
   }
 

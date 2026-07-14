@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import tinyMcp, { executeTinyMcp, loadTinyMcpConfig, resetManager } from "./index.ts";
 import { readState, writeState } from "./src/state.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";

@@ -24,7 +24,7 @@ export function deleteRunSessionFile(run: SubagentRun): void {
   try { rmdirSync(dirname(run.sessionFile)); } catch {}
 }
 
-function summarizeArgs(tool: string, args: any): string {
+function summarizeArgs(args: any): string {
   if (!args || typeof args !== "object") return "";
   const keys = ["path", "pattern", "query", "command", "url", "literal"].filter((key) => args[key] != null);
   const parts = keys.slice(0, 2).map((key) => String(args[key]).replace(/\s+/g, " ").slice(0, 80));
@@ -132,7 +132,7 @@ export class RealRunner implements Runner {
           assistantEventIndex = undefined;
         } else if (event.type === "tool_execution_start") {
           starts.set(event.toolCallId, now);
-          pushEvent(run, { type: "tool_start", id: event.toolCallId, name: event.toolName, argsSummary: summarizeArgs(event.toolName, event.args), at: now });
+          pushEvent(run, { type: "tool_start", id: event.toolCallId, name: event.toolName, argsSummary: summarizeArgs(event.args), at: now });
         } else if (event.type === "tool_execution_end") {
           const started = starts.get(event.toolCallId);
           starts.delete(event.toolCallId);

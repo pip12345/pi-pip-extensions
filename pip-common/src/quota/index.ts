@@ -1,6 +1,6 @@
-import { anthropicQuotaAdapter, fetchAnthropicUsage, parseAnthropicUsageResponse } from "./providers/anthropic.ts";
-import { codexQuotaAdapter, fetchCodexUsage, parseCodexUsageResponse } from "./providers/codex.ts";
-import { copilotQuotaAdapter, fetchCopilotUsage, parseCopilotUsageResponse } from "./providers/copilot.ts";
+import { anthropicQuotaAdapter } from "./providers/anthropic.ts";
+import { codexQuotaAdapter } from "./providers/codex.ts";
+import { copilotQuotaAdapter } from "./providers/copilot.ts";
 import type { QuotaFetchOptions, QuotaProvider, QuotaProviderAdapter, QuotaProviderSetting, QuotaSnapshot } from "./types.ts";
 
 export * from "./auth.ts";

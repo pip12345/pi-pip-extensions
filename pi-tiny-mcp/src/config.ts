@@ -104,11 +104,11 @@ function validateServer(name: string, raw: unknown): TinyMcpServerConfig {
 function parseConfig(path: string, raw: unknown): TinyMcpConfig {
   if (!isRecord(raw)) throw new Error(`Config ${path} must be an object.`);
   const serversRaw = raw.mcpServers;
-  if (serversRaw === undefined) return { settings: isRecord(raw.settings) ? raw.settings : undefined, mcpServers: {} };
+  if (serversRaw === undefined) return { mcpServers: {} };
   if (!isRecord(serversRaw)) throw new Error(`Config ${path} field mcpServers must be an object.`);
   const mcpServers: Record<string, TinyMcpServerConfig> = {};
   for (const [name, serverRaw] of Object.entries(serversRaw)) mcpServers[name] = validateServer(name, serverRaw);
-  return { settings: isRecord(raw.settings) ? raw.settings : undefined, mcpServers };
+  return { mcpServers };
 }
 
 function expandEnvString(value: string, field: string, serverName: string): string {
@@ -144,12 +144,11 @@ export function parseTinyMcpServerConfig(name: string, raw: unknown, cwd = proce
 }
 
 export function loadTinyMcpConfig(cwd = process.cwd()): TinyMcpConfig & { sources: string[] } {
-  const merged: TinyMcpConfig & { sources: string[] } = { mcpServers: {}, settings: {}, sources: [] };
+  const merged: TinyMcpConfig & { sources: string[] } = { mcpServers: {}, sources: [] };
   for (const source of configSources(cwd)) {
     if (!existsSync(source.path)) continue;
     const parsed = parseConfig(source.path, readJson(source.path));
     merged.sources.push(source.path);
-    merged.settings = { ...(merged.settings ?? {}), ...(parsed.settings ?? {}) };
     merged.mcpServers = { ...merged.mcpServers, ...parsed.mcpServers };
   }
   for (const [name, server] of Object.entries(merged.mcpServers)) normalizeLoadedServer(name, server, cwd);
