@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { pipSettings, registerSettingsSection, setting } from "pip-common";
+import { getPipSettingsRegistry, registerSettingsSection, setting, type SettingsRegistry } from "pip-common";
 import { loadUserModelPatches, mergeModelPatches, USER_PATCHES_PATH } from "./config.ts";
 import { BUILTIN_MODEL_PATCHES, getBuiltinPatchProviderCatalog } from "./presets.ts";
 import type { ModelPatchMetadata, PatchBuildResult, PatchModelDefinition, ProviderModelPatch } from "./types.ts";
@@ -29,8 +29,8 @@ interface ReconcileResult {
   unavailableIds: string[];
 }
 
-function registerPatchSettings(patches: ProviderModelPatch[]): void {
-  registerSettingsSection({
+function registerPatchSettings(pi: ExtensionAPI, patches: ProviderModelPatch[]): void {
+  registerSettingsSection(pi, {
     id: SETTINGS_ID,
     title: "Provider Model Patches",
     description: "Opt-in model catalog patches. Each target provider uses its existing Pi authentication and transport.",
@@ -50,17 +50,17 @@ function registerPatchSettings(patches: ProviderModelPatch[]): void {
   });
 }
 
-function defaultSettings(): ModelPatchSettings {
+function defaultSettings(registry: SettingsRegistry): ModelPatchSettings {
   return {
     getEnabled(patchId) {
       try {
-        return pipSettings.get<boolean>(`${SETTINGS_ID}.${patchId}`);
+        return registry.get<boolean>(`${SETTINGS_ID}.${patchId}`);
       } catch {
         return false;
       }
     },
     setEnabled(patchId, enabled) {
-      pipSettings.set(`${SETTINGS_ID}.${patchId}`, enabled);
+      registry.set(`${SETTINGS_ID}.${patchId}`, enabled);
     },
   };
 }
@@ -221,8 +221,8 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     configError = error instanceof Error ? error.message : String(error);
   }
 
-  registerPatchSettings(patches);
-  const settings = options.settings ?? defaultSettings();
+  registerPatchSettings(pi, patches);
+  const settings = options.settings ?? defaultSettings(getPipSettingsRegistry(pi));
   const appliedIds = new Map<string, Set<string>>();
   const baseModels = new Map<string, Model<Api>[]>();
 

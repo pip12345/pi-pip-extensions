@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { pipPath } from "./paths.ts";
+import { piRuntimeKey, type PiRuntimeOwner } from "./runtime.ts";
 
 export type SettingType = "boolean" | "string" | "number" | "enum";
 
@@ -303,6 +304,9 @@ export function createSettingsRegistry(
       changeListeners.add(listener);
       return () => changeListeners.delete(listener);
     },
+    dispose() {
+      changeListeners.clear();
+    },
   };
 
   return registry;
@@ -310,19 +314,54 @@ export function createSettingsRegistry(
 
 export type SettingsRegistry = ReturnType<typeof createSettingsRegistry>;
 
-const GLOBAL_SETTINGS_KEY = Symbol.for("pip-common.settings-registry");
-
-export function getPipSettingsRegistry(): SettingsRegistry {
-  const globalState = globalThis as any;
-  if (!globalState[GLOBAL_SETTINGS_KEY]) {
-    const loaded = readSettingsFile(DEFAULT_SETTINGS_PATH);
-    globalState[GLOBAL_SETTINGS_KEY] = createSettingsRegistry(loaded.values, { persistPath: DEFAULT_SETTINGS_PATH, loadError: loaded.error });
-  }
-  return globalState[GLOBAL_SETTINGS_KEY];
+interface SettingsRuntimeState {
+  registry: SettingsRegistry;
 }
 
-export const pipSettings = getPipSettingsRegistry();
+const SETTINGS_RUNTIME_STATES_KEY = Symbol.for("pip-common.settings.runtime-states");
+const LEGACY_SETTINGS_KEY = Symbol.for("pip-common.settings-registry");
 
-export function registerSettingsSection(section: SettingSection): void {
-  pipSettings.registerSection(section);
+function settingsRuntimeStates(): WeakMap<object, SettingsRuntimeState> {
+  const globalState = globalThis as any;
+  if (!globalState[SETTINGS_RUNTIME_STATES_KEY]) globalState[SETTINGS_RUNTIME_STATES_KEY] = new WeakMap<object, SettingsRuntimeState>();
+  return globalState[SETTINGS_RUNTIME_STATES_KEY];
+}
+
+function createPersistedSettingsRegistry(): SettingsRegistry {
+  const loaded = readSettingsFile(DEFAULT_SETTINGS_PATH);
+  return createSettingsRegistry(loaded.values, { persistPath: DEFAULT_SETTINGS_PATH, loadError: loaded.error });
+}
+
+export function getPipSettingsRegistry(pi: PiRuntimeOwner): SettingsRegistry {
+  const key = piRuntimeKey(pi);
+  let state = settingsRuntimeStates().get(key);
+  if (state) return state.registry;
+  state = { registry: createPersistedSettingsRegistry() };
+  settingsRuntimeStates().set(key, state);
+  const owner = pi as any;
+  owner.on?.("session_shutdown", async () => {
+    state!.registry.dispose();
+    settingsRuntimeStates().delete(key);
+  });
+  return state.registry;
+}
+
+export function setPipSettingsRegistryForTests(pi: PiRuntimeOwner, registry: SettingsRegistry): void {
+  settingsRuntimeStates().set(piRuntimeKey(pi), { registry });
+}
+
+function getLegacySettingsRegistry(): SettingsRegistry {
+  const globalState = globalThis as any;
+  if (!globalState[LEGACY_SETTINGS_KEY]) globalState[LEGACY_SETTINGS_KEY] = createPersistedSettingsRegistry();
+  return globalState[LEGACY_SETTINGS_KEY];
+}
+
+/** @deprecated Pass the owning Pi API to getPipSettingsRegistry(). */
+export const pipSettings = getLegacySettingsRegistry();
+
+export function registerSettingsSection(section: SettingSection): void;
+export function registerSettingsSection(pi: PiRuntimeOwner, section: SettingSection): void;
+export function registerSettingsSection(piOrSection: PiRuntimeOwner | SettingSection, maybeSection?: SettingSection): void {
+  if (maybeSection) getPipSettingsRegistry(piOrSection as PiRuntimeOwner).registerSection(maybeSection);
+  else pipSettings.registerSection(piOrSection as SettingSection);
 }

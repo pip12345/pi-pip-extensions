@@ -4,17 +4,18 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import promptProfiles, { __test } from "./index.ts";
 import { createMockPi } from "pip-common/testing";
-import { pipSettings } from "pip-common";
+import { getPipSettingsRegistry } from "pip-common";
 
 describe("pi-prompt-profiles", () => {
   it("registers prompt settings and before_agent_start hook", () => {
     const pi = createMockPi();
     promptProfiles(pi as any);
     expect(pi.handlers.has("before_agent_start")).toBe(true);
-    expect(pipSettings.section(__test.SETTINGS_ID)?.title).toBe("Prompt Profiles");
-    expect(pipSettings.definition(__test.SETTINGS_ID)?.enabled.default).toBe(true);
-    expect(pipSettings.definition(__test.SETTINGS_ID)?.profile.default).toBe("default.md");
-    expect(pipSettings.definition(__test.SETTINGS_ID)?.mode.default).toBe("append");
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section(__test.SETTINGS_ID)?.title).toBe("Prompt Profiles");
+    expect(settings.definition(__test.SETTINGS_ID)?.enabled.default).toBe(true);
+    expect(settings.definition(__test.SETTINGS_ID)?.profile.default).toBe("default.md");
+    expect(settings.definition(__test.SETTINGS_ID)?.mode.default).toBe("append");
   });
 
   it("discovers markdown profiles from a prompt directory", () => {

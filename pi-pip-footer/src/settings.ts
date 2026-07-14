@@ -1,8 +1,9 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSettingsSection, setting } from "pip-common";
 import { FOOTER_SETTINGS_ID } from "./constants.ts";
 
-export function registerFooterSettings(): void {
-  registerSettingsSection({
+export function registerFooterSettings(pi: ExtensionAPI): void {
+  registerSettingsSection(pi, {
     id: FOOTER_SETTINGS_ID,
     title: "Pip Footer",
     description: "Pip footer with quotas, context, model, and the existing above-editor token counter.",

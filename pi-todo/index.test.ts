@@ -1,16 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import todoExtension, { __test, renderCompactTodos, stateFromBranch } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { flushPipTools, pipSettings, resetPipToolsForTests, stripAnsi } from "pip-common";
+import { flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, stripAnsi } from "pip-common";
 
 const theme = {
   fg: (_name: string, text: string) => text,
 };
 
-beforeEach(() => {
-  resetPipToolsForTests();
-  pipSettings.set("todo.enabled", true);
-});
+beforeEach(() => resetPipToolsForTests());
 
 describe("pi-todo", () => {
   it("registers settings, tools, and command", () => {
@@ -22,10 +19,11 @@ describe("pi-todo", () => {
     expect(getRegisteredTool(pi, "todo_update")).toBeTruthy();
     expect(getRegisteredTool(pi, "todo_read")).toBeTruthy();
     expect(pi.commands.has("todo")).toBe(true);
-    expect(pipSettings.section(__test.SETTINGS_ID)?.title).toBe("Todo");
-    expect(pipSettings.get("todo.enabled")).toBe(true);
-    expect(pipSettings.get("todo.compactRows")).toBe("4");
-    expect(pipSettings.definition("todo")?.compactRows.description).toContain("Fixed height");
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section(__test.SETTINGS_ID)?.title).toBe("Todo");
+    expect(settings.get("todo.enabled")).toBe(true);
+    expect(settings.get("todo.compactRows")).toBe("4");
+    expect(settings.definition("todo")?.compactRows.description).toContain("Fixed height");
   });
 
   it("applies enabled changes to the widget, tools, and command", async () => {
@@ -36,7 +34,7 @@ describe("pi-todo", () => {
     await emitEvent(pi, "session_start", {}, ctx);
     expect(ctx.ui.widgets.get(__test.WIDGET_KEY)).toBeTruthy();
 
-    pipSettings.set("todo.enabled", false);
+    getPipSettingsRegistry(pi).set("todo.enabled", false);
     expect(ctx.ui.widgets.get(__test.WIDGET_KEY)).toBeUndefined();
     const result = await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Blocked" }] }, undefined, undefined, ctx);
     expect(result.details.disabled).toBe(true);

@@ -1,20 +1,21 @@
 import { registerPipSettingsCommand } from "./src/settings-command.ts";
+import { getPipSettingsRegistry } from "./src/settings.ts";
+import { piRuntimeKey } from "./src/runtime.ts";
 
-const STARTED_CONTEXTS_KEY = Symbol.for("pip-common.started-contexts");
+const SETTINGS_COMMAND_RUNTIMES_KEY = Symbol.for("pip-common.settings-command.runtimes");
 
-function startedContexts(): WeakSet<object> {
+function commandRuntimes(): WeakSet<object> {
   const globalState = globalThis as any;
-  if (!globalState[STARTED_CONTEXTS_KEY]) globalState[STARTED_CONTEXTS_KEY] = new WeakSet<object>();
-  return globalState[STARTED_CONTEXTS_KEY];
+  if (!globalState[SETTINGS_COMMAND_RUNTIMES_KEY]) globalState[SETTINGS_COMMAND_RUNTIMES_KEY] = new WeakSet<object>();
+  return globalState[SETTINGS_COMMAND_RUNTIMES_KEY];
 }
 
 export default function pipCommonExtension(pi: any) {
-  pi.on("session_start", async (_event: any, ctx: object) => {
-    const started = startedContexts();
-    if (started.has(ctx)) return;
-    started.add(ctx);
-    registerPipSettingsCommand(pi);
-  });
+  const key = piRuntimeKey(pi);
+  if (commandRuntimes().has(key)) return;
+  commandRuntimes().add(key);
+  registerPipSettingsCommand(pi, getPipSettingsRegistry(pi));
+  pi.on("session_shutdown", async () => commandRuntimes().delete(key));
 }
 
 export * from "./src/content.ts";

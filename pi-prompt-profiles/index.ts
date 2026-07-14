@@ -47,18 +47,6 @@ const profileChoices = [
   ...profiles.map((profile) => ({ value: profile.id, label: profile.label })),
 ];
 
-registerSettingsSection({
-  id: SETTINGS_ID,
-  title: "Prompt Profiles",
-  description: "Select a bundled or user-managed markdown file and apply it to the system prompt.",
-  order: 30,
-  settings: {
-    enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Include the selected markdown file as a system prompt overlay." }),
-    profile: setting.enum({ label: "Profile", default: DEFAULT_PROFILE, choices: profileChoices, order: 2, description: "Bundled profile or user markdown file from ~/.pi/agent/pip/prompt-profiles." }),
-    mode: setting.enum({ label: "Mode", default: "append", choices: ["append", "prepend", "replace"] as const, order: 3, description: "Append to, prepend to, or replace the normal system prompt." }),
-  },
-});
-
 function selectedProfilePath(profileId: string, promptsDirs: string | readonly string[] = [USER_PROMPTS_DIR, PROMPTS_DIR]): string | undefined {
   if (!isSafeProfileId(profileId)) return undefined;
   const directories = typeof promptsDirs === "string" ? [promptsDirs] : promptsDirs;
@@ -82,10 +70,19 @@ export function applyPromptProfile(systemPrompt: string, profileText: string, mo
   return `${systemPrompt}\n\n${profileText}`;
 }
 
-const scopedSettings = settingsFor(SETTINGS_ID);
-const settingValue = scopedSettings.get;
-
 export default function promptProfilesExtension(pi: ExtensionAPI) {
+  registerSettingsSection(pi, {
+    id: SETTINGS_ID,
+    title: "Prompt Profiles",
+    description: "Select a bundled or user-managed markdown file and apply it to the system prompt.",
+    order: 30,
+    settings: {
+      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Include the selected markdown file as a system prompt overlay." }),
+      profile: setting.enum({ label: "Profile", default: DEFAULT_PROFILE, choices: profileChoices, order: 2, description: "Bundled profile or user markdown file from ~/.pi/agent/pip/prompt-profiles." }),
+      mode: setting.enum({ label: "Mode", default: "append", choices: ["append", "prepend", "replace"] as const, order: 3, description: "Append to, prepend to, or replace the normal system prompt." }),
+    },
+  });
+  const settingValue = settingsFor(pi, SETTINGS_ID).get;
   ensurePipSubdir("prompt-profiles");
   pi.on("before_agent_start", async (event: any) => {
     if (!settingValue("enabled", true)) return;

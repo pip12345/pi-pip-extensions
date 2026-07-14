@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import { setTextContent } from "pip-common";
-import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header } from "./types.ts";
-import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entryMap, estimateContextTokensForEntry, flattenEntries, getSummarySettings, isNormalMessageEntry, messagesFromEntries, nearestExistingParent, pathBetween, pathToRoot, snapshotEntries, textFromContent } from "./tree.ts";
+import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header, type SummarySnapshotPolicy } from "./types.ts";
+import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entryMap, estimateContextTokensForEntry, flattenEntries, isNormalMessageEntry, messagesFromEntries, nearestExistingParent, pathBetween, pathToRoot, snapshotEntries, textFromContent } from "./tree.ts";
+
+const DEFAULT_SUMMARY_SETTINGS: SummarySnapshotPolicy = { summarySnapshots: true, snapshotToolResults: "truncated", toolResultTruncation: 20000 };
 
 function newId(existing: Set<string>): string {
   for (let i = 0; i < 100; i++) {
@@ -35,7 +37,7 @@ export class DraftSession {
   private undoStack: DraftSnapshot[] = [];
   private redoStack: DraftSnapshot[] = [];
 
-  constructor(header: Header, entries: Entry[], currentLeafId: string | null) {
+  constructor(header: Header, entries: Entry[], currentLeafId: string | null, private readonly summarySettings: () => SummarySnapshotPolicy = () => DEFAULT_SUMMARY_SETTINGS) {
     this.header = header;
     this.entries = entries;
     this.targetLeafId = currentLeafId ?? entries[entries.length - 1]?.id ?? null;
@@ -577,7 +579,7 @@ export class DraftSession {
       return;
     }
     const sourceIds = entries.map((e) => e.id);
-    const snapshotPolicy = getSummarySettings();
+    const snapshotPolicy = this.summarySettings();
     const sourceEntries = snapshotEntries(entries, snapshotPolicy);
     this.clipboard = { kind: "summary", summary: summary.trim(), sourceEntryIds: sourceIds, sourceEntries, label: `summary of ${entries.length}`, snapshotPolicy };
     this.flashEntryIds = sourceIds;

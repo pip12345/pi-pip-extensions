@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pipSettings } from "../pip-common/index.ts";
+import { getPipSettingsRegistry } from "../pip-common/index.ts";
 import pipFooter from "../pi-pip-footer/index.ts";
 import providerModelPatches from "../pi-provider-model-patches/index.ts";
 import toolUi from "../pi-tool-ui/index.ts";
@@ -15,10 +15,15 @@ const extensions = [pipFooter, providerModelPatches, toolUi, promptProfiles, sec
 
 describe("pip settings descriptions", () => {
   it("all registered pip settings have concise descriptions", () => {
-    for (const extension of extensions) extension(createMockPi() as any);
+    const owner = createMockPi();
+    for (const extension of extensions) {
+      const pi = createMockPi();
+      pi.events = owner.events;
+      extension(pi as any);
+    }
 
     const missing: string[] = [];
-    for (const row of pipSettings.rows()) {
+    for (const row of getPipSettingsRegistry(owner).rows()) {
       if (!row.definition.description?.trim()) missing.push(row.path);
     }
 

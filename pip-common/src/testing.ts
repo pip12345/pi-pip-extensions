@@ -1,3 +1,5 @@
+import { createSettingsRegistry, setPipSettingsRegistryForTests } from "./settings.ts";
+
 export interface MockPi {
   tools: Map<string, any>;
   commands: Map<string, any>;
@@ -17,7 +19,7 @@ export interface MockPi {
 }
 
 export function createMockPi(): MockPi {
-  return {
+  const pi: MockPi = {
     tools: new Map(),
     commands: new Map(),
     handlers: new Map(),
@@ -50,6 +52,8 @@ export function createMockPi(): MockPi {
       this.entries.push({ customType, data });
     },
   };
+  setPipSettingsRegistryForTests(pi, createSettingsRegistry({}, { persistPath: false }));
+  return pi;
 }
 
 export function createMockSessionManager(entries: any[] = [], leafId?: string) {

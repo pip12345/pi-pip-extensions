@@ -1,5 +1,5 @@
-import { pipSettings, hasTextContent, stripAnsi, textFromContent as commonTextFromContent } from "pip-common";
-import { EXT, SUMMARY_CUSTOM_TYPE, TREE_EDIT_SETTINGS_ID, type Clipboard, type Entry, type FilterMode, type SnapshotToolResults, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
+import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent, type ScopedSettings } from "pip-common";
+import { EXT, SUMMARY_CUSTOM_TYPE, type Clipboard, type Entry, type FilterMode, type SnapshotToolResults, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
 
 export function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -52,11 +52,11 @@ export function compactLine(value: string): string {
   return stripAnsi(value).replace(/\s+/g, " ").trim();
 }
 
-export function getSummarySettings(): SummarySnapshotPolicy {
+export function getSummarySettings(settings: ScopedSettings): SummarySnapshotPolicy {
   return {
-    summarySnapshots: Boolean(pipSettings.get(`${TREE_EDIT_SETTINGS_ID}.summarySnapshots`)),
-    snapshotToolResults: pipSettings.get<SnapshotToolResults>(`${TREE_EDIT_SETTINGS_ID}.snapshotToolResults`),
-    toolResultTruncation: pipSettings.get<number>(`${TREE_EDIT_SETTINGS_ID}.toolResultTruncation`),
+    summarySnapshots: settings.get("summarySnapshots", true),
+    snapshotToolResults: settings.get<SnapshotToolResults>("snapshotToolResults", "truncated"),
+    toolResultTruncation: settings.get("toolResultTruncation", 20000),
   };
 }
 

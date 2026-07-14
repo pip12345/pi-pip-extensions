@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, runCommand } from "pip-common/testing";
-import { pipSettings } from "pip-common";
+import { getPipSettingsRegistry } from "pip-common";
 import {
   BUILTIN_MODEL_PATCHES,
   buildProviderModelPatch,
@@ -120,13 +120,6 @@ function extensionHarness(options: {
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  for (const patch of BUILTIN_MODEL_PATCHES) {
-    try {
-      pipSettings.reset(`${SETTINGS_ID}.${patch.id}`);
-    } catch {
-      // The section is registered only after the extension factory runs.
-    }
-  }
 });
 
 describe("provider model patch definitions", () => {
@@ -146,8 +139,9 @@ describe("provider model patch definitions", () => {
   });
 
   it("registers bundled presets in PIP settings as off by default", () => {
-    registerProviderModelPatchesExtension(createMockPi() as any, { patches: BUILTIN_MODEL_PATCHES, settings: memorySettings() });
-    expect(pipSettings.get(`${SETTINGS_ID}.github-copilot-gpt-5-6`)).toBe(false);
+    const pi = createMockPi();
+    registerProviderModelPatchesExtension(pi as any, { patches: BUILTIN_MODEL_PATCHES, settings: memorySettings() });
+    expect(getPipSettingsRegistry(pi).get(`${SETTINGS_ID}.github-copilot-gpt-5-6`)).toBe(false);
   });
 
   it("pre-registers enabled bundled models before session_start so Pi can restore them", () => {

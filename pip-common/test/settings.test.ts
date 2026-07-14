@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSettingsRegistry, readSettingsFile, setting } from "../src/settings.ts";
+import { createSettingsRegistry, getPipSettingsRegistry, readSettingsFile, registerSettingsSection, setting } from "../src/settings.ts";
+import { createMockPi } from "../src/testing.ts";
 
 describe("settings registry", () => {
   it("applies defaults and validates set values", () => {
@@ -82,6 +83,20 @@ describe("settings registry", () => {
     unsubscribe();
     registry.set("x.enabled", true);
     expect(notifications).toHaveLength(1);
+  });
+
+  it("shares settings within one runtime and isolates child runtimes", () => {
+    const owner = createMockPi();
+    const sibling = createMockPi();
+    sibling.events = owner.events;
+    const child = createMockPi();
+    registerSettingsSection(owner, { id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+    registerSettingsSection(child, { id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+
+    getPipSettingsRegistry(owner).set("x.enabled", false);
+
+    expect(getPipSettingsRegistry(sibling).get("x.enabled")).toBe(false);
+    expect(getPipSettingsRegistry(child).get("x.enabled")).toBe(true);
   });
 
   it("preserves malformed files and refuses to overwrite them", () => {

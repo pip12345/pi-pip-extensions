@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import pipCommon from "../index.ts";
-import { createMockCtx, createMockPi, emitEvent } from "../src/testing.ts";
+import { createMockCtx, createMockPi } from "../src/testing.ts";
 import { createPipSettingsComponent, registerPipSettingsCommand } from "../src/settings-command.ts";
 import { visibleWidth } from "../src/keys.ts";
 import { createSettingsRegistry, setting } from "../src/settings.ts";
 
 describe("pip settings command", () => {
-  it("registers /pip-settings when the session starts", async () => {
+  it("registers /pip-settings for the runtime", () => {
     const pi = createMockPi();
     pipCommon(pi as any);
-    expect(pi.commands.has("pip-settings")).toBe(false);
-    await emitEvent(pi, "session_start", { reason: "startup" }, createMockCtx());
     expect(pi.commands.has("pip-settings")).toBe(true);
   });
 
@@ -24,7 +22,6 @@ describe("pip settings command", () => {
     };
     pipCommon(pi as any);
     pipCommon(pi as any);
-    await emitEvent(pi, "session_start", { reason: "startup" }, createMockCtx());
     expect(registrations).toBe(1);
   });
 

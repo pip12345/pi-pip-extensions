@@ -12,7 +12,7 @@ import {
   fetchQuotaForProvider,
   installWidgetRestacker,
   applyTemporaryLiveModelsDevCostFallback,
-  pipSettings,
+  settingsFor,
   truncateToWidth,
   visibleWidth,
   type QuotaProviderSetting,
@@ -31,9 +31,9 @@ import { renderTokenMetric } from "./src/token/render.ts";
 
 type ExtensionAPI = any;
 
-registerFooterSettings();
-
 export default function (pi: ExtensionAPI) {
+  registerFooterSettings(pi);
+  const settings = settingsFor(pi, FOOTER_SETTINGS_ID);
   let tuiRef: { requestRender: () => void } | null = null;
   let footerInstalled = false;
   let originalSetWidget: any;
@@ -52,10 +52,11 @@ export default function (pi: ExtensionAPI) {
     setTui: (tui) => {
       tuiRef = tui;
     },
+    settings,
   });
 
   function installFooter(ctx: any): void {
-    if (!ctx.hasUI || !ctx.ui.setFooter || footerInstalled || !pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.enabled`)) return;
+    if (!ctx.hasUI || !ctx.ui.setFooter || footerInstalled || !settings.get("enabled", true)) return;
     footerInstalled = true;
     ctx.ui.setFooter((tui: any, theme: any, footerData: any) => {
       tuiRef = tui;
@@ -71,10 +72,10 @@ export default function (pi: ExtensionAPI) {
         invalidate() {},
         render(width: number): string[] {
           const sep = "   ";
-          const modelLine = pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showModel`) ? renderModelLine(ctx, theme) : "";
+          const modelLine = settings.get("showModel", true) ? renderModelLine(ctx, theme) : "";
           const providerLine = latestUsage?.provider ? latestUsage.provider.toLowerCase() : "";
           const labelWidth = Math.max(visibleWidth(modelLine), visibleWidth(providerLine), 1);
-          const contextLine = pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showContext`) ? renderContextLine(ctx, width, theme) : "";
+          const contextLine = settings.get("showContext", true) ? renderContextLine(ctx, width, theme) : "";
           const firstUsageWindow = latestUsage?.windows[0]
             ? fitSegment(width, [
                 renderUsageWindow(latestUsage.windows[0], theme, 10, true),
@@ -87,13 +88,13 @@ export default function (pi: ExtensionAPI) {
           const coreLine = [
             modelLine ? padEndVisible(modelLine, labelWidth) : "",
             contextLine ? padEndVisible(contextLine, firstValueWidth) : "",
-            renderLocation(ctx, theme, gitState),
+            renderLocation(ctx, theme, gitState, settings),
           ].filter(Boolean);
 
           const lines = wrapSegments(coreLine, width, sep);
           lines.push(...renderUsageLine(latestUsage, width, theme, labelWidth, firstValueWidth));
 
-          if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showPluginLines`)) {
+          if (settings.get("showPluginLines", true)) {
             const rightLines = [
               renderToolsExpandedWarning(ctx, theme),
               renderExtensionStatuses(footerData),
@@ -111,7 +112,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function refreshUsageForModel(ctx: any): void {
-    const configured = pipSettings.get<QuotaProviderSetting>(`${FOOTER_SETTINGS_ID}.quotaProvider`);
+    const configured = settings.get<QuotaProviderSetting>("quotaProvider", "auto");
     const provider = detectQuotaProvider(ctx.model?.provider, configured);
     activeProvider = provider;
     if (!provider) {

@@ -1,5 +1,5 @@
-import { formatCost, formatTokenCount, normalizeUsage, pipSettings, truncateToWidth } from "pip-common";
-import { FOOTER_SETTINGS_ID, TOKEN_HIGHLIGHT_MS, TOKEN_RENDER_TICK_MS, TOKEN_SPINNER, TOKEN_SPINNER_FRAME_MS, WIDGET_KEY } from "../constants.ts";
+import { formatCost, formatTokenCount, normalizeUsage, truncateToWidth, type ScopedSettings } from "pip-common";
+import { TOKEN_HIGHLIGHT_MS, TOKEN_RENDER_TICK_MS, TOKEN_SPINNER, TOKEN_SPINNER_FRAME_MS, WIDGET_KEY } from "../constants.ts";
 import { fitSegment } from "../layout.ts";
 import { addTokenBreakdown, diffTokenBreakdown, getHistoricalSessionTokens, interpolateTokenBreakdown, tokenBreakdownFromUsage, type TokenBreakdown } from "./breakdown.ts";
 import { renderTokenMetric } from "./render.ts";
@@ -7,6 +7,7 @@ import { renderTokenMetric } from "./render.ts";
 export interface TokenControllerDeps {
   requestRender(): void;
   setTui(tui: { requestRender: () => void } | null): void;
+  settings: ScopedSettings;
 }
 
 export interface TokenController {
@@ -47,7 +48,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
   let streamEstimatedOutputTokens = 0;
 
   function tokenCounterEnabled(): boolean {
-    return pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCounter`);
+    return deps.settings.get("showTokenCounter", true);
   }
 
   function syncWorkingIndicator(ctx: any): void {
@@ -62,7 +63,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
   }
 
   function cacheIcon(): "↻" | "c" | "▣" | "◫" | "□" {
-    return pipSettings.get<"↻" | "c" | "▣" | "◫" | "□">(`${FOOTER_SETTINGS_ID}.cacheIcon`);
+    return deps.settings.get<"↻" | "c" | "▣" | "◫" | "□">("cacheIcon", "↻");
   }
 
   function tokenValuesChanged(previous: TokenBreakdown | undefined, next: TokenBreakdown | undefined): boolean {
@@ -118,14 +119,14 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
       output: highlighting && tokenHighlightedFields.output,
       cache: highlighting && tokenHighlightedFields.cache,
     };
-    const cacheHitRateSuffix = pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showCacheHitRate`) && displayed.cache > 0 && displayed.latestCacheHitRate !== undefined ? `/${Math.round(displayed.latestCacheHitRate)}%` : "";
+    const cacheHitRateSuffix = deps.settings.get("showCacheHitRate", true) && displayed.cache > 0 && displayed.latestCacheHitRate !== undefined ? `/${Math.round(displayed.latestCacheHitRate)}%` : "";
     const parts = [
       renderTokenMetric("↓", displayed.input, changed.input, theme),
       renderTokenMetric("↑", displayed.output, changed.output, theme),
       renderTokenMetric(cacheIcon(), displayed.cache, changed.cache, theme, cacheHitRateSuffix),
     ];
     let text = parts.join(" ");
-    if (pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`)) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", formatCost(displayed.cost ?? 0))}`;
+    if (deps.settings.get("showTokenCost", true)) text += ` ${theme.fg("dim", "·")} ${theme.fg("dim", formatCost(displayed.cost ?? 0))}`;
     return text;
   }
 
@@ -147,7 +148,7 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
         delta.input > 0 ? `${dim("↓+")}${dim(formatTokenCount(delta.input))}` : "",
         delta.output > 0 ? `${dim("↑+")}${dim(formatTokenCount(delta.output))}` : "",
         delta.cache > 0 ? `${dim(`${cacheIcon()}+`)}${dim(formatTokenCount(delta.cache))}` : "",
-        pipSettings.get<boolean>(`${FOOTER_SETTINGS_ID}.showTokenCost`) && (delta.cost ?? 0) > 0 ? dim(`+${formatCost(delta.cost ?? 0)}`) : "",
+        deps.settings.get("showTokenCost", true) && (delta.cost ?? 0) > 0 ? dim(`+${formatCost(delta.cost ?? 0)}`) : "",
       ].filter(Boolean);
       return parts.length ? `${theme.fg("accent", "Δ")} ${parts.join(" ")}` : "";
     }

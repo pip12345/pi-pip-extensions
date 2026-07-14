@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
 import treeEdit from "./index.ts";
-import { pipSettings } from "pip-common";
+import { getPipSettingsRegistry } from "pip-common";
 import { createMockPi, runCommand } from "pip-common/testing";
 
 describe("pi-tree-edit", () => {
@@ -22,10 +22,11 @@ describe("pi-tree-edit", () => {
   it("registers tree-edit settings", () => {
     const pi = createMockPi();
     treeEdit(pi as any);
-    expect(pipSettings.section("tree-edit")?.title).toBe("Tree Edit");
-    expect(pipSettings.definition("tree-edit")?.summarySnapshots.default).toBe(true);
-    expect(pipSettings.definition("tree-edit")?.snapshotToolResults.default).toBe("truncated");
-    expect(pipSettings.definition("tree-edit")?.toolResultTruncation.default).toBe(20000);
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section("tree-edit")?.title).toBe("Tree Edit");
+    expect(settings.definition("tree-edit")?.summarySnapshots.default).toBe(true);
+    expect(settings.definition("tree-edit")?.snapshotToolResults.default).toBe("truncated");
+    expect(settings.definition("tree-edit")?.toolResultTruncation.default).toBe(20000);
   });
 
   it("compacts messages before the selected normal message", async () => {

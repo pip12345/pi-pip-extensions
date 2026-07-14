@@ -1,10 +1,10 @@
 import { copyFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "pip-common";
+import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, registerSettingsSection, selectionOffset, setting, settingsFor, stripAnsi, truncateToWidth, visibleWidth } from "pip-common";
 import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
 import { parseSessionFile, timestampForFile, validateDraft } from "./session.ts";
-import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
+import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, getSummarySettings, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
 
 function wrapHelp(items: string[], width: number, theme: Theme): string[] {
   const sep = theme.fg("dim", " · ");
@@ -432,7 +432,7 @@ async function saveDraft(sessionFile: string, draft: DraftSession, ctx: Ctx): Pr
 }
 
 export default function (pi: ExtensionAPI) {
-  registerSettingsSection({
+  registerSettingsSection(pi, {
     id: TREE_EDIT_SETTINGS_ID,
     title: "Tree Edit",
     order: 40,
@@ -461,6 +461,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  const settings = settingsFor(pi, TREE_EDIT_SETTINGS_ID);
+
   pi.registerCommand("tree-edit", {
     description: "Open transactional session tree editor",
     handler: async (_args: string, ctx: Ctx) => {
@@ -477,7 +479,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const parsed = parseSessionFile(sessionFile);
-      const draft = new DraftSession(parsed.header, parsed.entries, ctx.sessionManager.getLeafId?.() ?? null);
+      const draft = new DraftSession(parsed.header, parsed.entries, ctx.sessionManager.getLeafId?.() ?? null, () => getSummarySettings(settings));
 
       while (true) {
         const result = await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: (result?: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {

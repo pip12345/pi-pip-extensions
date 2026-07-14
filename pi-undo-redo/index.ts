@@ -10,8 +10,9 @@ import {
   isSessionEntry,
   parseSessionFile,
   parentIdOf,
-  pipSettings,
   registerSettingsSection,
+  settingsFor,
+  type ScopedSettings,
   setting,
   textFromContent,
   writeSessionRecordsAtomic,
@@ -167,22 +168,14 @@ function headerLeafValues(header: any): Array<string | null> {
   return ["leafId", "currentLeafId", "activeLeafId"].filter((key) => key in header).map((key) => header[key] ?? null);
 }
 
-function backupOptions() {
-  const keep = Number.parseInt(String(getSetting("keepBackups", "25")), 10) || 25;
-  const maxAge = getSetting("backupMaxAgeDays", "7");
+function backupOptions(settings: ScopedSettings) {
+  const keep = Number.parseInt(String(settings.get<string>("keepBackups", "25")), 10) || 25;
+  const maxAge = settings.get<string>("backupMaxAgeDays", "7");
   return { keepBackups: keep, maxAgeDays: maxAge === "never" ? "never" as const : Number.parseInt(String(maxAge), 10) || 7 };
 }
 
-function getSetting(key: string, fallback: unknown): unknown {
-  try {
-    return pipSettings.get(`${SETTINGS_SECTION}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
-
-function settingsEnabled(): boolean {
-  return getSetting("enabled", true) !== false;
+function settingsEnabled(settings: ScopedSettings): boolean {
+  return settings.get<boolean>("enabled", true) !== false;
 }
 
 export interface UndoPlan {
@@ -219,10 +212,10 @@ export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], lea
   return { target, tail, previousLeafId, restoredLeafId: currentLeafId, promptText: promptText(target, sessionFile) };
 }
 
-function backupAndCleanup(sessionFile: string, reason: string): void {
+function backupAndCleanup(sessionFile: string, reason: string, settings: ScopedSettings): void {
   const dir = ensurePipSubdir("backup", "undo-redo");
   backupSessionFile(sessionFile, reason, { backupDir: dir });
-  cleanupBackups(dir, backupOptions());
+  cleanupBackups(dir, backupOptions(settings));
 }
 
 async function replaceCurrentSession(ctx: Ctx, sessionFile: string, withSession?: (ctx: Ctx) => Promise<void> | void): Promise<void> {
@@ -259,8 +252,8 @@ function restoreTail(_file: ParsedSessionFile, slot: RedoSlot): SessionRecord[] 
   return makeEffectiveLeafLast(records, slot.restoredLeafId);
 }
 
-async function undo(ctx: Ctx) {
-  if (!settingsEnabled()) return ctx.ui.notify("Undo/redo is disabled.", "warning");
+async function undo(ctx: Ctx, settings: ScopedSettings) {
+  if (!settingsEnabled(settings)) return ctx.ui.notify("Undo/redo is disabled.", "warning");
   if (ctx.isIdle?.() === false) return ctx.ui.notify("Cannot undo while pi is running.", "warning");
   const sessionFile = sessionFileFromCtx(ctx);
   if (!sessionFile) return ctx.ui.notify("Cannot undo: no session file.", "warning");
@@ -273,7 +266,7 @@ async function undo(ctx: Ctx) {
   const plan = planUndo(branch, file.entries, currentLeafId, sessionFile);
   const nextRecords = removeTail(file, plan.tail, plan.previousLeafId);
 
-  backupAndCleanup(sessionFile, "undo");
+  backupAndCleanup(sessionFile, "undo", settings);
   writeSessionRecordsAtomic(sessionFile, nextRecords);
   pushRedoSlot({
     sessionFile,
@@ -291,8 +284,8 @@ async function undo(ctx: Ctx) {
   });
 }
 
-async function redo(ctx: Ctx) {
-  if (!settingsEnabled()) return ctx.ui.notify("Undo/redo is disabled.", "warning");
+async function redo(ctx: Ctx, settings: ScopedSettings) {
+  if (!settingsEnabled(settings)) return ctx.ui.notify("Undo/redo is disabled.", "warning");
   if (ctx.isIdle?.() === false) return ctx.ui.notify("Cannot redo while pi is running.", "warning");
   const slot = redoSlot();
   if (!slot) return ctx.ui.notify("Nothing to redo.", "info");
@@ -311,7 +304,7 @@ async function redo(ctx: Ctx) {
   const poppedSlot = popRedoSlot();
   if (!poppedSlot) return ctx.ui.notify("Nothing to redo.", "info");
   const nextRecords = restoreTail(file, poppedSlot);
-  backupAndCleanup(sessionFile, "redo");
+  backupAndCleanup(sessionFile, "redo", settings);
   writeSessionRecordsAtomic(sessionFile, nextRecords);
   await replaceCurrentSession(ctx, sessionFile, async (newCtx) => {
     newCtx.ui.notify("Redid latest undone prompt.", "info");
@@ -319,7 +312,7 @@ async function redo(ctx: Ctx) {
 }
 
 export default function undoRedoExtension(pi: ExtensionAPI) {
-  registerSettingsSection({
+  registerSettingsSection(pi, {
     id: SETTINGS_SECTION,
     title: "Undo / Redo",
     description: "Tail-only /undo and /redo with safety backups.",
@@ -331,11 +324,13 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
     },
   });
 
+  const settings = settingsFor(pi, SETTINGS_SECTION);
+
   pi.registerCommand("undo", {
     description: "Permanently remove the latest prompt at the end of the current branch and restore it to the editor",
     handler: async (_args: string, ctx: Ctx) => {
       try {
-        await undo(ctx);
+        await undo(ctx, settings);
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
       }
@@ -346,7 +341,7 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
     description: "Restore the exact prompt/response removed by /undo",
     handler: async (_args: string, ctx: Ctx) => {
       try {
-        await redo(ctx);
+        await redo(ctx, settings);
       } catch (error) {
         clearRedoStack();
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");

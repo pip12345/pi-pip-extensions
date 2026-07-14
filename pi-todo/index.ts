@@ -27,24 +27,6 @@ const CUSTOM_TYPE = "pip.todo.state";
 const WIDGET_KEY = "pi-todo";
 const STATUSES = ["pending", "active", "done"] as const;
 
-registerSettingsSection({
-  id: SETTINGS_ID,
-  title: "Todo",
-  description: "Minimal session todo tools and compact widget.",
-  order: 40,
-  settings: {
-    enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Enable todo tools, the /todo command, and the compact todo widget." }),
-    compactRows: setting.enum({ label: "Compact rows", default: "4", choices: ["2", "3", "4", "6"] as const, order: 2, description: "Fixed height for the always-on todo widget while todos exist." }),
-    showCompleted: setting.enum({ label: "Show completed", default: "smart", choices: ["smart", "always", "never"] as const, order: 3, description: "Controls whether completed todos appear in the compact widget." }),
-    hideWhenAllDone: setting.boolean({ label: "Hide when all done", default: false, order: 4, description: "Hide the compact widget once every todo is marked done." }),
-    doneStyle: setting.enum({ label: "Done style", default: "strike+dim", choices: ["strike+dim", "dim", "plain"] as const, order: 5, description: "Visual style for completed todo text in the compact widget and /todo view." }),
-    placement: setting.enum({ label: "Placement", default: "above", choices: ["above", "below"] as const, order: 6, description: "Place the compact todo widget above or below the editor." }),
-  },
-});
-
-const scopedSettings = settingsFor(SETTINGS_ID);
-const settingValue = scopedSettings.get;
-
 function emptyState(): TodoState {
   return { todos: [], nextId: 1, updatedAt: Date.now() };
 }
@@ -339,6 +321,22 @@ function normalTodoReadResult(state: TodoState, theme: any): Text {
 }
 
 export default function todoExtension(pi: ExtensionAPI) {
+  registerSettingsSection(pi, {
+    id: SETTINGS_ID,
+    title: "Todo",
+    description: "Minimal session todo tools and compact widget.",
+    order: 40,
+    settings: {
+      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Enable todo tools, the /todo command, and the compact todo widget." }),
+      compactRows: setting.enum({ label: "Compact rows", default: "4", choices: ["2", "3", "4", "6"] as const, order: 2, description: "Fixed height for the always-on todo widget while todos exist." }),
+      showCompleted: setting.enum({ label: "Show completed", default: "smart", choices: ["smart", "always", "never"] as const, order: 3, description: "Controls whether completed todos appear in the compact widget." }),
+      hideWhenAllDone: setting.boolean({ label: "Hide when all done", default: false, order: 4, description: "Hide the compact widget once every todo is marked done." }),
+      doneStyle: setting.enum({ label: "Done style", default: "strike+dim", choices: ["strike+dim", "dim", "plain"] as const, order: 5, description: "Visual style for completed todo text in the compact widget and /todo view." }),
+      placement: setting.enum({ label: "Placement", default: "above", choices: ["above", "below"] as const, order: 6, description: "Place the compact todo widget above or below the editor." }),
+    },
+  });
+  const scopedSettings = settingsFor(pi, SETTINGS_ID);
+  const settingValue = scopedSettings.get;
   let state = emptyState();
   let currentCtx: any;
 
