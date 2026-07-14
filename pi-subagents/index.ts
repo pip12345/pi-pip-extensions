@@ -156,8 +156,13 @@ async function showSubagentView(ctx: any, manager: SubagentManager, run: Subagen
 async function waitRun(run: SubagentRun, timeoutMs?: number): Promise<"done" | "timeout" | "detached"> {
   const runPromise = run.runPromise?.then(() => "done" as const) ?? Promise.resolve("done" as const);
   const detached = run.detachPromise?.then(() => "detached" as const) ?? new Promise<"detached">(() => undefined);
-  const timeout = timeoutMs ? new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)) : new Promise<"timeout">(() => undefined);
-  return Promise.race([runPromise, detached, timeout]);
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = timeoutMs ? new Promise<"timeout">((resolve) => { timeoutTimer = setTimeout(() => resolve("timeout"), timeoutMs); }) : new Promise<"timeout">(() => undefined);
+  try {
+    return await Promise.race([runPromise, detached, timeout]);
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+  }
 }
 
 export interface SubagentsExtensionOptions {
@@ -281,13 +286,13 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               if (!params.message) throw new Error("steer requires message.");
-              await manager.steer(run, params.message, findAgent(cwd, run.agent, trusted));
+              await manager.steer(run, params.message, findAgent(cwd, run.agent, trusted), signal);
               return textResult(`Steered subagent ${run.id}.`, { run: manager.snapshot(run) });
             }
             if (params.id && params.prompt) {
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
-              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent, trusted));
+              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent, trusted), signal);
               const snapshot = manager.snapshot(run);
               return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
             }
@@ -351,7 +356,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             else if (action === "steer") {
               const message = await ctx.ui?.input?.("Steer subagent", "");
               if (!message) return;
-              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent, trusted));
+              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent, trusted), ctx.signal);
               ctx.ui?.notify?.(`Steered ${selectedRun.id}.`, "info");
             } else if (action === "background") { manager.detach(selectedRun); ctx.ui?.notify?.(`Moved ${selectedRun.id} to background.`, "info"); }
             else if (action === "cancel") { await manager.cancel(selectedRun); ctx.ui?.notify?.(`Cancelled ${selectedRun.id}.`, "info"); }
@@ -395,7 +400,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           else if (cmd === "steer") {
             const message = rest.join(" ");
             if (!message) throw new Error("steer requires a message.");
-            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent, trusted));
+            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent, trusted), ctx.signal);
             ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
           } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run), settings), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }
@@ -415,5 +420,6 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
 }
 
 export default createSubagentsExtension();
+export const __test = { waitRun };
 export { discoverAgents } from "./src/agents.ts";
 export { SubagentManager } from "./src/manager.ts";

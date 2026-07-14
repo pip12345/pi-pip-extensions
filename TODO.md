@@ -79,23 +79,23 @@
 
 ## 6. Repair child runtime and Subagent lifecycle
 
-- [ ] Define an explicit child extension/capability profile instead of substring-based exclusions.
-- [ ] Prevent child sessions from loading UI-only extensions.
-- [ ] Prevent child sessions from auto-connecting or shutting down parent Tiny MCP resources.
-- [ ] Use one manager-owned start-generation path for launch, continue, and restart-via-steer.
-- [ ] Enforce shutdown and concurrency limits for every run generation.
-- [ ] Link and clean up parent cancellation for resumed foreground runs.
-- [ ] Refresh run and detach promises for every generation.
-- [ ] Clear `waitRun()` timeout timers in `finally`.
+- [x] Define an explicit child extension/capability profile instead of substring-based exclusions.
+- [x] Prevent child sessions from loading UI-only extensions.
+- [x] Prevent child sessions from auto-connecting or shutting down parent Tiny MCP resources.
+- [x] Use one manager-owned start-generation path for launch, continue, and restart-via-steer.
+- [x] Enforce shutdown and concurrency limits for every run generation.
+- [x] Link and clean up parent cancellation for resumed foreground runs.
+- [x] Refresh run and detach promises for every generation.
+- [x] Clear `waitRun()` timeout timers in `finally`.
 - [ ] Bound event text, persisted results, status output, and parent completion injection.
 - [ ] Keep full transcripts in child sessions or artifacts rather than duplicating them in parent persistence.
 - [ ] Deduplicate Stats usage by stable subagent run ID and cumulative deltas.
 
 ## 7. Repair Tiny MCP lifecycle and output contracts
 
-- [ ] Replace unsafe manager reset with awaited shutdown followed by recreation.
-- [ ] Give MCP managers explicit runtime ownership or reference-counted sharing.
-- [ ] Ensure one runtime cannot close another runtime's managers.
+- [x] Replace unsafe manager reset with awaited shutdown followed by recreation.
+- [x] Give MCP managers explicit runtime ownership or reference-counted sharing.
+- [x] Ensure one runtime cannot close another runtime's managers.
 - [ ] Throw execution failures so Pi receives framework-level tool errors.
 - [ ] Add one shared bounded-result path for call, list, search, describe, and status output.
 - [ ] Keep `details` bounded.

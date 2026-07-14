@@ -181,11 +181,90 @@ export class SubagentManager {
     return [...this.runs.values()].filter((run) => run.status === "running").length;
   }
 
-  launch(input: LaunchInput): SubagentRun {
+  private assertCanStartGeneration(run?: SubagentRun): void {
     if (this.shuttingDown) throw new Error("Subagent manager is shutting down.");
-    this.cleanup();
     const maxRunning = this.settings.get("maxRunning", 6);
-    if (this.runningCount() >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
+    const running = [...this.runs.values()].filter((candidate) => candidate !== run && candidate.status === "running").length;
+    if (running >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
+  }
+
+  private startGeneration(
+    run: SubagentRun,
+    options: { prompt: string; displayPrompt?: string; background: boolean; signal?: AbortSignal },
+    execute: () => Promise<unknown>,
+  ): Promise<SubagentRun> {
+    this.assertCanStartGeneration(run);
+    run.generation = (run.generation ?? 0) + 1;
+    const generation = run.generation;
+    run.removeParentAbort?.();
+    run.abortController = new AbortController();
+    run.errorText = undefined;
+    run.resultText = undefined;
+    run.completedAt = undefined;
+    run.status = "running";
+    run.background = options.background;
+    run.detached = options.background;
+    run.forwarding = !options.background;
+    if (options.background) this.foreground.delete(run.id);
+    else this.foreground.add(run.id);
+
+    run.detachPromise = new Promise<void>((resolve) => { run.resolveDetach = resolve; });
+    run.detach = () => {
+      run.background = true;
+      run.detached = true;
+      run.forwarding = false;
+      run.removeParentAbort?.();
+      run.removeParentAbort = undefined;
+      this.foreground.delete(run.id);
+      run.resolveDetach?.();
+    };
+
+    if (!options.background && options.signal) {
+      const onAbort = () => {
+        if (run.detached || run.background || run.generation !== generation) return;
+        void this.cancel(run).catch(() => undefined);
+      };
+      options.signal.addEventListener("abort", onAbort, { once: true });
+      run.removeParentAbort = () => options.signal?.removeEventListener("abort", onAbort);
+      if (options.signal.aborted) onAbort();
+    }
+
+    run.prompt = options.displayPrompt ?? options.prompt;
+    this.touchRun(run);
+    const promise = Promise.resolve()
+      .then(async () => {
+        if (run.abortController.signal.aborted) throw new Error("Cancelled");
+        await execute();
+        return run;
+      })
+      .catch((error) => {
+        if (run.generation !== generation) return run;
+        run.status = run.abortController.signal.aborted ? "cancelled" : "error";
+        run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
+        return run;
+      })
+      .then((finished) => {
+        if (run.generation !== generation) return finished;
+        run.removeParentAbort?.();
+        run.removeParentAbort = undefined;
+        this.foreground.delete(run.id);
+        if (this.shuttingDown || this.runs.get(run.id) !== run) return finished;
+        if (run.status === "running") run.status = run.abortController.signal.aborted ? "cancelled" : "completed";
+        run.completedAt = this.now();
+        run.updatedAt = run.completedAt;
+        run.prompt = options.displayPrompt ?? options.prompt;
+        if (run.background && run.status !== "cancelled") this.completeBackground(run);
+        this.saveRun(run);
+        this.cleanup();
+        return finished;
+      });
+    run.runPromise = promise;
+    return promise;
+  }
+
+  launch(input: LaunchInput): SubagentRun {
+    this.cleanup();
+    this.assertCanStartGeneration();
     this.ensureNameAvailable(input.name, input.parentSessionKey);
     const runId = id();
     const root = contextRoot(input.parentSessionKey, this.contextDir);
@@ -203,7 +282,7 @@ export class SubagentManager {
       anchorEntryId: input.anchorEntryId,
       background: input.background,
       detached: input.background,
-      status: "running",
+      status: "completed",
       createdAt: this.now(),
       updatedAt: this.now(),
       contextRoot: root,
@@ -216,110 +295,50 @@ export class SubagentManager {
     run.persist = () => this.saveRun(run);
     this.runs.set(run.id, run);
     if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
-    if (!run.background) this.foreground.add(run.id);
-    run.detachPromise = new Promise<void>((resolve) => { run.resolveDetach = resolve; });
-    if (!run.background && input.signal) {
-      const onAbort = () => {
-        if (run.detached || run.background) return;
-        void this.cancel(run).catch(() => undefined);
-      };
-      input.signal.addEventListener("abort", onAbort, { once: true });
-      run.removeParentAbort = () => input.signal?.removeEventListener("abort", onAbort);
-      if (input.signal.aborted) onAbort();
-    }
-
-    run.detach = () => {
-      run.background = true;
-      run.detached = true;
-      run.forwarding = false;
-      run.removeParentAbort?.();
-      run.removeParentAbort = undefined;
-      this.foreground.delete(run.id);
-      run.resolveDetach?.();
-    };
-
-    this.saveRun(run);
 
     const launchInput = { ...input, prompt: appendWorkspaceGuidance(input.prompt, root, runDir), contextRoot: root, runContextDir: runDir };
-    run.runPromise = this.runner.launch(launchInput, run).catch((error) => {
-      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-      run.completedAt = this.now();
-      run.updatedAt = run.completedAt;
-      return run;
-    }).then((finished) => {
-      if (this.shuttingDown || this.runs.get(finished.id) !== finished) return finished;
-      this.foreground.delete(run.id);
-      finished.removeParentAbort?.();
-      finished.removeParentAbort = undefined;
-      finished.prompt = input.prompt;
-      if (finished.background && finished.status !== "cancelled") this.completeBackground(finished);
-      this.saveRun(finished);
-      this.cleanup();
-      return finished;
-    });
+    try {
+      this.startGeneration(run, { prompt: input.prompt, background: input.background, signal: input.signal }, () => this.runner.launch(launchInput, run));
+    } catch (error) {
+      this.runs.delete(run.id);
+      if (run.name) this.aliases.delete(this.aliasKey(run.parentSessionKey, run.name));
+      throw error;
+    }
     return run;
   }
 
-  async continueRun(run: SubagentRun, prompt: string, agent?: AgentConfig): Promise<void> {
+  async continueRun(run: SubagentRun, prompt: string, agent?: AgentConfig, signal?: AbortSignal, displayPrompt = prompt): Promise<void> {
     if (run.status === "running") throw new Error(`Subagent ${run.id} is already running.`);
     if (!run.sessionFile) throw new Error(`Subagent ${run.id} cannot be continued because its child session file is missing.`);
-    run.abortController = new AbortController();
-    run.errorText = undefined;
-    run.resultText = undefined;
-    run.status = "running";
-    run.background = false;
-    run.detached = false;
-    run.forwarding = true;
-    this.foreground.add(run.id);
     const root = run.contextRoot ?? contextRoot(run.parentSessionKey, this.contextDir);
     const runDir = run.runContextDir ?? runContextDir(run.parentSessionKey, run.id, this.contextDir);
     run.contextRoot = root;
     run.runContextDir = runDir;
     const promptWithWorkspace = appendWorkspaceGuidance(prompt, root, runDir);
-    this.touchRun(run);
-    try {
+    const generation = this.startGeneration(run, { prompt, displayPrompt, background: false, signal }, async () => {
       if (run.continuePrompt) await run.continuePrompt(promptWithWorkspace);
       else {
         if (!agent) throw new Error(`Subagent ${run.id} cannot be continued until its agent definition is available.`);
         run.model ??= agent.model;
-        run.runPromise = this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, model: run.model, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir }, run);
-        await run.runPromise;
+        await this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, model: run.model, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir, signal }, run);
       }
-      if (run.status === "running") run.status = "completed";
-    } catch (error) {
-      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-      throw error;
-    } finally {
-      run.prompt = prompt;
-      run.completedAt = this.now();
-      run.updatedAt = run.completedAt;
-      this.foreground.delete(run.id);
-      this.saveRun(run);
-    }
+    });
+    await generation;
+    if (run.status === "error") throw new Error(run.errorText ?? `Subagent ${run.id} failed.`);
   }
 
-  async steer(run: SubagentRun, message: string, agent?: AgentConfig): Promise<void> {
+  async steer(run: SubagentRun, message: string, agent?: AgentConfig, signal?: AbortSignal): Promise<void> {
     const steeringPrompt = wrapSteerMessage(message);
     const at = this.now();
     run.events.push({ type: "steer", text: message, at });
     if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
     this.touchRun(run, at);
 
-    if (!run.steer) {
-      if (run.status === "running") throw new Error(`Subagent ${run.id} cannot be steered.`);
-      await this.continueRun(run, steeringPrompt, agent);
-      run.prompt = message;
-      this.touchRun(run);
+    if (run.status !== "running") {
+      await this.continueRun(run, steeringPrompt, agent, signal, message);
       return;
     }
-
-    if (run.status !== "running") {
-      run.abortController = new AbortController();
-      run.errorText = undefined;
-      run.resultText = undefined;
-    }
+    if (!run.steer) throw new Error(`Subagent ${run.id} cannot be steered.`);
     await run.steer(steeringPrompt, message);
     this.touchRun(run);
   }

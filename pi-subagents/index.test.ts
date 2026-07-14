@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "pip-common/testing";
 import { addUsage, createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type TokenUsage } from "pip-common";
-import { createSubagentsExtension } from "./index.ts";
+import { __test, createSubagentsExtension } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";
 import { RealRunner } from "./src/runner.ts";
 import { runContextDir } from "./src/context.ts";
 import { parentIndexPath } from "./src/persistence.ts";
-import type { ChildAgentRuntime } from "./src/child-runtime.ts";
+import { applyChildExtensionProfile, childExtensionAllowed, type ChildAgentRuntime } from "./src/child-runtime.ts";
 import type { Runner, SubagentRun } from "./src/types.ts";
 
 class FakeRunner implements Runner {
@@ -173,6 +173,28 @@ beforeEach(() => {
 });
 
 describe("pi-subagents", () => {
+  it("applies an explicit child extension capability profile", () => {
+    const extension = (path: string, tools: string[] = []) => ({ path, resolvedPath: path, tools: new Map(tools.map((name) => [name, {}])) });
+    const guard = extension("/workspace/pi-secrets-guard/index.ts");
+    const web = extension("/workspace/pi-webfetch-websearch/index.ts", ["webfetch", "websearch"]);
+    const tiny = extension("/workspace/pi-tiny-mcp/index.ts", ["tiny-mcp"]);
+    const footer = extension("/workspace/pi-pip-footer/index.ts");
+    const custom = extension("/workspace/custom-tools/index.ts", ["custom_query"]);
+    const similarlyNamed = extension("/workspace/pi-subagents-copy/index.ts", ["copy_query"]);
+
+    expect(childExtensionAllowed(guard, "none")).toBe(true);
+    expect(childExtensionAllowed(web, "all")).toBe(true);
+    expect(childExtensionAllowed(web, ["webfetch"])).toBe(true);
+    expect(childExtensionAllowed(web, "builtins")).toBe(false);
+    expect(childExtensionAllowed(tiny, "all")).toBe(false);
+    expect(childExtensionAllowed(footer, "all")).toBe(false);
+    expect(childExtensionAllowed(custom, ["custom_query"])).toBe(true);
+    expect(childExtensionAllowed(similarlyNamed, "all")).toBe(true);
+
+    const filtered = applyChildExtensionProfile({ extensions: [guard, web, tiny, footer, custom], errors: [], runtime: {} }, ["websearch", "custom_query"]);
+    expect(filtered.extensions).toEqual([guard, web, custom]);
+  });
+
   it("registers tool, command, shortcut, and prompt metadata", () => {
     const { pi, tool } = setup();
     expect(tool).toBeTruthy();
@@ -861,6 +883,63 @@ describe("pi-subagents", () => {
     const forcedContinued = await tool.execute("4", { id, prompt: "again" }, undefined, undefined, ctx);
     expect(forcedContinued.isError).toBeFalsy();
     expect(forcedContinued.content[0].text).toContain("continued: again");
+  });
+
+  it("enforces generation limits and shutdown for continue and restart-via-steer", async () => {
+    const values = { maxRunning: 1 };
+    const manager = new SubagentManager({ runner: new FakeRunner(), settings: settingsWith(values) });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    const first = manager.launch({ agent, prompt: "first", cwd: process.cwd(), parentSessionKey: "parent", keep: true, background: false });
+    await first.runPromise;
+    const second = manager.launch({ agent, prompt: "second", cwd: process.cwd(), parentSessionKey: "parent", keep: true, background: false });
+    await second.runPromise;
+
+    let finish!: () => void;
+    first.continuePrompt = async () => new Promise<void>((resolve) => { finish = resolve; });
+    const continuing = manager.continueRun(first, "continue", agent);
+    await Promise.resolve();
+    await expect(manager.continueRun(second, "blocked", agent)).rejects.toThrow(/Maximum concurrent/);
+    await expect(manager.steer(second, "blocked steer", agent)).rejects.toThrow(/Maximum concurrent/);
+    finish();
+    await continuing;
+
+    await manager.shutdown();
+    await expect(manager.continueRun(first, "after shutdown", agent)).rejects.toThrow(/shutting down/);
+    await expect(manager.steer(first, "after shutdown", agent)).rejects.toThrow(/shutting down/);
+  });
+
+  it("refreshes generation promises and links resumed foreground cancellation", async () => {
+    const manager = new SubagentManager({ runner: new FakeRunner() });
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+    const run = manager.launch({ agent, prompt: "first", cwd: process.cwd(), parentSessionKey: "parent", keep: true, background: false });
+    await run.runPromise;
+    const previousRunPromise = run.runPromise;
+    const previousDetachPromise = run.detachPromise;
+    run.continuePrompt = async () => new Promise<void>((resolve) => run.abortController.signal.addEventListener("abort", () => resolve(), { once: true }));
+    const parent = new AbortController();
+
+    const continuing = manager.continueRun(run, "continue", agent, parent.signal);
+    expect(run.runPromise).not.toBe(previousRunPromise);
+    expect(run.detachPromise).not.toBe(previousDetachPromise);
+    parent.abort();
+    await continuing;
+
+    expect(run.status).toBe("cancelled");
+    expect(run.removeParentAbort).toBeUndefined();
+    expect(manager.foreground.has(run.id)).toBe(false);
+  });
+
+  it("clears wait timers when a run finishes before timeout", async () => {
+    vi.useFakeTimers();
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      const run = { runPromise: Promise.resolve({}), detachPromise: new Promise<void>(() => undefined) } as any;
+      await expect(__test.waitRun(run, 60_000)).resolves.toBe("done");
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps parent and child managers isolated", async () => {

@@ -312,45 +312,19 @@ The common settings bootstrap deduplicates by the shared `session_start` context
 
 ---
 
-### 21. Subagent child sessions load Tiny MCP, whose global shutdown can close the parent’s MCP servers — **partially resolved**
+### 21. Subagent child sessions load Tiny MCP, whose global shutdown can close the parent’s MCP servers — **resolved**
 
-**Remaining evidence**
+Child extension selection now uses an explicit capability profile and exact feature IDs. Guards are retained; requested headless/custom tool extensions can be retained; UI, parent-state, telemetry, provider, nested-agent, and external-resource extensions are excluded. Tiny MCP and Footer handlers therefore never enter the child session lifecycle.
 
-- `pi-subagents/src/child-runtime.ts` still uses path exclusions rather than an explicit capability profile, so Tiny MCP and UI-only extensions can load in children.
-- Every loaded Tiny MCP child runtime can still auto-connect its own project/user MCP servers on `session_start`, even when the child does not need MCP.
-- Headless child sessions can still load `pi-pip-footer`, which starts quota network work and a refresh interval despite having no UI.
-
-**Remaining impact**
-
-A child can create unnecessary MCP processes/HTTP streams and quota traffic. Runtime-local ownership now prevents that child from closing or mutating the parent’s resources, but the child should not start those resources in the first place.
-
-**Resolution status**
-
-Tiny MCP manager pools are now owned by each extension runtime, and Subagents no longer uses a process-global manager. Parent/child isolation tests prove that shutting down either child manager leaves the parent manager and work intact. The remaining half is child capability policy: child sessions still load and auto-connect Tiny MCP and still load UI-only extensions. That is tracked in section 6 of `TODO.md`.
+Tiny MCP and Subagent managers are also runtime-owned. Isolation tests cover child shutdown while parent MCP connections and Subagent work remain active.
 
 ---
 
-### 22. Resuming or steering an existing subagent bypasses concurrency and cancellation lifecycle controls
+### 22. Resuming or steering an existing subagent bypasses concurrency and cancellation lifecycle controls — **resolved**
 
-**Evidence**
+`SubagentManager.startGeneration()` now owns launch, continuation, and restart-via-steer lifecycle. Every generation enforces shutdown/concurrency limits, creates fresh run and detach promises, installs and removes foreground parent cancellation, and performs one completion/cleanup path. `RealRunner` owns only child-session execution rather than duplicating manager status transitions.
 
-- `maxRunning` is enforced only in `SubagentManager.launch()` at `pi-subagents/src/manager.ts:173-180`.
-- `continueRun()` and restart-via-`steer()` at `pi-subagents/src/manager.ts:261-337` do not enforce `shuttingDown` or `maxRunning`.
-- Only a new launch links the parent tool’s `AbortSignal` at `pi-subagents/src/manager.ts:220-230`; continuation/steering calls receive no parent signal.
-- Continuation through an existing `continuePrompt` does not assign a new `run.runPromise` or reset `detachPromise` at `pi-subagents/src/manager.ts:280-287`.
-- `waitRun()` at `pi-subagents/index.ts:151-156` trusts those promises and leaves its timeout timer running when another race branch wins.
-
-**Impact**
-
-- Repeated continuation can exceed the configured process-wide maximum.
-- Esc/parent abort does not cancel a resumed foreground child.
-- Ctrl+Shift+B can report that a resumed child moved to background while the original tool call remains blocked awaiting completion.
-- `status(wait:true)` can return immediately against an old resolved launch promise while a continuation is still running.
-- Repeated short waits leave live timeout timers behind until expiry.
-
-**Recommended direction**
-
-Use one manager-owned “start run generation” path for launch, continue, and restart-via-steer. It should enforce limits, create a fresh run/detach promise, link and clean up the parent abort signal, and expose a current generation promise. Implement `waitRun()` with a cleared timeout in `finally`.
+`waitRun()` clears its timeout in `finally`. Regression tests cover continuation and steer limits, post-shutdown rejection, resumed parent abort, promise refresh, timeout cleanup, and parent/child manager isolation.
 
 ---
 

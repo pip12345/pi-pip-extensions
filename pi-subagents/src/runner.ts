@@ -178,25 +178,9 @@ export class RealRunner implements Runner {
       };
 
       async function runPrompt(prompt: string): Promise<void> {
-        run.status = "running";
-        run.prompt = prompt;
-        run.errorText = undefined;
-        run.resultText = undefined;
-        run.completedAt = undefined;
-        run.updatedAt = Date.now();
-        run.persist?.();
-        try {
-          if (run.abortController.signal.aborted) throw new Error("Cancelled");
-          await activeSession.prompt(prompt);
-          run.status = run.abortController.signal.aborted ? "cancelled" : "completed";
-        } catch (error) {
-          run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-          run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-        } finally {
-          run.completedAt = Date.now();
-          run.updatedAt = run.completedAt;
-          run.persist?.();
-        }
+        if (run.abortController.signal.aborted) throw new Error("Cancelled");
+        await activeSession.prompt(prompt);
+        if (run.abortController.signal.aborted) throw new Error("Cancelled");
       }
 
       run.steer = async (message: string, displayMessage?: string) => {
@@ -224,14 +208,13 @@ export class RealRunner implements Runner {
       promptStarted = true;
       await runPrompt(input.prompt);
     } catch (error) {
-      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-      run.completedAt = Date.now();
-      run.updatedAt = run.completedAt;
-      unsubscribe?.();
-      if (session && !promptStarted) {
-        try { session.dispose(); } catch {}
+      if (!session || !promptStarted) {
+        unsubscribe?.();
+        if (session) {
+          try { session.dispose(); } catch {}
+        }
       }
+      throw error;
     }
     return run;
   }
