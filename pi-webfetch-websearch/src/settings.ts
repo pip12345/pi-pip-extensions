@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSettingsSection, setting, settingsFor } from "pip-common";
 
 export const SETTINGS_ID = "webfetch-websearch";
@@ -12,8 +13,8 @@ export type SearchContextSetting = "5000" | "10000" | "20000";
 export type ArtifactTtlSetting = "1" | "6" | "24" | "72" | "168";
 export type ArtifactMaxSetting = "1" | "10" | "25" | "50" | "100";
 
-export function registerWebSettings(): void {
-  registerSettingsSection({
+export function registerWebSettings(pi: ExtensionAPI): void {
+  registerSettingsSection(pi, {
     id: SETTINGS_ID,
     title: "Web Fetch/Search",
     description: "Dependency-free web fetching and no-key web search with cleaned, bounded output.",
@@ -38,5 +39,6 @@ export function registerWebSettings(): void {
   });
 }
 
-const scopedSettings = settingsFor(SETTINGS_ID);
-export const settingValue = scopedSettings.get;
+export function webSettings(pi: ExtensionAPI) {
+  return settingsFor(pi, SETTINGS_ID);
+}

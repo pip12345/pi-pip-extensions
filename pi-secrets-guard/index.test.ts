@@ -2,22 +2,10 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import secretsGuard, { bashPathTokens, isGitIgnored, resolveToolPath, __test } from "./index.ts";
-import { pipSettings } from "pip-common";
+import { getPipSettingsRegistry } from "pip-common";
 import { createMockCtx, createMockPi, emitEvent } from "pip-common/testing";
-
-function resetGuardSettings() {
-  pipSettings.set("gitignore-guard.enabled", true);
-  pipSettings.set("gitignore-guard.protectCommonSecrets", true);
-  pipSettings.set("gitignore-guard.protectSecretignore", true);
-  pipSettings.set("gitignore-guard.protectGitignore", false);
-  pipSettings.set("gitignore-guard.protectReads", true);
-  pipSettings.set("gitignore-guard.protectWrites", true);
-  pipSettings.set("gitignore-guard.protectSearchTargets", true);
-  pipSettings.set("gitignore-guard.bashGuard", "best-effort");
-  pipSettings.set("gitignore-guard.promptReminder", true);
-}
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), "pi-secrets-guard-"));
@@ -25,18 +13,15 @@ function tempRepo() {
   return dir;
 }
 
-beforeEach(() => {
-  resetGuardSettings();
-});
-
 describe("secrets guard", () => {
   it("registers compatible settings under the Secrets Guard title", () => {
     const pi = createMockPi();
     secretsGuard(pi as any);
 
-    expect(pipSettings.section("gitignore-guard")?.title).toBe("Secrets Guard");
-    expect(pipSettings.definition("gitignore-guard")?.protectGitignore.default).toBe(false);
-    expect(pipSettings.definition("gitignore-guard")?.protectCommonSecrets.description).toContain(".env");
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section("gitignore-guard")?.title).toBe("Secrets Guard");
+    expect(settings.definition("gitignore-guard")?.protectGitignore.default).toBe(false);
+    expect(settings.definition("gitignore-guard")?.protectCommonSecrets.description).toContain(".env");
   });
 
   it("extracts bash argument tokens for best-effort path checks", () => {
@@ -80,7 +65,7 @@ describe("secrets guard", () => {
       const [templateAllowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: ".env.example" }, toolCallId: "example" }, ctx);
       expect(templateAllowed).toBeUndefined();
 
-      pipSettings.set("gitignore-guard.protectCommonSecrets", false);
+      getPipSettingsRegistry(pi).set("gitignore-guard.protectCommonSecrets", false);
       const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: ".env" }, toolCallId: "2" }, ctx);
       expect(allowed).toBeUndefined();
     } finally {
@@ -207,7 +192,7 @@ describe("secrets guard", () => {
       const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "cache/data.json" }, toolCallId: "1" }, ctx);
       expect(allowed).toBeUndefined();
 
-      pipSettings.set("gitignore-guard.protectGitignore", true);
+      getPipSettingsRegistry(pi).set("gitignore-guard.protectGitignore", true);
       const [blocked] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "cache/data.json" }, toolCallId: "2" }, ctx);
       expect(blocked).toMatchObject({ block: true });
       expect(blocked.reason).toContain(".gitignore");

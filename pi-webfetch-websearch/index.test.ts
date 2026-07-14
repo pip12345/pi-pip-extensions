@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -7,7 +7,7 @@ import extension, { parseMcpResponse } from "./index.ts";
 import { formatChars } from "./src/limits.ts";
 import { formatWebSearchArtifact } from "./src/websearch-format.ts";
 import { rewriteGitHubUrl } from "./src/sites/github.ts";
-import { pipSettings } from "pip-common";
+import { createSettingsRegistry, setPipSettingsRegistryForTests } from "pip-common";
 import { createMockPi, getRegisteredTool } from "pip-common/testing";
 
 async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void, test: (url: string) => Promise<void>) {
@@ -35,31 +35,20 @@ function exec(tool: any, params: any, ctx: any = {}) {
   });
 }
 
+function createWebPi(overrides: Record<string, unknown> = {}) {
+  const pi = createMockPi();
+  setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "webfetch-websearch": { blockPrivateHosts: false, ...overrides } }, { persistPath: false }));
+  extension(pi as any);
+  return pi;
+}
+
 beforeEach(() => {
-  pipSettings.set("webfetch-websearch.enabled", true);
-  pipSettings.set("webfetch-websearch.webfetchEnabled", true);
-  pipSettings.set("webfetch-websearch.websearchEnabled", true);
-  pipSettings.set("webfetch-websearch.defaultFormat", "markdown");
-  pipSettings.set("webfetch-websearch.fetchTimeout", "30");
-  pipSettings.set("webfetch-websearch.maxBytes", "5MB");
-  pipSettings.set("webfetch-websearch.maxChars", "20000");
-  pipSettings.set("webfetch-websearch.upgradeHttp", false);
-  pipSettings.set("webfetch-websearch.blockPrivateHosts", false);
-  pipSettings.set("webfetch-websearch.searchProvider", "auto");
-  pipSettings.set("webfetch-websearch.searchResults", "8");
-  pipSettings.set("webfetch-websearch.searchContext", "10000");
-  pipSettings.set("webfetch-websearch.searchTimeout", "25");
-  pipSettings.set("webfetch-websearch.artifactTtlHours", "24");
-  pipSettings.set("webfetch-websearch.artifactMaxPerSession", "50");
   delete process.env.PIP_WEBSEARCH_PROVIDER;
   delete process.env.OPENCODE_WEBSEARCH_PROVIDER;
   delete process.env.PIP_WEBSEARCH_EXA_URL;
   delete process.env.PIP_WEBSEARCH_PARALLEL_URL;
 });
 
-afterEach(() => {
-  pipSettings.set("webfetch-websearch.blockPrivateHosts", true);
-});
 
 describe("pi-webfetch-websearch", () => {
   it("formats small character counts without rounding to zero", () => {
@@ -78,24 +67,20 @@ describe("pi-webfetch-websearch", () => {
   });
 
   it("registers the webfetch tool without exposing output mode selection", () => {
-    const pi = createMockPi();
-    extension(pi as any);
+    const pi = createWebPi();
     const tool = getRegisteredTool(pi, "webfetch");
     expect(tool).toBeTruthy();
     expect((tool.parameters as any).properties.mode).toBeUndefined();
   });
 
   it("rejects invalid protocols", async () => {
-    const pi = createMockPi();
-    extension(pi as any);
+    const pi = createWebPi();
     const tool = getRegisteredTool(pi, "webfetch");
     await expect(exec(tool, { url: "file:///tmp/test" })).rejects.toThrow(/http/);
   });
 
   it("respects the enabled setting", async () => {
-    pipSettings.set("webfetch-websearch.enabled", false);
-    const pi = createMockPi();
-    extension(pi as any);
+    const pi = createWebPi({ enabled: false });
     const result = await exec(getRegisteredTool(pi, "webfetch"), { url: "https://example.com" });
     expect(result.content[0].text).toContain("disabled");
     expect(result.details.disabled).toBe(true);
@@ -106,8 +91,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/plain; charset=utf-8");
       res.end("hello from webfetch");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/file.txt`, format: "text" });
       expect(result.content[0].text).toBe("hello from webfetch");
       expect(result.details.contentType).toContain("text/plain");
@@ -119,8 +103,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/html; charset=utf-8");
       res.end("<html><head><style>.x{}</style><script>alert('x')</script></head><body><main>Hello <b>world</b></main></body></html>");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/page`, format: "text" });
       expect(result.content[0].text).toBe("Hello world");
     });
@@ -131,8 +114,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/html");
       res.end("<article><h1>Docs</h1><p>Read <a href='/guide'>the guide</a>.</p><ul><li>One</li><li>Two</li></ul></article>");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/docs`, format: "markdown" });
       expect(result.content[0].text).toContain("# Docs");
       expect(result.content[0].text).toContain(`[the guide](${base}/guide)`);
@@ -145,8 +127,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/html");
       res.end(`<article><h1>Docs</h1><h2>Install</h2><p>npm install thing</p><h2>Usage</h2><p>${"run it ".repeat(1500)}</p></article>`);
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/docs`, format: "markdown" });
       expect(result.content[0].text).toContain("Saved webfetch result");
       expect(result.content[0].text).toContain("Outline:");
@@ -166,8 +147,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/plain");
       res.end("small inline fetch");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/small`, format: "text" });
       expect(result.content[0].text).toBe("small inline fetch");
       expect(result.details.mode).toBe("inline");
@@ -180,8 +160,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/plain");
       res.end(req.url === "/one" ? "first artifact ".repeat(800) : "second artifact ".repeat(800));
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const tool = getRegisteredTool(pi, "webfetch");
       const first = await exec(tool, { url: `${base}/one`, format: "text" });
       const second = await exec(tool, { url: `${base}/two`, format: "text" });
@@ -194,13 +173,11 @@ describe("pi-webfetch-websearch", () => {
   });
 
   it("prunes oldest saved artifacts above the per-session limit", async () => {
-    pipSettings.set("webfetch-websearch.artifactMaxPerSession", "1");
     await withServer((req, res) => {
       res.setHeader("content-type", "text/plain");
       res.end(req.url === "/old" ? "old artifact ".repeat(800) : "new artifact ".repeat(800));
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi({ artifactMaxPerSession: "1" });
       const tool = getRegisteredTool(pi, "webfetch");
       const old = await exec(tool, { url: `${base}/old`, format: "text" });
       const latest = await exec(tool, { url: `${base}/new`, format: "text" });
@@ -217,8 +194,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/html");
       res.end("<body><nav><a href='/a'>Alpha</a><a href='/b'>Beta</a></nav><article><h1>Real Article</h1><p>This is the useful body text.</p></article></body>");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/article`, format: "markdown" });
       expect(result.content[0].text).toContain("# Real Article");
       expect(result.content[0].text).not.toContain("Alpha");
@@ -230,8 +206,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/html");
       res.end("<body><nav><a href='/a'>Alpha</a><a href='/b'>Beta</a></nav><article><h1>Real Article</h1><p>This is the useful body text.</p></article></body>");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/article`, format: "markdown", extract: "nav" });
       expect(result.content[0].text).toContain("[Alpha]");
       expect(result.content[0].text).not.toContain("Real Article");
@@ -243,8 +218,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/html");
       res.end("<main><h1>Raw</h1></main>");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/raw`, format: "html" });
       expect(result.content[0].text).toContain("<main><h1>Raw</h1></main>");
     });
@@ -255,8 +229,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "text/plain");
       res.end("a".repeat(5000));
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/long`, maxChars: 1200 });
       expect(result.content[0].text.length).toBeLessThanOrEqual(1200);
       expect(result.content[0].text).toContain("[Truncated:");
@@ -265,14 +238,12 @@ describe("pi-webfetch-websearch", () => {
   });
 
   it("rejects responses larger than the configured byte limit by content-length", async () => {
-    pipSettings.set("webfetch-websearch.maxBytes", "1MB");
     await withServer((_req, res) => {
       res.setHeader("content-type", "text/plain");
       res.setHeader("content-length", String(2 * 1024 * 1024));
       res.end("too big");
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi({ maxBytes: "1MB" });
       await expect(exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/big` })).rejects.toThrow(/too large/i);
     });
   });
@@ -282,8 +253,7 @@ describe("pi-webfetch-websearch", () => {
       res.setHeader("content-type", "image/png");
       res.end(Buffer.from([137, 80, 78, 71]));
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/image.png` });
       expect(result.content[0].text).toContain("Binary body omitted");
       expect(result.content[0].text).not.toContain("base64");
@@ -291,9 +261,7 @@ describe("pi-webfetch-websearch", () => {
   });
 
   it("blocks private hosts when configured", async () => {
-    pipSettings.set("webfetch-websearch.blockPrivateHosts", true);
-    const pi = createMockPi();
-    extension(pi as any);
+    const pi = createWebPi({ blockPrivateHosts: true });
     await expect(exec(getRegisteredTool(pi, "webfetch"), { url: "http://127.0.0.1:1" })).rejects.toThrow(/private|local/i);
   });
 
@@ -301,8 +269,7 @@ describe("pi-webfetch-websearch", () => {
     await withServer((_req, _res) => {
       // Leave the response open until the client timeout aborts.
     }, async (base) => {
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       await expect(exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/slow`, timeout: 0.1 })).rejects.toThrow();
     });
   });
@@ -314,8 +281,7 @@ describe("pi-webfetch-websearch", () => {
   });
 
   it("registers the websearch tool without exposing output mode selection", () => {
-    const pi = createMockPi();
-    extension(pi as any);
+    const pi = createWebPi();
     const tool = getRegisteredTool(pi, "websearch");
     expect(tool).toBeTruthy();
     expect((tool.parameters as any).properties.mode).toBeUndefined();
@@ -340,8 +306,7 @@ describe("pi-webfetch-websearch", () => {
       });
     }, async (base) => {
       process.env.PIP_WEBSEARCH_EXA_URL = `${base}/mcp`;
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "websearch"), { query: "pi coding agent", provider: "exa", contextMaxCharacters: 1200 });
       expect(result.details.provider).toBe("exa");
       expect(result.content[0].text.length).toBeLessThanOrEqual(1200);
@@ -359,8 +324,7 @@ describe("pi-webfetch-websearch", () => {
       });
     }, async (base) => {
       process.env.PIP_WEBSEARCH_EXA_URL = `${base}/mcp`;
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "websearch"), { query: "artifact search", provider: "exa" });
       expect(result.content[0].text).toContain("# Web search: artifact search");
       expect(result.content[0].text).toContain("## 1. First result");
@@ -386,8 +350,7 @@ describe("pi-webfetch-websearch", () => {
       });
     }, async (base) => {
       process.env.PIP_WEBSEARCH_EXA_URL = `${base}/mcp`;
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "websearch"), { query: "large search", provider: "exa" });
       expect(result.content[0].text).toContain("Saved websearch result");
       expect(result.content[0].text).toContain("Outline:");
@@ -417,8 +380,7 @@ describe("pi-webfetch-websearch", () => {
     }, async (base) => {
       process.env.PIP_WEBSEARCH_PARALLEL_URL = `${base}/parallel`;
       process.env.PIP_WEBSEARCH_EXA_URL = `${base}/exa`;
-      const pi = createMockPi();
-      extension(pi as any);
+      const pi = createWebPi();
       const result = await exec(getRegisteredTool(pi, "websearch"), { query: "fallback test" });
       expect(result.details.provider).toBe("exa");
       expect(result.details.fallbackUsed).toBe(true);

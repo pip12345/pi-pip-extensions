@@ -2,12 +2,12 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { themeFg, truncateToWidth } from "pip-common";
+import { themeFg, truncateToWidth, type ScopedSettings } from "pip-common";
 import { artifactPathLabel, artifactSummary, writeArtifact } from "./artifacts.ts";
 import { extractHtml, extractTitle, htmlToMarkdown, htmlToText, type HtmlExtractMode } from "./html.ts";
 import { rewriteGitHubUrl, type SiteFetchRewrite } from "./sites/github.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_CHARS, formatBytes, formatChars, MAX_TIMEOUT_SECONDS, signalWithTimeout, truncateContent } from "./limits.ts";
-import { settingValue, type MaxBytesSetting, type MaxCharsSetting, type TimeoutSetting, type WebFetchFormat } from "./settings.ts";
+import type { MaxBytesSetting, MaxCharsSetting, TimeoutSetting, WebFetchFormat } from "./settings.ts";
 
 const AUTO_INLINE_MAX_CHARS = 8_000;
 
@@ -25,7 +25,7 @@ function bytesFromSetting(value: MaxBytesSetting): number {
   return DEFAULT_MAX_BYTES;
 }
 
-function parseUrl(input: string): URL {
+function parseUrl(input: string, settings: ScopedSettings): URL {
   let url: URL;
   try {
     url = new URL(input);
@@ -33,8 +33,8 @@ function parseUrl(input: string): URL {
     throw new Error("Invalid URL.");
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must start with http:// or https://.");
-  if (settingValue<boolean>("upgradeHttp", false) && url.protocol === "http:") url.protocol = "https:";
-  if (settingValue<boolean>("blockPrivateHosts", true) && isPrivateHost(url.hostname)) throw new Error("Blocked private or local host.");
+  if (settings.get("upgradeHttp", false) && url.protocol === "http:") url.protocol = "https:";
+  if (settings.get("blockPrivateHosts", true) && isPrivateHost(url.hostname)) throw new Error("Blocked private or local host.");
   return url;
 }
 
@@ -77,7 +77,7 @@ function acceptHeader(format: WebFetchFormat): string {
   return "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.8, */*;q=0.1";
 }
 
-async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewrite | undefined, format: WebFetchFormat, timeoutSeconds: number, signal?: AbortSignal): Promise<{ response: Response; url: URL; rewrite?: SiteFetchRewrite }> {
+async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewrite | undefined, format: WebFetchFormat, timeoutSeconds: number, settings: ScopedSettings, signal?: AbortSignal): Promise<{ response: Response; url: URL; rewrite?: SiteFetchRewrite }> {
   const headers = {
     "User-Agent": "pi-webfetch-websearch/0.1",
     Accept: acceptHeader(format),
@@ -86,37 +86,37 @@ async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewr
   const fetchUrl = async (url: URL) => fetch(url, { redirect: "follow", signal: signalWithTimeout(signal, timeoutSeconds * 1000), headers });
   if (!rewrite) return { response: await fetchUrl(originalUrl), url: originalUrl };
 
-  const rewrittenUrl = parseUrl(rewrite.url);
+  const rewrittenUrl = parseUrl(rewrite.url, settings);
   const response = await fetchUrl(rewrittenUrl);
   if (response.ok) return { response, url: rewrittenUrl, rewrite };
   return { response: await fetchUrl(originalUrl), url: originalUrl };
 }
 
-function clampTimeout(seconds: unknown): number {
-  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : Number(settingValue<TimeoutSetting>("fetchTimeout", "30"));
+function clampTimeout(seconds: unknown, settings: ScopedSettings): number {
+  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : Number(settings.get<TimeoutSetting>("fetchTimeout", "30"));
   return Math.min(Math.max(0.1, value), MAX_TIMEOUT_SECONDS);
 }
 
-function clampMaxChars(value: unknown): number {
-  const fallback = Number(settingValue<MaxCharsSetting>("maxChars", "20000")) || DEFAULT_MAX_CHARS;
+function clampMaxChars(value: unknown, settings: ScopedSettings): number {
+  const fallback = Number(settings.get<MaxCharsSetting>("maxChars", "20000")) || DEFAULT_MAX_CHARS;
   const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
   return Math.min(Math.max(1000, Math.floor(raw)), 200_000);
 }
 
-export async function executeWebFetch(params: any, signal?: AbortSignal, ctx?: any, pi?: any) {
-  if (!settingValue<boolean>("enabled", true) || !settingValue<boolean>("webfetchEnabled", true)) {
+export async function executeWebFetch(params: any, settings: ScopedSettings, signal?: AbortSignal, ctx?: any, pi?: any) {
+  if (!settings.get("enabled", true) || !settings.get("webfetchEnabled", true)) {
     return { content: [{ type: "text" as const, text: "webfetch is disabled in /pip-settings." }], details: { disabled: true } };
   }
 
-  const format = (params.format ?? settingValue<WebFetchFormat>("defaultFormat", "markdown")) as WebFetchFormat;
-  const url = parseUrl(String(params.url ?? ""));
+  const format = (params.format ?? settings.get<WebFetchFormat>("defaultFormat", "markdown")) as WebFetchFormat;
+  const url = parseUrl(String(params.url ?? ""), settings);
   const extract = (params.extract ?? "auto") as HtmlExtractMode;
-  const timeoutSeconds = clampTimeout(params.timeout);
-  const maxBytes = bytesFromSetting(settingValue<MaxBytesSetting>("maxBytes", "5MB"));
-  const maxChars = clampMaxChars(params.maxChars);
+  const timeoutSeconds = clampTimeout(params.timeout, settings);
+  const maxBytes = bytesFromSetting(settings.get<MaxBytesSetting>("maxBytes", "5MB"));
+  const maxChars = clampMaxChars(params.maxChars, settings);
 
   const rewrite = extract === "all" ? undefined : rewriteGitHubUrl(url);
-  const fetched = await fetchWithOptionalRewrite(url, rewrite, format, timeoutSeconds, signal);
+  const fetched = await fetchWithOptionalRewrite(url, rewrite, format, timeoutSeconds, settings, signal);
   const response = fetched.response;
 
   if (!response.ok) throw new Error(`Fetch failed: HTTP ${response.status} ${response.statusText}`.trim());
@@ -184,7 +184,7 @@ export async function executeWebFetch(params: any, signal?: AbortSignal, ctx?: a
     };
   }
 
-  const artifact = writeArtifact({ kind: "webfetch", text: output, ctx, pi, url: url.toString(), title, format });
+  const artifact = writeArtifact({ kind: "webfetch", text: output, ctx, settings, pi, url: url.toString(), title, format });
   return {
     content: [{ type: "text" as const, text: artifactSummary(artifact.record, artifact.outline) }],
     details: { ...commonDetails, mode: "file", outputChars: artifact.record.chars, truncated: false, artifact: artifact.record, outline: artifact.outline },
@@ -200,7 +200,7 @@ function hostLabel(raw: unknown): string {
   }
 }
 
-export function registerWebfetchTool(pi: ExtensionAPI): void {
+export function registerWebfetchTool(pi: ExtensionAPI, settings: ScopedSettings): void {
   pi.registerTool({
     name: "webfetch",
     label: "Web Fetch",
@@ -216,10 +216,10 @@ export function registerWebfetchTool(pi: ExtensionAPI): void {
     ],
     parameters: WebFetchParams,
     async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: any): Promise<any> {
-      return executeWebFetch(params, signal, ctx, pi);
+      return executeWebFetch(params, settings, signal, ctx, pi);
     },
     renderCall(args: any, theme: any) {
-      const format = args.format ?? settingValue<WebFetchFormat>("defaultFormat", "markdown");
+      const format = args.format ?? settings.get<WebFetchFormat>("defaultFormat", "markdown");
       return new Text(themeFg(theme, "toolTitle", "webfetch") + themeFg(theme, "muted", ` ${hostLabel(args.url)} ${format}`), 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {

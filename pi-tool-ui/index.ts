@@ -2,7 +2,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth } from "pip-common";
+import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "pip-common";
 import { safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 
@@ -22,7 +22,6 @@ type SlotAdapter = {
   renderResult?: NonNullable<ToolDefinition<any, any, any>["renderResult"]>;
 };
 
-const scopedSettings = settingsFor(SETTINGS_ID);
 const toolCache = new Map<string, BuiltIns>();
 const COMPACT_PIP_TOOLS = new Set(["todo_write", "todo_update", "todo_read", "tiny-mcp"]);
 
@@ -73,9 +72,9 @@ function settingKey(toolName: string): string {
   return toolName.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
-function adapterEnabled(key: string): boolean {
-  if (!scopedSettings.get("enabled", true)) return false;
-  return scopedSettings.get(key, true);
+function adapterEnabled(settings: ScopedSettings, key: string): boolean {
+  if (!settings.get("enabled", true)) return false;
+  return settings.get(key, true);
 }
 
 function builtinRenderFallback(name: BuiltinName, kind: "renderCall" | "renderResult", args: any[], fallback: Component): Component {
@@ -92,21 +91,21 @@ function quietCall(label: string, summarize: (args: any) => string) {
   return (args: any, theme: any, context: any) => toolLine(theme, label, summarize(args), context);
 }
 
-function quietResult(tool: BuiltinName) {
+function quietResult(settings: ScopedSettings, tool: BuiltinName) {
   return (result: any, { expanded }: any, theme: any, context: any) => {
-    if (!adapterEnabled(settingKey(tool))) return builtinRenderFallback(tool, "renderResult", [result, { expanded }, theme, context], expandedOutput(result, theme));
+    if (!adapterEnabled(settings, settingKey(tool))) return builtinRenderFallback(tool, "renderResult", [result, { expanded }, theme, context], expandedOutput(result, theme));
     if (!expanded) return renderErrorIfCollapsed(result, theme);
     return expandedOutput(result, theme);
   };
 }
 
-function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefined {
+function editDiffComponentForDiff(settings: ScopedSettings, diff: unknown, theme: any): Component | undefined {
   if (typeof diff !== "string" || !diff.trim()) return undefined;
   const component: Component = {
     render(width: number) {
-      const layout = scopedSettings.get<string>("diffLayout", "auto");
-      const minWidth = Number(scopedSettings.get("diffSplitMinWidth", 120));
-      const maxLines = Number(scopedSettings.get("diffMaxLines", 80));
+      const layout = settings.get<string>("diffLayout", "auto");
+      const minWidth = Number(settings.get("diffSplitMinWidth", 120));
+      const maxLines = Number(settings.get("diffMaxLines", 80));
       const useSplit = layout === "split" || (layout === "auto" && width >= minWidth);
       if (useSplit) {
         const split = renderSplitEditDiff(diff, width, theme, { maxLines });
@@ -121,12 +120,12 @@ function editDiffComponentForDiff(diff: unknown, theme: any): Component | undefi
   return component;
 }
 
-function reusableEditResultComponent(result: any, theme: any, lastComponent?: Component): Component | undefined {
+function reusableEditResultComponent(settings: ScopedSettings, result: any, theme: any, lastComponent?: Component): Component | undefined {
   const diff = result?.details?.diff;
   if (typeof diff !== "string" || !diff.trim()) return undefined;
   const last = lastComponent as any;
   if (last?.[EDIT_DIFF_COMPONENT] && last?.[EDIT_DIFF_SOURCE] === diff) return lastComponent;
-  const split = editDiffComponentForDiff(diff, theme);
+  const split = editDiffComponentForDiff(settings, diff, theme);
   return split ? toolShellComponent(split, theme, { bg: "toolSuccessBg", role: "joinedResult" }) : undefined;
 }
 
@@ -144,7 +143,7 @@ function editCallComponent(args: any, theme: any, context?: any): Component {
   return toolShellComponent({ render: (width: number) => [safeTruncateToWidth(line, width)], invalidate() {} }, theme, { role: "call", status: toolShellStatus(context) });
 }
 
-function makeQuietAdapter(tool: BuiltinName, label: string, summarize: (args: any) => string): SlotAdapter {
+function makeQuietAdapter(settings: ScopedSettings, tool: BuiltinName, label: string, summarize: (args: any) => string): SlotAdapter {
   const key = settingKey(tool);
   return {
     id: `quiet:${tool}`,
@@ -154,32 +153,33 @@ function makeQuietAdapter(tool: BuiltinName, label: string, summarize: (args: an
     settingDescription: `Use compact rendering for ${tool} tool calls.`,
     shell: "self",
     renderCall(args, theme, context) {
-      if (!adapterEnabled(key)) return safeCachedComponent(builtinRenderFallback(tool, "renderCall", [args, theme, context], toolLine(theme, tool, "", context)));
+      if (!adapterEnabled(settings, key)) return safeCachedComponent(builtinRenderFallback(tool, "renderCall", [args, theme, context], toolLine(theme, tool, "", context)));
       return safeCachedComponent(quietCall(tool, summarize)(args, theme, context));
     },
     renderResult(result, options, theme, context) {
-      return safeCachedComponent(quietResult(tool)(result, options, theme, context));
+      return safeCachedComponent(quietResult(settings, tool)(result, options, theme, context));
     },
   };
 }
 
-const BUILTIN_ADAPTERS: SlotAdapter[] = [
-  makeQuietAdapter("read", "Read", (args) => {
+function createBuiltinAdapters(settings: ScopedSettings): SlotAdapter[] {
+  return [
+  makeQuietAdapter(settings, "read", "Read", (args) => {
     const path = shortenPath(args.path, "");
     const start = typeof args.offset === "number" ? args.offset : undefined;
     const end = typeof args.limit === "number" ? (start ?? 1) + args.limit - 1 : undefined;
     const range = start || end ? `:${start ?? 1}${end ? `-${end}` : ""}` : "";
     return `${path}${range}`;
   }),
-  makeQuietAdapter("grep", "Grep", (args) => {
+  makeQuietAdapter(settings, "grep", "Grep", (args) => {
     const pattern = args.literal ? String(args.pattern ?? "") : `/${String(args.pattern ?? "")}/`;
     const bits = [pattern, `in ${shortenPath(args.path, ".")}`];
     if (args.glob) bits.push(String(args.glob));
     if (args.ignoreCase) bits.push("-i");
     return bits.join(" ");
   }),
-  makeQuietAdapter("find", "Find", (args) => `${String(args.pattern ?? "")} in ${shortenPath(args.path, ".")}`),
-  makeQuietAdapter("ls", "Ls", (args) => shortenPath(args.path, ".")),
+  makeQuietAdapter(settings, "find", "Find", (args) => `${String(args.pattern ?? "")} in ${shortenPath(args.path, ".")}`),
+  makeQuietAdapter(settings, "ls", "Ls", (args) => shortenPath(args.path, ".")),
   {
     id: "edit:split-result",
     tool: "edit",
@@ -188,16 +188,17 @@ const BUILTIN_ADAPTERS: SlotAdapter[] = [
     settingDescription: "Render edit results with Tool UI-owned split diffs using renderShell:self instead of patching Pi's built-in edit preview internals.",
     shell: "self",
     renderCall(args, theme, context) {
-      if (!adapterEnabled("editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderCall", [args, theme, context], toolLine(theme, "edit", shortenPath((args as any)?.path, ""), context)));
+      if (!adapterEnabled(settings, "editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderCall", [args, theme, context], toolLine(theme, "edit", shortenPath((args as any)?.path, ""), context)));
       return editCallComponent(args, theme, context);
     },
     renderResult(result, options, theme, context) {
-      if (!adapterEnabled("editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderResult", [result, options, theme, context], expandedOutput(result, theme)));
-      const renderedDiff = reusableEditResultComponent(result, theme, context?.lastComponent);
+      if (!adapterEnabled(settings, "editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderResult", [result, options, theme, context], expandedOutput(result, theme)));
+      const renderedDiff = reusableEditResultComponent(settings, result, theme, context?.lastComponent);
       return renderedDiff ?? safeCachedComponent(renderErrorIfCollapsed(result, theme));
     },
   },
-];
+  ];
+}
 
 function renderDisplayPipCall(toolName: string, display: any) {
   return (args: any, theme: any, context: any) => toolLine(theme, toolName, display.call?.(args) ?? "", context);
@@ -219,20 +220,20 @@ function renderDisplayPipResult(display: any) {
   };
 }
 
-function registerToolUiPipFinalizer(pi: ExtensionAPI): () => void {
+function registerToolUiPipFinalizer(pi: ExtensionAPI, settings: ScopedSettings): () => void {
   return registerPipToolFinalizer(pi, {
     id: "tool-ui",
     order: 100,
     finalize({ tool, metadata }) {
-      if (!COMPACT_PIP_TOOLS.has(tool.name) || !metadata?.display || !adapterEnabled(settingKey(tool.name))) return tool;
+      if (!COMPACT_PIP_TOOLS.has(tool.name) || !metadata?.display || !adapterEnabled(settings, settingKey(tool.name))) return tool;
       return { ...tool, renderShell: "self", renderCall: renderDisplayPipCall(tool.name, metadata.display), renderResult: renderDisplayPipResult(metadata.display) };
     },
   });
 }
 
-function registerToolUiSettings(pi: ExtensionAPI): void {
+function registerToolUiSettings(pi: ExtensionAPI, adapters: SlotAdapter[]): void {
   const dynamicSettings: Record<string, any> = {};
-  for (const adapter of BUILTIN_ADAPTERS) {
+  for (const adapter of adapters) {
     dynamicSettings[adapter.settingKey] = setting.boolean({ label: adapter.label, default: true, description: adapter.settingDescription, order: 10, requiresReload: true });
   }
   let order = 20;
@@ -242,7 +243,7 @@ function registerToolUiSettings(pi: ExtensionAPI): void {
     dynamicSettings[settingKey(registration.tool.name)] = setting.boolean({ label, default: true, description: `Use compact Tool UI rendering for ${label}.`, order: order++, requiresReload: true });
   }
 
-  registerSettingsSection({
+  registerSettingsSection(pi, {
     id: SETTINGS_ID,
     title: "Tool UI",
     description: "Unified rendering for tool calls and results.",
@@ -257,7 +258,7 @@ function registerToolUiSettings(pi: ExtensionAPI): void {
   });
 }
 
-function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter): void {
+function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter, settings: ScopedSettings): void {
   const builtin = getBuiltInTools(process.cwd())[adapter.tool];
   const tool: ToolDefinition<any, any, any> = {
     name: builtin.name,
@@ -270,7 +271,7 @@ function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter): void {
       return getBuiltInTools(ctx.cwd ?? process.cwd())[adapter.tool].execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
-  if (adapter.shell) tool.renderShell = adapterEnabled(adapter.settingKey) ? adapter.shell : "default";
+  if (adapter.shell) tool.renderShell = adapterEnabled(settings, adapter.settingKey) ? adapter.shell : "default";
   if (adapter.renderCall) tool.renderCall = adapter.renderCall;
   if (adapter.renderResult) tool.renderResult = adapter.renderResult;
   pi.registerTool(tool);
@@ -278,9 +279,11 @@ function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter): void {
 
 export default function (pi: ExtensionAPI) {
   const lifecycle = createLifecycle();
-  registerToolUiSettings(pi);
-  lifecycle.add(onPipToolRegistrationChange(pi, () => registerToolUiSettings(pi)));
-  lifecycle.add(registerToolUiPipFinalizer(pi));
+  const settings = settingsFor(pi, SETTINGS_ID);
+  const adapters = createBuiltinAdapters(settings);
+  registerToolUiSettings(pi, adapters);
+  lifecycle.add(onPipToolRegistrationChange(pi, () => registerToolUiSettings(pi, adapters)));
+  lifecycle.add(registerToolUiPipFinalizer(pi, settings));
   pi.on("session_shutdown", async () => { await lifecycle.disposeAll(); });
-  for (const adapter of BUILTIN_ADAPTERS) registerBuiltInAdapter(pi, adapter);
+  for (const adapter of adapters) registerBuiltInAdapter(pi, adapter, settings);
 }

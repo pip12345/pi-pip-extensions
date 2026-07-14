@@ -1,15 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { cleanupArtifacts } from "./src/artifacts.ts";
-import { registerWebSettings } from "./src/settings.ts";
+import { registerWebSettings, webSettings } from "./src/settings.ts";
 import { registerWebfetchTool } from "./src/webfetch.ts";
 import { registerWebsearchTool } from "./src/websearch.ts";
 
-registerWebSettings();
-
 export default function webfetchWebsearchExtension(pi: ExtensionAPI) {
-  pi.on?.("session_start", async (_event: any, ctx: any) => cleanupArtifacts(ctx));
-  registerWebfetchTool(pi);
-  registerWebsearchTool(pi);
+  registerWebSettings(pi);
+  const settings = webSettings(pi);
+  pi.on?.("session_start", async (_event: any, ctx: any) => cleanupArtifacts(ctx, settings));
+  registerWebfetchTool(pi, settings);
+  registerWebsearchTool(pi, settings);
 }
 
 export { executeWebFetch } from "./src/webfetch.ts";

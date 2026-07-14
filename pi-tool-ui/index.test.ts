@@ -6,7 +6,7 @@ import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
-import { flushPipTools, pipSettings, resetPipToolsForTests, visibleWidth } from "pip-common";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "pip-common";
 import { createMockPi, getRegisteredTool } from "pip-common/testing";
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
@@ -14,15 +14,6 @@ const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${n
 
 beforeEach(() => {
   initTheme("dark", false);
-  resetPipToolsForTests();
-  // Tests should not depend on the developer's persisted /pip-settings state.
-  toolUi(createMockPi() as any);
-  pipSettings.set("tool-ui.enabled", true);
-  pipSettings.set("tool-ui.read", true);
-  pipSettings.set("tool-ui.grep", true);
-  pipSettings.set("tool-ui.find", true);
-  pipSettings.set("tool-ui.ls", true);
-  pipSettings.set("tool-ui.editDiff", true);
   resetPipToolsForTests();
 });
 
@@ -40,8 +31,8 @@ describe("pi-tool-ui", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     expect([...pi.tools.keys()]).toEqual(["read", "grep", "find", "ls", "edit"]);
-    expect(pipSettings.definition("tool-ui")?.read.description).toContain("compact rendering");
-    expect(pipSettings.definition("tool-ui")?.editDiff.description).toContain("split diffs");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.read.description).toContain("compact rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.editDiff.description).toContain("split diffs");
   });
 
   it("renders compact read calls", () => {
@@ -127,9 +118,8 @@ describe("pi-tool-ui", () => {
 
   it("uses the default edit shell and renderer when edit diff is disabled", () => {
     resetPipToolsForTests();
-    pipSettings.set("tool-ui.enabled", true);
-    pipSettings.set("tool-ui.editDiff", false);
     const pi = createMockPi();
+    setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "tool-ui": { enabled: true, editDiff: false } }, { persistPath: false }));
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
     const rendered = edit.renderCall({ path: "a.ts", edits: [] }, markedTheme, { cwd: process.cwd() }).render(80).join("\n");
@@ -294,7 +284,7 @@ describe("pi-tool-ui", () => {
   it("falls back to colored unified edit diffs on narrow terminals", () => {
     const pi = createMockPi();
     toolUi(pi as any);
-    pipSettings.set("tool-ui.diffLayout", "auto");
+    getPipSettingsRegistry(pi).set("tool-ui.diffLayout", "auto");
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
     const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: true }, markedTheme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(80).join("\n");
@@ -314,7 +304,7 @@ describe("pi-tool-ui", () => {
     expect(write.renderShell).toBe("self");
     expect(write.renderCall({ todos: [{ text: "x" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_write: 1 todos");
     expect(write.renderResult({ content: [{ type: "text", text: "Set 1 todo" }], details: { todos: [{ id: 1, text: "x", status: "pending" }] } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-    expect(pipSettings.definition("tool-ui")?.todo_write.description).toContain("compact Tool UI rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_write.description).toContain("compact Tool UI rendering");
   });
 
   it("display metadata rendering is load-order safe before flush", () => {
@@ -326,7 +316,7 @@ describe("pi-tool-ui", () => {
 
     expect(update.renderShell).toBe("self");
     expect(update.renderCall({ updates: [{ match: "x", status: "done" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_update: 1 updates");
-    expect(pipSettings.definition("tool-ui")?.todo_update.description).toContain("compact Tool UI rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_update.description).toContain("compact Tool UI rendering");
   });
 
   it("display metadata rendering is re-applied when Tool UI loads after pip tools registered", () => {
@@ -368,6 +358,6 @@ describe("pi-tool-ui", () => {
     expect(tool.renderShell).toBe(before.renderShell);
     expect(tool.renderCall).toBe(before.renderCall);
     expect(tool.renderResult).toBe(before.renderResult);
-    expect(pipSettings.definition("tool-ui")?.subagent).toBeUndefined();
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.subagent).toBeUndefined();
   });
 });
