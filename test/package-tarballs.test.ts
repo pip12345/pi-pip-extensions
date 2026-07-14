@@ -15,8 +15,17 @@ const repoRoot = resolve(import.meta.dirname, "..");
 let tempRoot: string;
 let sourceRoot: string;
 let packDir: string;
-let installDir: string;
+let installsRoot: string;
+let combinedInstallDir: string;
 let featurePacks: PackResult[];
+
+const EXPECTED_STANDALONE_TOOLS: Record<string, string[]> = {
+  "pi-question": ["question"],
+  "pi-subagents": ["subagent"],
+  "pi-tiny-mcp": ["tiny-mcp"],
+  "pi-todo": ["todo_read", "todo_update", "todo_write"],
+  "pi-tool-ui": ["edit", "find", "grep", "ls", "read"],
+};
 
 function readPackageName(dir: string): string {
   return JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).name;
@@ -26,11 +35,11 @@ beforeAll(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "pip-package-test-"));
   sourceRoot = join(tempRoot, "source");
   packDir = join(tempRoot, "packs");
-  installDir = join(tempRoot, "install");
+  installsRoot = join(tempRoot, "installs");
+  combinedInstallDir = join(installsRoot, "combined");
   mkdirSync(sourceRoot, { recursive: true });
   mkdirSync(packDir, { recursive: true });
-  mkdirSync(installDir, { recursive: true });
-  writeFileSync(join(installDir, "package.json"), '{"private":true,"type":"module"}\n');
+  mkdirSync(installsRoot, { recursive: true });
 
   const featureDirs = readdirSync(repoRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith("pi-")).map((entry) => entry.name);
   for (const name of ["package.json", "package-lock.json", "pip-common", "scripts", ...featureDirs]) {
@@ -45,15 +54,21 @@ beforeAll(() => {
   const packs = JSON.parse(output) as PackResult[];
   featurePacks = packs.filter((pack) => pack.name !== "pip-common");
 
-  execFileSync("npm", [
-    "install",
-    "--ignore-scripts",
-    "--legacy-peer-deps",
-    "--no-package-lock",
-    "--no-audit",
-    "--no-fund",
-    ...featurePacks.map((pack) => join(packDir, pack.filename)),
-  ], { cwd: installDir, stdio: "pipe" });
+  const install = (dir: string, packs: PackResult[]) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), '{"private":true,"type":"module"}\n');
+    execFileSync("npm", [
+      "install",
+      "--ignore-scripts",
+      "--legacy-peer-deps",
+      "--no-package-lock",
+      "--no-audit",
+      "--no-fund",
+      ...packs.map((pack) => join(packDir, pack.filename)),
+    ], { cwd: dir, stdio: "pipe" });
+  };
+  for (const pack of featurePacks) install(join(installsRoot, pack.name), [pack]);
+  install(combinedInstallDir, featurePacks.filter((pack) => pack.name === "pi-context" || pack.name === "pi-todo"));
 }, 120_000);
 
 afterAll(() => {
@@ -71,7 +86,7 @@ describe("standalone package tarballs", () => {
 
   it("install and load through Pi package rules", async () => {
     for (const pack of featurePacks) {
-      const packageRoot = join(installDir, "node_modules", pack.name);
+      const packageRoot = join(installsRoot, pack.name, "node_modules", pack.name);
       expect(readPackageName(packageRoot)).toBe(pack.name);
 
       const projectRoot = join(tempRoot, "projects", pack.name);
@@ -94,11 +109,16 @@ describe("standalone package tarballs", () => {
         join(packageRoot, "node_modules", "pip-common", "index.ts"),
         join(packageRoot, "index.ts"),
       ]);
+      const featureExtension = result.extensions[1];
+      if (EXPECTED_STANDALONE_TOOLS[pack.name]) {
+        expect([...featureExtension.tools.keys()].sort(), `${pack.name} registers tools without sibling features`).toEqual(EXPECTED_STANDALONE_TOOLS[pack.name]);
+      }
+      if (pack.name === "pi-stats") expect(featureExtension.commands.has("stats"), "Stats loads without Subagents").toBe(true);
     }
   }, 120_000);
 
   it("bootstraps common once when multiple standalone features load together", async () => {
-    const packageRoots = ["pi-context", "pi-todo"].map((name) => join(installDir, "node_modules", name));
+    const packageRoots = ["pi-context", "pi-todo"].map((name) => join(combinedInstallDir, "node_modules", name));
     const projectRoot = join(tempRoot, "projects", "combined");
     const agentRoot = join(tempRoot, "agents", "combined");
     mkdirSync(projectRoot, { recursive: true });

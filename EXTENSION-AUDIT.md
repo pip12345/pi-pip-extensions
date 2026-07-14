@@ -10,6 +10,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Finding 27 was resolved by rendering Todo overflow counts in both directions and adding a regression test.
 - Finding 35 was resolved by deleting the unused capability, prompt, and status registries; the consumed footer registry remains supported.
 - Findings 6, 20, and 36 were resolved by producing self-contained standalone packages with bundled `pip-common`, explicit runtime allowlists, and isolated Pi-loader tests.
+- Removable feature boundaries are now enforced: production sibling imports and reverse `pip-common` dependencies fail tests, while each standalone feature loads with only Pi and its bundled common runtime.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 

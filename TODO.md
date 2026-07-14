@@ -42,15 +42,15 @@
 
 ## 3. Enforce removable feature boundaries
 
-- [ ] Add a static test that rejects production imports between sibling `pi-*` features.
-- [ ] Add a static test that rejects imports from `pip-common` into feature folders.
-- [ ] Add a smoke test that loads each feature with only Pi and `pip-common` available.
-- [ ] Test optional integrations with either side absent.
-- [ ] Verify custom tools still register when `pi-tool-ui` is absent.
-- [ ] Verify Tool UI still loads when Todo, Tiny MCP, Question, or Subagents is absent.
-- [ ] Verify Stats still loads when Subagents is absent.
-- [ ] Keep aggregate manifest entries literal and test that each referenced entrypoint exists.
-- [ ] Verify aggregate package filtering exposes each feature as a separate Pi resource.
+- [x] Add a static test that rejects production imports between sibling `pi-*` features.
+- [x] Add a static test that rejects imports from `pip-common` into feature folders.
+- [x] Add a smoke test that loads each feature with only Pi and `pip-common` available.
+- [x] Test optional integrations with either side absent.
+- [x] Verify custom tools still register when `pi-tool-ui` is absent.
+- [x] Verify Tool UI still loads when Todo, Tiny MCP, Question, or Subagents is absent.
+- [x] Verify Stats still loads when Subagents is absent.
+- [x] Keep aggregate manifest entries literal and test that each referenced entrypoint exists.
+- [x] Verify aggregate package filtering exposes each feature as a separate Pi resource.
 
 ## 4. Repair trust and filesystem boundaries
 
