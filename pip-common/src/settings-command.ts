@@ -28,9 +28,7 @@ function settingsEqual(a: Record<string, Record<string, unknown>>, b: Record<str
 }
 
 function applySettingsValues(registry: SettingsRegistry, values: Record<string, Record<string, unknown>>): void {
-  for (const row of registry.rows()) {
-    if (Object.hasOwn(values[row.section.id] ?? {}, row.key)) registry.set(row.path, values[row.section.id][row.key]);
-  }
+  registry.apply(values);
 }
 
 const MAX_VISIBLE_SETTING_ROWS = 30;
@@ -224,6 +222,11 @@ export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry =
         ctx.ui?.notify?.("/pip-settings requires interactive UI", "warning");
         return;
       }
+      const loadError = registry.loadError();
+      if (loadError) {
+        ctx.ui?.notify?.(`${loadError.message}. Fix or remove the malformed file before saving settings.`, "error");
+        return;
+      }
       const result = await (ctx.ui.custom as any)((tui: any, theme: any, _kb: any, done: (result?: PipSettingsResult) => void) => createPipSettingsComponent(tui, theme, done, registry), {
         overlay: true,
         overlayOptions: { anchor: "center", width: "80%", maxHeight: "85%", minWidth: 60 },
@@ -231,8 +234,12 @@ export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry =
       if (!result?.dirty) return;
       const choice = await ctx.ui.select?.("Save pip settings?", ["No, discard changes", "Yes, save changes"]);
       if (choice === "Yes, save changes") {
-        applySettingsValues(registry, result.values);
-        ctx.ui.notify?.("Saved pip settings", "info");
+        try {
+          applySettingsValues(registry, result.values);
+          ctx.ui.notify?.("Saved pip settings", "info");
+        } catch (error) {
+          ctx.ui.notify?.(`Failed to save pip settings: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
       } else {
         ctx.ui.notify?.("Discarded pip settings changes", "info");
       }

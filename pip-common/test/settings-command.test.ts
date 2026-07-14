@@ -176,6 +176,21 @@ describe("pip settings command", () => {
     }
   });
 
+  it("reports malformed persisted settings without opening the editor", async () => {
+    const registry = createSettingsRegistry({}, { persistPath: "/tmp/pip-settings.json", loadError: new Error("Cannot read malformed settings") });
+    registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
+    const pi = createMockPi();
+    registerPipSettingsCommand(pi as any, registry);
+    let opened = false;
+    const ctx = createMockCtx({ custom: async () => { opened = true; } });
+
+    await pi.commands.get("pip-settings").handler("", ctx);
+
+    expect(opened).toBe(false);
+    expect(ctx.ui.notifications.at(-1)).toMatchObject({ level: "error" });
+    expect(ctx.ui.notifications.at(-1).message).toContain("Cannot read malformed settings");
+  });
+
   it("confirms saving staged changes from the command", async () => {
     const registry = createSettingsRegistry({}, { persistPath: false });
     registry.registerSection({ id: "x", title: "X", settings: { enabled: setting.boolean(true) } });

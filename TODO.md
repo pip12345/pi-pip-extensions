@@ -65,13 +65,13 @@
 
 ## 5. Repair shared settings and runtime ownership
 
-- [ ] Preserve malformed settings files and report parse errors instead of replacing them with defaults.
-- [ ] Preserve settings sections belonging to unloaded, disabled, removed, or not-yet-loaded features.
-- [ ] Stop writing settings merely because a section registered.
-- [ ] Use atomic temporary-file plus rename writes.
-- [ ] Batch `/pip-settings` changes into one commit.
-- [ ] Enforce numeric `min` and `max` bounds in the central validator.
-- [ ] Validate defaults when settings sections register.
+- [x] Preserve malformed settings files and report parse errors instead of replacing them with defaults.
+- [x] Preserve settings sections belonging to unloaded, disabled, removed, or not-yet-loaded features.
+- [x] Stop writing settings merely because a section registered.
+- [x] Use atomic temporary-file plus rename writes.
+- [x] Batch `/pip-settings` changes into one commit.
+- [x] Enforce numeric `min` and `max` bounds in the central validator.
+- [x] Validate defaults when settings sections register.
 - [ ] Add shared setting-change notifications.
 - [ ] Make each extension apply live setting changes or explicitly report that reload is required.
 - [ ] Scope shared tool, settings, footer, and lifecycle state by Pi runtime rather than process-global module state.

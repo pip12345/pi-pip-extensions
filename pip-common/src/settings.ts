@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { pipPath } from "./paths.ts";
 
@@ -44,12 +44,16 @@ export type SettingsDefinition = Record<string, SettingDefinition>;
 export const DEFAULT_SETTINGS_PATH = pipPath("pip-settings.json");
 
 function baseValidate(definition: SettingDefinition, value: unknown): boolean {
-  if (definition.validate) return definition.validate(value);
-  if (definition.type === "boolean") return typeof value === "boolean";
-  if (definition.type === "string") return typeof value === "string";
-  if (definition.type === "number") return typeof value === "number" && Number.isFinite(value);
-  if (definition.type === "enum") return Boolean(definition.choices?.includes(value));
-  return false;
+  let valid = false;
+  if (definition.type === "boolean") valid = typeof value === "boolean";
+  else if (definition.type === "string") valid = typeof value === "string";
+  else if (definition.type === "number") {
+    valid = typeof value === "number" && Number.isFinite(value);
+    if (valid && definition.min !== undefined) valid = (value as number) >= definition.min;
+    if (valid && definition.max !== undefined) valid = (value as number) <= definition.max;
+  } else if (definition.type === "enum") valid = Boolean(definition.choices?.includes(value));
+  if (!valid) return false;
+  return definition.validate ? definition.validate(value) : true;
 }
 
 function labelFromKey(key: string): string {
@@ -64,19 +68,38 @@ function normalizeChoice<T>(choice: T, definition: SettingDefinition): SettingCh
   return { value: choice, label };
 }
 
-function readSettingsFile(path: string): Record<string, Record<string, unknown>> {
+export interface SettingsLoadResult {
+  values: Record<string, Record<string, unknown>>;
+  error?: Error;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function readSettingsFile(path: string): SettingsLoadResult {
+  if (!existsSync(path)) return { values: {} };
   try {
-    if (!existsSync(path)) return {};
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!isRecord(parsed) || Object.values(parsed).some((section) => !isRecord(section))) {
+      throw new Error("settings root and sections must be JSON objects");
+    }
+    return { values: parsed as Record<string, Record<string, unknown>> };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { values: {}, error: new Error(`Cannot read ${path}: ${message}`) };
   }
 }
 
-function writeSettingsFile(path: string, values: Record<string, Record<string, unknown>>): void {
+export function writeSettingsFile(path: string, values: Record<string, Record<string, unknown>>): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(values, null, 2)}\n`);
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(values, null, 2)}\n`);
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export const setting = {
@@ -119,19 +142,36 @@ export const setting = {
   },
 };
 
-export function createSettingsRegistry(initialValues: Record<string, Record<string, unknown>> = {}, options: { persistPath?: string | false } = {}) {
+export function createSettingsRegistry(
+  initialValues: Record<string, Record<string, unknown>> = {},
+  options: { persistPath?: string | false; loadError?: Error } = {},
+) {
   const definitions = new Map<string, SettingsDefinition>();
   const sections = new Map<string, SettingSection>();
-  const values = new Map<string, Record<string, unknown>>();
+  const values = new Map<string, Record<string, unknown>>(Object.entries(initialValues).map(([id, sectionValues]) => [id, { ...sectionValues }]));
   const persistPath = options.persistPath;
+  const initialLoadError = options.loadError;
 
-  function ensureSection(plugin: string) {
-    if (!values.has(plugin)) values.set(plugin, { ...(initialValues[plugin] ?? {}) });
-    return values.get(plugin)!;
+  function ensureSection(plugin: string, target = values) {
+    if (!target.has(plugin)) target.set(plugin, {});
+    return target.get(plugin)!;
   }
 
-  function persist() {
-    if (persistPath) writeSettingsFile(persistPath, registry.all());
+  function valuesObject(source = values): Record<string, Record<string, unknown>> {
+    return Object.fromEntries([...source.entries()].map(([id, sectionValues]) => [id, { ...sectionValues }]));
+  }
+
+  function assertWritable(): void {
+    if (persistPath && initialLoadError) throw initialLoadError;
+  }
+
+  function commitUpdates(updates: Array<{ plugin: string; key: string; value: unknown }>): void {
+    assertWritable();
+    const next = new Map<string, Record<string, unknown>>([...values.entries()].map(([id, sectionValues]) => [id, { ...sectionValues }]));
+    for (const update of updates) ensureSection(update.plugin, next)[update.key] = update.value;
+    if (persistPath) writeSettingsFile(persistPath, valuesObject(next));
+    values.clear();
+    for (const [id, sectionValues] of next) values.set(id, sectionValues);
   }
 
   const registry = {
@@ -139,13 +179,15 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
       this.registerSection({ id: plugin, title: labelFromKey(plugin), settings: definition });
     },
     registerSection(section: SettingSection) {
+      for (const [key, definition] of Object.entries(section.settings)) {
+        if (!baseValidate(definition, definition.default)) throw new Error(`Invalid default value for setting: ${section.id}.${key}`);
+      }
       sections.set(section.id, section);
       definitions.set(section.id, section.settings);
       const sectionValues = ensureSection(section.id);
-      for (const [key, settingDefinition] of Object.entries(section.settings)) {
-        if (!baseValidate(settingDefinition, sectionValues[key])) sectionValues[key] = settingDefinition.default;
+      for (const [key, definition] of Object.entries(section.settings)) {
+        if (!baseValidate(definition, sectionValues[key])) sectionValues[key] = definition.default;
       }
-      persist();
     },
     definition(plugin: string) {
       return definitions.get(plugin);
@@ -178,15 +220,27 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
       const definition = definitions.get(plugin)?.[key];
       if (!definition) throw new Error(`Unknown setting: ${path}`);
       if (!baseValidate(definition, value)) throw new Error(`Invalid value for setting: ${path}`);
-      ensureSection(plugin)[key] = value;
-      persist();
+      commitUpdates([{ plugin, key, value }]);
+    },
+    apply(nextValues: Record<string, Record<string, unknown>>) {
+      const updates: Array<{ plugin: string; key: string; value: unknown }> = [];
+      for (const [plugin, definition] of definitions) {
+        const sectionValues = nextValues[plugin];
+        if (!sectionValues) continue;
+        for (const [key, settingDefinition] of Object.entries(definition)) {
+          if (!Object.hasOwn(sectionValues, key)) continue;
+          const value = sectionValues[key];
+          if (!baseValidate(settingDefinition, value)) throw new Error(`Invalid value for setting: ${plugin}.${key}`);
+          updates.push({ plugin, key, value });
+        }
+      }
+      if (updates.length) commitUpdates(updates);
     },
     reset(path: string) {
       const [plugin, key] = path.split(".", 2);
       const definition = definitions.get(plugin)?.[key];
       if (!definition) throw new Error(`Unknown setting: ${path}`);
-      ensureSection(plugin)[key] = definition.default;
-      persist();
+      commitUpdates([{ plugin, key, value: definition.default }]);
     },
     choices(path: string): SettingChoice[] {
       const [plugin, key] = path.split(".", 2);
@@ -212,9 +266,10 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
       return row.definition.label ?? labelFromKey(row.key);
     },
     all() {
-      const out: Record<string, Record<string, unknown>> = {};
-      for (const plugin of definitions.keys()) out[plugin] = { ...ensureSection(plugin) };
-      return out;
+      return valuesObject();
+    },
+    loadError() {
+      return initialLoadError;
     },
   };
 
@@ -228,7 +283,8 @@ const GLOBAL_SETTINGS_KEY = Symbol.for("pip-common.settings-registry");
 export function getPipSettingsRegistry(): SettingsRegistry {
   const globalState = globalThis as any;
   if (!globalState[GLOBAL_SETTINGS_KEY]) {
-    globalState[GLOBAL_SETTINGS_KEY] = createSettingsRegistry(readSettingsFile(DEFAULT_SETTINGS_PATH), { persistPath: DEFAULT_SETTINGS_PATH });
+    const loaded = readSettingsFile(DEFAULT_SETTINGS_PATH);
+    globalState[GLOBAL_SETTINGS_KEY] = createSettingsRegistry(loaded.values, { persistPath: DEFAULT_SETTINGS_PATH, loadError: loaded.error });
   }
   return globalState[GLOBAL_SETTINGS_KEY];
 }

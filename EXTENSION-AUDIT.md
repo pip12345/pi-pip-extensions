@@ -14,6 +14,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Findings 3–4 were resolved by threading `ctx.isProjectTrusted()` into Tiny MCP config/manager creation and Subagent agent discovery.
 - Finding 5 was resolved with canonical path checks, nearest-existing-parent resolution for writes, and preflight blocking for search/list roots containing guarded descendants.
 - Finding 23 was resolved by removing derived context paths from persistence, validating restored records, quarantining malformed indexes, and deriving recursive deletion targets from managed roots.
+- Finding 9's corruption/data-loss paths and finding 32 were resolved with strict loads, unknown-section preservation, transactional atomic commits, batched UI saves, and central bound/default validation.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
@@ -111,25 +112,13 @@ Throw execution errors. Reserve normal returned results for domain-level non-err
 
 ---
 
-### 9. Shared settings registration can silently destroy or discard persisted settings
+### 9. Shared settings registration can silently destroy or discard persisted settings — **substantially resolved**
 
-**Evidence**
+Settings loads now distinguish missing files from malformed JSON/shape errors. A malformed file remains untouched, writes are refused, and `/pip-settings` reports the exact failure. Stored sections and keys are retained independently of loaded definitions, so unloaded features survive later saves.
 
-- `pip-common/src/settings.ts:67-74` converts every read/JSON parse error into an empty settings object.
-- `pip-common/src/settings.ts:141-148` persists on every section registration during extension loading.
-- `pip-common/src/settings.ts:216-220` serializes only sections currently present in the in-memory definition map. Sections belonging to an extension that is disabled, uninstalled, or not loaded yet are omitted.
-- `pip-common/src/settings.ts:77-79` writes directly to the target file rather than using atomic temp-file replacement.
-- `/pip-settings` applies every displayed row through a separate `registry.set()` call at `pip-common/src/settings-command.ts:32-35,235-238`, causing many complete synchronous rewrites for one save.
+Registration validates defaults and normalizes in-memory values without persisting. Intentional changes are validated into a cloned snapshot, written through temp-file plus rename, and only then committed in memory. `/pip-settings` applies its draft through one transactional write instead of one rewrite per row.
 
-**Impact**
-
-- A malformed or partially written `pip-settings.json` is silently replaced with defaults during startup.
-- Loading only a subset of the extensions removes persisted sections for every extension that is not currently loaded. During full-suite startup, the first registration temporarily writes a partial file; a crash midway can leave it truncated to only early-loaded sections.
-- Direct writes and multiple Pi processes create avoidable corruption/lost-update risk.
-
-**Recommended direction**
-
-On parse failure, preserve the file, report the error, and do not write. Preserve unknown/unloaded sections. Use atomic temp-file + rename writes and a single batch commit. Registration should not persist merely because definitions were loaded; persist only an intentional value change or a controlled migration.
+Concurrent independent Pi processes can still produce last-writer-wins updates because there is no cross-process merge/lock; atomic replacement prevents partial-file corruption but not semantic write races.
 
 ---
 
@@ -540,22 +529,9 @@ Use a short timeout, cache successful data with an expiry, and allow bounded ret
 
 ---
 
-### 32. Numeric settings declare bounds that the registry never enforces
+### 32. Numeric settings declare bounds that the registry never enforces — **resolved**
 
-**Evidence**
-
-- `SettingDefinition` exposes `min` and `max` at `pip-common/src/settings.ts:20-22`.
-- `baseValidate()` at `pip-common/src/settings.ts:39-46` accepts every finite number and ignores those bounds.
-- `registry.set()` relies only on `baseValidate()` at `:175-183`.
-- The TUI increment path clamps values, but manually edited files and programmatic callers do not.
-
-**Impact**
-
-Values such as negative `subagents.maxRunning`, negative TTLs, or nonsensical rendering/output limits remain “valid” and can disable behavior or destabilize cleanup. The schema metadata and runtime contract disagree.
-
-**Recommended direction**
-
-Enforce min/max in the central validator and validate defaults at registration. Add boundary tests for file-loaded and programmatic values, not only TUI stepping.
+The central validator now enforces finite numeric values plus declared `min`/`max` bounds for loaded and programmatic values. Section registration rejects invalid defaults before mutating registry definitions. Regression tests cover invalid persisted values, rejected out-of-range writes, accepted boundaries, and invalid defaults.
 
 ---
 
