@@ -5,8 +5,9 @@ import { Type } from "typebox";
 import { themeFg, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
 import { artifactPathLabel, artifactSummary, writeArtifact } from "./artifacts.ts";
 import { extractHtml, extractTitle, htmlToMarkdown, htmlToText, type HtmlExtractMode } from "./html.ts";
+import { normalizeWebUrl, requestWebUrl } from "./http.ts";
 import { rewriteGitHubUrl, type SiteFetchRewrite } from "./sites/github.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_CHARS, formatBytes, formatChars, MAX_TIMEOUT_SECONDS, signalWithTimeout, truncateContent } from "./limits.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_CHARS, formatBytes, formatChars, MAX_TIMEOUT_SECONDS, readResponseBytes, signalWithTimeout, truncateContent } from "./limits.ts";
 import type { MaxBytesSetting, MaxCharsSetting, TimeoutSetting, WebFetchFormat } from "./settings.ts";
 
 const AUTO_INLINE_MAX_CHARS = 8_000;
@@ -26,39 +27,10 @@ function bytesFromSetting(value: MaxBytesSetting): number {
 }
 
 function parseUrl(input: string, settings: ScopedSettings): URL {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new Error("Invalid URL.");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must start with http:// or https://.");
-  if (settings.get("upgradeHttp", false) && url.protocol === "http:") url.protocol = "https:";
-  if (settings.get("blockPrivateHosts", true) && isPrivateHost(url.hostname)) throw new Error("Blocked private or local host.");
-  return url;
-}
-
-function isPrivateHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
-  const v4 = parseIPv4(host);
-  if (!v4) return false;
-  const [a, b] = v4;
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return a >= 224;
-}
-
-function parseIPv4(host: string): [number, number, number, number] | undefined {
-  const parts = host.split(".");
-  if (parts.length !== 4) return undefined;
-  const nums = parts.map((part) => (/^\d+$/.test(part) ? Number(part) : NaN));
-  if (nums.some((num) => !Number.isInteger(num) || num < 0 || num > 255)) return undefined;
-  return nums as [number, number, number, number];
+  return normalizeWebUrl(input, {
+    upgradeHttp: settings.get("upgradeHttp", false),
+    blockPrivateHosts: settings.get("blockPrivateHosts", true),
+  });
 }
 
 function contentLooksText(contentType: string): boolean {
@@ -77,19 +49,31 @@ function acceptHeader(format: WebFetchFormat): string {
   return "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.8, */*;q=0.1";
 }
 
-async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewrite | undefined, format: WebFetchFormat, timeoutSeconds: number, settings: ScopedSettings, signal?: AbortSignal): Promise<{ response: Response; url: URL; rewrite?: SiteFetchRewrite }> {
+async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewrite | undefined, format: WebFetchFormat, timeoutSeconds: number, settings: ScopedSettings, signal?: AbortSignal): Promise<{ response: Response; url: URL; rewrite?: SiteFetchRewrite; dispose(): void }> {
   const headers = {
     "User-Agent": "pi-webfetch-websearch/0.1",
     Accept: acceptHeader(format),
     "Accept-Language": "en-US,en;q=0.9",
   };
-  const fetchUrl = async (url: URL) => fetch(url, { redirect: "follow", signal: signalWithTimeout(signal, timeoutSeconds * 1000), headers });
-  if (!rewrite) return { response: await fetchUrl(originalUrl), url: originalUrl };
+  const managedSignal = signalWithTimeout(signal, timeoutSeconds * 1000);
+  const requestOptions = {
+    headers,
+    signal: managedSignal.signal,
+    upgradeHttp: settings.get("upgradeHttp", false),
+    blockPrivateHosts: settings.get("blockPrivateHosts", true),
+  };
+  try {
+    if (!rewrite) return { ...(await requestWebUrl(originalUrl, requestOptions)), dispose: managedSignal.dispose };
 
-  const rewrittenUrl = parseUrl(rewrite.url, settings);
-  const response = await fetchUrl(rewrittenUrl);
-  if (response.ok) return { response, url: rewrittenUrl, rewrite };
-  return { response: await fetchUrl(originalUrl), url: originalUrl };
+    const rewrittenUrl = parseUrl(rewrite.url, settings);
+    const rewritten = await requestWebUrl(rewrittenUrl, requestOptions);
+    if (rewritten.response.ok) return { ...rewritten, rewrite, dispose: managedSignal.dispose };
+    await rewritten.response.body?.cancel();
+    return { ...(await requestWebUrl(originalUrl, requestOptions)), dispose: managedSignal.dispose };
+  } catch (error) {
+    managedSignal.dispose();
+    throw error;
+  }
 }
 
 function clampTimeout(seconds: unknown, settings: ScopedSettings): number {
@@ -118,77 +102,79 @@ export async function executeWebFetch(params: any, settings: ScopedSettings, sig
   const rewrite = extract === "all" ? undefined : rewriteGitHubUrl(url);
   const fetched = await fetchWithOptionalRewrite(url, rewrite, format, timeoutSeconds, settings, signal);
   const response = fetched.response;
-
-  if (!response.ok) throw new Error(`Fetch failed: HTTP ${response.status} ${response.statusText}`.trim());
-  const contentLength = response.headers.get("content-length");
-  if (contentLength && Number(contentLength) > maxBytes) throw new Error(`Response too large: ${formatBytes(Number(contentLength))} exceeds ${formatBytes(maxBytes)} limit.`);
-
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > maxBytes) throw new Error(`Response too large: ${formatBytes(arrayBuffer.byteLength)} exceeds ${formatBytes(maxBytes)} limit.`);
-
-  const contentType = response.headers.get("content-type") ?? "";
-  const rawBytes = arrayBuffer.byteLength;
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  let output: string;
-  let rawChars = 0;
-  let extractedChars = 0;
-  let title: string | undefined;
-
-  if (!contentLooksText(contentType)) {
-    output = `Fetched binary content (${contentType || "unknown content type"}, ${formatBytes(rawBytes)}). Binary body omitted to save context.`;
-  } else {
-    const body = decoder.decode(arrayBuffer);
-    rawChars = body.length;
-    title = contentLooksHtml(contentType) ? extractTitle(body) : undefined;
-    if (contentLooksHtml(contentType) && format === "markdown") {
-      const result = htmlToMarkdown(body, response.url || fetched.url.toString(), { extract });
-      output = result.text;
-      extractedChars = result.extractedChars;
-    } else if (contentLooksHtml(contentType) && format === "text") {
-      const result = htmlToText(body, { extract });
-      output = result.text;
-      extractedChars = result.extractedChars;
-    } else if (contentLooksHtml(contentType) && format === "html" && extract !== "all") {
-      output = extractHtml(body, extract).trim();
-      extractedChars = output.length;
-    } else {
-      output = body.trim();
-      extractedChars = body.length;
+  try {
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Fetch failed: HTTP ${response.status} ${response.statusText}`.trim());
     }
-  }
+    const responseBytes = await readResponseBytes(response, maxBytes);
 
-  if (title && format === "markdown" && output && !output.startsWith("#")) output = `# ${title}\n\n${output}`;
-  const commonDetails = {
-    url: url.toString(),
-    fetchedUrl: fetched.url.toString(),
-    finalUrl: response.url || fetched.url.toString(),
-    contentType,
-    rawBytes,
-    rawChars,
-    extractedChars,
-    fullOutputChars: output.length,
-    format,
-    extract,
-    title,
-    siteHandler: fetched.rewrite?.handler,
-    outputPolicy: "auto",
-  };
+    const contentType = response.headers.get("content-type") ?? "";
+    const rawBytes = responseBytes.byteLength;
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    let output: string;
+    let rawChars = 0;
+    let extractedChars = 0;
+    let title: string | undefined;
 
-  const explicitSmallLimit = typeof params.maxChars === "number" && Number.isFinite(params.maxChars) && params.maxChars > 0 && maxChars <= AUTO_INLINE_MAX_CHARS;
-  const shouldInline = output.length <= AUTO_INLINE_MAX_CHARS || explicitSmallLimit;
-  if (shouldInline) {
-    const truncated = truncateContent(output, maxChars);
-    return {
-      content: [{ type: "text" as const, text: truncated.text }],
-      details: { ...commonDetails, mode: "inline", outputChars: truncated.text.length, truncated: truncated.truncated },
+    if (!contentLooksText(contentType)) {
+      output = `Fetched binary content (${contentType || "unknown content type"}, ${formatBytes(rawBytes)}). Binary body omitted to save context.`;
+    } else {
+      const body = decoder.decode(responseBytes);
+      rawChars = body.length;
+      title = contentLooksHtml(contentType) ? extractTitle(body) : undefined;
+      if (contentLooksHtml(contentType) && format === "markdown") {
+        const result = htmlToMarkdown(body, fetched.url.toString(), { extract });
+        output = result.text;
+        extractedChars = result.extractedChars;
+      } else if (contentLooksHtml(contentType) && format === "text") {
+        const result = htmlToText(body, { extract });
+        output = result.text;
+        extractedChars = result.extractedChars;
+      } else if (contentLooksHtml(contentType) && format === "html" && extract !== "all") {
+        output = extractHtml(body, extract).trim();
+        extractedChars = output.length;
+      } else {
+        output = body.trim();
+        extractedChars = body.length;
+      }
+    }
+
+    if (title && format === "markdown" && output && !output.startsWith("#")) output = `# ${title}\n\n${output}`;
+    const commonDetails = {
+      url: url.toString(),
+      fetchedUrl: fetched.url.toString(),
+      finalUrl: fetched.url.toString(),
+      contentType,
+      rawBytes,
+      rawChars,
+      extractedChars,
+      fullOutputChars: output.length,
+      format,
+      extract,
+      title,
+      siteHandler: fetched.rewrite?.handler,
+      outputPolicy: "auto",
     };
-  }
 
-  const artifact = writeArtifact({ kind: "webfetch", text: output, ctx, settings, pi, url: url.toString(), title, format });
-  return {
-    content: [{ type: "text" as const, text: artifactSummary(artifact.record, artifact.outline) }],
-    details: { ...commonDetails, mode: "file", outputChars: artifact.record.chars, truncated: false, artifact: artifact.record, outline: artifact.outline },
-  };
+    const explicitSmallLimit = typeof params.maxChars === "number" && Number.isFinite(params.maxChars) && params.maxChars > 0 && maxChars <= AUTO_INLINE_MAX_CHARS;
+    const shouldInline = output.length <= AUTO_INLINE_MAX_CHARS || explicitSmallLimit;
+    if (shouldInline) {
+      const truncated = truncateContent(output, maxChars);
+      return {
+        content: [{ type: "text" as const, text: truncated.text }],
+        details: { ...commonDetails, mode: "inline", outputChars: truncated.text.length, truncated: truncated.truncated },
+      };
+    }
+
+    const artifact = writeArtifact({ kind: "webfetch", text: output, ctx, settings, pi, url: url.toString(), title, format });
+    return {
+      content: [{ type: "text" as const, text: artifactSummary(artifact.record, artifact.outline) }],
+      details: { ...commonDetails, mode: "file", outputChars: artifact.record.chars, truncated: false, artifact: artifact.record, outline: artifact.outline },
+    };
+  } finally {
+    fetched.dispose();
+  }
 }
 
 function hostLabel(raw: unknown): string {

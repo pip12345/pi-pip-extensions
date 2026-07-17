@@ -28,6 +28,8 @@ The tools decide whether to return content inline or save it to a session artifa
 - Larger cleaned pages are saved to an artifact file under `~/.pi/agent/pip/webfetch-websearch`.
 - If `maxChars` is explicitly small, `webfetch` treats that as a request for a small inline excerpt and truncates to that limit.
 - Artifact responses include the saved path and an outline when headings are available.
+- Bodies are streamed and cancelled at the configured 1–5 MB byte limit.
+- With private-host blocking enabled, every redirect is validated and DNS-approved public addresses are pinned to the connection.
 
 Current inline threshold: about 8k characters.
 
@@ -41,6 +43,7 @@ Use `read`, `grep`, or `bash`/`sed` against artifact paths for focused inspectio
 - Full formatted search context is saved to an artifact automatically.
 - Larger search contexts return the artifact summary/path instead of dumping all result context inline.
 - `contextMaxCharacters` bounds provider-side context when supported and also caps compact inline output.
+- Provider responses have an additional client-side streaming byte cap; malformed and JSON-RPC error responses trigger automatic fallback.
 
 This gives the model enough immediate context for small searches while preserving the full result set for follow-up inspection.
 

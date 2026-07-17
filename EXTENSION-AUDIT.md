@@ -124,23 +124,9 @@ Concurrent independent Pi processes can still produce last-writer-wins updates b
 
 ---
 
-### 10. Webfetch’s private-host block is not a complete SSRF boundary, and its byte cap is post-buffer
+### 10. Webfetch’s private-host block is not a complete SSRF boundary, and its byte cap is post-buffer — **resolved**
 
-**Evidence**
-
-- `pi-webfetch-websearch/src/webfetch.ts:35-60` checks only the URL hostname text and only a subset of private IP literals.
-- `pi-webfetch-websearch/src/webfetch.ts:86` uses `redirect: "follow"` without validating redirect destinations.
-- Hostnames are not DNS-resolved and checked against private/link-local ranges.
-- Private IPv6 ranges are not covered.
-- `pi-webfetch-websearch/src/webfetch.ts:123-127` calls `response.arrayBuffer()` and only then rejects a body exceeding `maxBytes` when `Content-Length` is absent or false.
-
-**Impact**
-
-A public URL can redirect to a local/private service, and a public hostname can resolve to a private address. A server using chunked transfer can force the entire response into memory before the configured 1–5 MB cap is enforced.
-
-**Recommended direction**
-
-Handle redirects manually and validate every hop. Resolve/check addresses (including IPv6 and IPv4-mapped IPv6) or use a dispatcher that rejects private targets at connection time. Stream the body and abort as soon as the byte limit is exceeded.
+Webfetch now uses a dependency-free HTTP(S) transport that validates every redirect, resolves each hostname once, rejects mixed/private/local IPv4 and IPv6 answers (including IPv4-mapped IPv6), and pins the approved address into the actual connection lookup to prevent a second DNS resolution. URL credentials and non-HTTP redirect targets are rejected. Response bodies share a streaming byte-cap reader that cancels as soon as the configured limit is crossed, including chunked bodies without `Content-Length`. Regression tests cover address classification, mixed DNS answers, redirect handling, and early chunked-response cancellation.
 
 ---
 
@@ -387,23 +373,9 @@ Use the shared overlay row-budget/selection-offset abstraction, render a bounded
 
 ---
 
-### 29. Websearch buffers unbounded provider responses and may suppress automatic fallback
+### 29. Websearch buffers unbounded provider responses and may suppress automatic fallback — **resolved**
 
-**Evidence**
-
-- `pi-webfetch-websearch/src/mcp.ts:39-62` reads the entire provider response with `response.text()` and has no byte limit.
-- `contextMaxCharacters` is only sent as a provider argument; it is not a client-side download bound.
-- `parseMcpResponse()` returns `undefined` for JSON-RPC errors, malformed payloads, or content without a text block.
-- `executeWebSearch()` at `pi-webfetch-websearch/src/websearch.ts:137-148` treats that as a successful provider response containing “No search results” and does not try the next provider.
-- `signalWithTimeout()` at `pi-webfetch-websearch/src/limits.ts:24-32` leaves parent abort listeners attached after successful requests until/unless the parent later aborts.
-
-**Impact**
-
-A faulty or hostile public endpoint can force a very large response into memory despite the tool’s bounded-output promise. In auto mode, a malformed/JSON-RPC-error response from Parallel can prevent the advertised Exa fallback. Repeated requests sharing a long-lived parent signal can accumulate abort listeners.
-
-**Recommended direction**
-
-Stream and cap response bytes before parsing, treat JSON-RPC errors/invalid payloads as provider failures eligible for fallback, and use a disposable combined-signal helper that removes listeners when each fetch settles.
+MCP responses now use the shared streaming byte-cap reader with a client-side limit derived from the requested context and capped at 1 MB. Malformed JSON, JSON-RPC errors, missing content, and missing text are provider failures, so automatic mode continues to the next provider. Timeout signals are explicitly disposed in `finally`, clearing timers and removing parent abort listeners after both success and failure. Tests cover oversized chunked responses, all invalid-response fallback cases, and signal cleanup.
 
 ---
 

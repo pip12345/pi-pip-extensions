@@ -31,6 +31,7 @@
     "src/artifacts.ts",
     "src/entities.ts",
     "src/html.ts",
+    "src/http.ts",
     "src/limits.ts",
     "src/mcp.ts",
     "src/settings.ts",

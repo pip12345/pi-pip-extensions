@@ -144,11 +144,11 @@
 - [ ] Add defensible Question schema count and text limits.
 - [ ] Fix Footer quota identity, account/base-URL cache keys, stale state, and request races.
 - [ ] Skip Footer quota work entirely when disabled or headless.
-- [ ] Stream and cap Webfetch response bodies before buffering.
-- [ ] Validate every Webfetch redirect and private-network destination.
-- [ ] Stream and cap Websearch provider responses before parsing.
-- [ ] Treat malformed and JSON-RPC error search responses as fallback-eligible failures.
-- [ ] Dispose combined-signal listeners when requests settle.
+- [x] Stream and cap Webfetch response bodies before buffering.
+- [x] Validate every Webfetch redirect and private-network destination.
+- [x] Stream and cap Websearch provider responses before parsing.
+- [x] Treat malformed and JSON-RPC error search responses as fallback-eligible failures.
+- [x] Dispose combined-signal listeners when requests settle.
 - [ ] Bound and clean up Undo/Redo raw-prompt persistence.
 
 ## Completion criteria

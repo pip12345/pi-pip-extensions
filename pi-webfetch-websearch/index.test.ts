@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import extension, { parseMcpResponse } from "./index.ts";
-import { formatChars } from "./src/limits.ts";
+import { isPrivateAddress, resolvePublicAddress } from "./src/http.ts";
+import { formatChars, signalWithTimeout } from "./src/limits.ts";
 import { formatWebSearchArtifact } from "./src/websearch-format.ts";
 import { rewriteGitHubUrl } from "./src/sites/github.ts";
 import { createSettingsRegistry, setPipSettingsRegistryForTests } from "../pip-common/index.ts";
@@ -42,6 +43,8 @@ function createWebPi(overrides: Record<string, unknown> = {}) {
   return pi;
 }
 
+afterEach(() => vi.useRealTimers());
+
 beforeEach(() => {
   delete process.env.PIP_WEBSEARCH_PROVIDER;
   delete process.env.OPENCODE_WEBSEARCH_PROVIDER;
@@ -54,6 +57,19 @@ describe("pi-webfetch-websearch", () => {
   it("formats small character counts without rounding to zero", () => {
     expect(formatChars(167)).toBe("167 chars");
     expect(formatChars(1680)).toBe("1.7K chars");
+  });
+
+  it("disposes timeout timers and parent abort listeners", () => {
+    vi.useFakeTimers();
+    const parent = new AbortController();
+    const remove = vi.spyOn(parent.signal, "removeEventListener");
+    const managed = signalWithTimeout(parent.signal, 1000);
+
+    managed.dispose();
+
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 
   it("formats JSON websearch results as markdown artifacts", () => {
@@ -95,6 +111,35 @@ describe("pi-webfetch-websearch", () => {
       const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/file.txt`, format: "text" });
       expect(result.content[0].text).toBe("hello from webfetch");
       expect(result.details.contentType).toContain("text/plain");
+    });
+  });
+
+  it("follows validated redirects and reports the final URL", async () => {
+    await withServer((req, res) => {
+      if (req.url === "/redirect") {
+        res.statusCode = 302;
+        res.setHeader("location", "/target");
+        res.end();
+        return;
+      }
+      res.setHeader("content-type", "text/plain");
+      res.end("redirect target");
+    }, async (base) => {
+      const pi = createWebPi();
+      const result = await exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/redirect`, format: "text" });
+      expect(result.content[0].text).toBe("redirect target");
+      expect(result.details.finalUrl).toBe(`${base}/target`);
+    });
+  });
+
+  it("rejects redirects to unsupported protocols", async () => {
+    await withServer((_req, res) => {
+      res.statusCode = 302;
+      res.setHeader("location", "file:///tmp/private");
+      res.end();
+    }, async (base) => {
+      const pi = createWebPi();
+      await expect(exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/redirect` })).rejects.toThrow(/http/);
     });
   });
 
@@ -248,6 +293,26 @@ describe("pi-webfetch-websearch", () => {
     });
   });
 
+  it("cancels a chunked response as soon as the byte limit is exceeded", async () => {
+    let sentChunks = 0;
+    await withServer((_req, res) => {
+      res.setHeader("content-type", "text/plain");
+      const interval = setInterval(() => {
+        sentChunks++;
+        res.write(Buffer.alloc(64 * 1024, 97));
+        if (sentChunks >= 100) {
+          clearInterval(interval);
+          res.end();
+        }
+      }, 1);
+      res.on("close", () => clearInterval(interval));
+    }, async (base) => {
+      const pi = createWebPi({ maxBytes: "1MB" });
+      await expect(exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/chunked` })).rejects.toThrow(/too large/i);
+      expect(sentChunks).toBeLessThan(100);
+    });
+  });
+
   it("omits binary response bodies", async () => {
     await withServer((_req, res) => {
       res.setHeader("content-type", "image/png");
@@ -263,6 +328,23 @@ describe("pi-webfetch-websearch", () => {
   it("blocks private hosts when configured", async () => {
     const pi = createWebPi({ blockPrivateHosts: true });
     await expect(exec(getRegisteredTool(pi, "webfetch"), { url: "http://127.0.0.1:1" })).rejects.toThrow(/private|local/i);
+  });
+
+  it("recognizes private IPv4, IPv6, and IPv4-mapped IPv6 addresses", () => {
+    for (const address of ["10.0.0.1", "127.0.0.1", "169.254.1.1", "::1", "fc00::1", "fe80::1", "::ffff:127.0.0.1"]) {
+      expect(isPrivateAddress(address), address).toBe(true);
+    }
+    expect(isPrivateAddress("8.8.8.8")).toBe(false);
+    expect(isPrivateAddress("2606:4700:4700::1111")).toBe(false);
+  });
+
+  it("rejects DNS names when any resolved address is private", async () => {
+    await expect(
+      resolvePublicAddress("rebind.example", async () => [
+        { address: "8.8.8.8", family: 4 },
+        { address: "::ffff:127.0.0.1", family: 6 },
+      ]),
+    ).rejects.toThrow(/private|local/i);
   });
 
   it("times out", async () => {
@@ -362,6 +444,58 @@ describe("pi-webfetch-websearch", () => {
       rmSync(dirname(dirname(result.details.artifact.path)), { recursive: true, force: true });
     });
   });
+
+  it("rejects and cancels an oversized chunked MCP response", async () => {
+    let sentChunks = 0;
+    await withServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        const interval = setInterval(() => {
+          sentChunks++;
+          res.write(Buffer.alloc(32 * 1024, 97));
+          if (sentChunks >= 100) {
+            clearInterval(interval);
+            res.end();
+          }
+        }, 1);
+        res.on("close", () => clearInterval(interval));
+      });
+    }, async (base) => {
+      process.env.PIP_WEBSEARCH_EXA_URL = `${base}/mcp`;
+      const pi = createWebPi();
+      await expect(exec(getRegisteredTool(pi, "websearch"), { query: "oversized", provider: "exa", contextMaxCharacters: 1000 })).rejects.toThrow(/too large/i);
+      expect(sentChunks).toBeLessThan(100);
+    });
+  });
+
+  for (const [label, parallelBody] of [
+    ["malformed payload", "not json"],
+    ["JSON-RPC error", JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "provider failed" } })],
+    ["missing text content", JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "image" }] } })],
+  ] as const) {
+    it(`auto websearch falls back after a ${label}`, async () => {
+      await withServer((req, res) => {
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          const payload = JSON.parse(body);
+          res.setHeader("content-type", "application/json");
+          if (payload.params.name === "web_search") res.end(parallelBody);
+          else res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "exa valid result" }] } }));
+        });
+      }, async (base) => {
+        process.env.PIP_WEBSEARCH_PARALLEL_URL = `${base}/parallel`;
+        process.env.PIP_WEBSEARCH_EXA_URL = `${base}/exa`;
+        const pi = createWebPi();
+        const result = await exec(getRegisteredTool(pi, "websearch"), { query: "fallback malformed" });
+        expect(result.details.provider).toBe("exa");
+        expect(result.details.fallbackUsed).toBe(true);
+        expect(result.content[0].text).toBe("exa valid result");
+        rmSync(dirname(dirname(result.details.artifact.path)), { recursive: true, force: true });
+      });
+    });
+  }
 
   it("auto websearch falls back from Parallel to Exa", async () => {
     await withServer((req, res) => {

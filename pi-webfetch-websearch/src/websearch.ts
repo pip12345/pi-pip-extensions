@@ -10,6 +10,7 @@ import type { SearchContextSetting, SearchResultsSetting, TimeoutSetting, WebSea
 import { formatWebSearchArtifact } from "./websearch-format.ts";
 
 const AUTO_INLINE_MAX_CHARS = 8_000;
+const MAX_MCP_RESPONSE_BYTES = 1024 * 1024;
 
 export type WebSearchProvider = "exa" | "parallel";
 type WebSearchProviderParam = WebSearchProvider | "auto";
@@ -122,6 +123,7 @@ export async function executeWebSearch(params: any, settings: ScopedSettings, si
   const numResults = clampResults(params.numResults, settings);
   const contextMaxCharacters = clampContext(params.contextMaxCharacters, settings);
   const timeoutMs = clampTimeout(params.timeout, settings) * 1000;
+  const maxResponseBytes = Math.min(MAX_MCP_RESPONSE_BYTES, Math.max(256 * 1024, contextMaxCharacters * 6 + 64 * 1024));
   const errors: string[] = [];
 
   let selectedProvider: WebSearchProvider | undefined;
@@ -129,9 +131,9 @@ export async function executeWebSearch(params: any, settings: ScopedSettings, si
   for (const provider of attempts) {
     const call = buildProviderCall(provider, { ...params, query }, ctx, numResults, contextMaxCharacters);
     try {
-      const result = await callMcpTool({ ...call, timeoutMs, signal });
+      const result = await callMcpTool({ ...call, timeoutMs, maxResponseBytes, signal });
       selectedProvider = provider;
-      text = result?.trim() || "No search results found. Please try a different query.";
+      text = result.trim();
       break;
     } catch (error: any) {
       errors.push(`${provider}: ${error?.message ?? String(error)}`);
@@ -147,6 +149,7 @@ export async function executeWebSearch(params: any, settings: ScopedSettings, si
     fallbackUsed: selectedProvider !== attempts[0],
     numResults,
     contextMaxCharacters,
+    responseByteLimit: maxResponseBytes,
     fullOutputChars: text.length,
     outputPolicy: "auto",
   };
