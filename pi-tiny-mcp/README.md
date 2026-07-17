@@ -96,7 +96,7 @@ tiny-mcp({ action: "add", server: "scratch", config: "{\"type\":\"http\",\"url\"
 
 The `config` value is a JSON string containing one MCP server object. Runtime servers live only in the current pi process and disappear on restart/reset.
 
-The tool metadata tells the model to search/describe before calling unfamiliar tools, to connect servers when no tools are cached, and to edit explicit config files directly when asked to configure MCP. Oversized output is saved under the managed PiP artifact directory and returned with its path; MCP failures are reported as tool errors.
+The tool metadata tells the model to search/describe before calling unfamiliar tools, to connect servers when no tools are cached, and to edit explicit config files directly when asked to configure MCP. Oversized output is saved under the managed PiP artifact directory and returned with its path; MCP failures are reported as tool errors. HTTP JSON/SSE messages and stdio JSON lines are capped at 5 MB before parsing, while retained stderr lines are independently bounded.
 
 ## Settings
 

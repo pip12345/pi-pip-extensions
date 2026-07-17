@@ -41,6 +41,7 @@
     "src/state.ts",
     "src/stdio.ts",
     "src/transport.ts",
+    "src/transport-limits.ts",
     "src/types.ts",
     "README.md"
   ],

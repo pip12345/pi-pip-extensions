@@ -43,9 +43,11 @@ function parsePayload(payload: string): string | undefined {
     if (data?.error) throw new Error(`JSON-RPC error: ${errorMessage(data.error)}`);
     const content = data?.result?.content;
     if (!Array.isArray(content)) return undefined;
-    return content.find((item: McpContentItem) => item?.type === "text" && typeof item.text === "string" && item.text.trim())?.text;
+    const text = content.find((item: McpContentItem) => item?.type === "text" && typeof item.text === "string" && item.text.trim())?.text;
+    if (data?.result?.isError) throw new Error(`MCP tool failed: ${(text?.trim() || "provider returned an error").slice(0, 200)}`);
+    return text;
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("JSON-RPC error:")) throw error;
+    if (error instanceof Error && /^(?:JSON-RPC error|MCP tool failed):/.test(error.message)) throw error;
     return undefined;
   }
 }

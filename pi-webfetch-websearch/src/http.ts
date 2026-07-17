@@ -106,13 +106,37 @@ export function normalizeWebUrl(input: string | URL, options: Pick<WebRequestOpt
   return url;
 }
 
-export async function resolvePublicAddress(hostname: string, resolver: AddressResolver = defaultResolver): Promise<ResolvedAddress> {
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error("Request aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+async function waitForResolution<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw abortError(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(abortError(signal));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => { cleanup(); resolve(value); },
+      (error) => { cleanup(); reject(error); },
+    );
+  });
+}
+
+export async function resolvePublicAddress(hostname: string, resolver: AddressResolver = defaultResolver, signal?: AbortSignal): Promise<ResolvedAddress> {
   const literal = hostname.replace(/^\[|\]$/g, "");
   if (isIP(literal)) {
     if (isPrivateAddress(literal)) throw new Error("Blocked private or local host.");
     return { address: literal, family: isIP(literal) };
   }
-  const addresses = await resolver(literal);
+  const addresses = await waitForResolution(resolver(literal), signal);
   if (!addresses.length) throw new Error(`No addresses found for ${literal}.`);
   if (addresses.some(({ address }) => isPrivateAddress(address))) throw new Error("Blocked private or local host.");
   return addresses[0];
@@ -129,7 +153,7 @@ function responseHeaders(message: import("node:http").IncomingMessage): Headers 
 }
 
 async function requestOnce(url: URL, options: WebRequestOptions): Promise<Response> {
-  const pinned = options.blockPrivateHosts ? await resolvePublicAddress(url.hostname, options.resolver) : undefined;
+  const pinned = options.blockPrivateHosts ? await resolvePublicAddress(url.hostname, options.resolver, options.signal) : undefined;
   return new Promise<Response>((resolve, reject) => {
     const request = url.protocol === "https:" ? httpsRequest : httpRequest;
     const req = request(url, {

@@ -347,6 +347,13 @@ describe("pi-webfetch-websearch", () => {
     ).rejects.toThrow(/private|local/i);
   });
 
+  it("cancels while DNS resolution is still pending", async () => {
+    const controller = new AbortController();
+    const pending = resolvePublicAddress("slow.example", async () => new Promise(() => undefined), controller.signal);
+    controller.abort(new Error("cancelled during DNS"));
+    await expect(pending).rejects.toThrow("cancelled during DNS");
+  });
+
   it("times out", async () => {
     await withServer((_req, _res) => {
       // Leave the response open until the client timeout aborts.
@@ -369,10 +376,11 @@ describe("pi-webfetch-websearch", () => {
     expect((tool.parameters as any).properties.mode).toBeUndefined();
   });
 
-  it("parses plain and SSE MCP responses", () => {
+  it("parses plain and SSE MCP responses while rejecting tool-level errors", () => {
     const payload = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "search results" }] } });
     expect(parseMcpResponse(payload)).toBe("search results");
     expect(parseMcpResponse(`event: message\ndata: [DONE]\ndata: ${payload}\n\n`)).toBe("search results");
+    expect(() => parseMcpResponse(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "provider failed" }] } }))).toThrow(/MCP tool failed: provider failed/);
   });
 
   it("calls Exa websearch and returns bounded output", async () => {
@@ -473,6 +481,7 @@ describe("pi-webfetch-websearch", () => {
     ["malformed payload", "not json"],
     ["JSON-RPC error", JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "provider failed" } })],
     ["missing text content", JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "image" }] } })],
+    ["tool-level MCP error", JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "provider failed" }] } })],
   ] as const) {
     it(`auto websearch falls back after a ${label}`, async () => {
       await withServer((req, res) => {

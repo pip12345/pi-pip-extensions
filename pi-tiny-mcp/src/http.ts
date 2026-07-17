@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { JsonRpcId, JsonRpcMessage } from "./jsonrpc.ts";
 import type { TinyMcpServerConfig } from "./types.ts";
+import { MAX_MCP_ERROR_BODY_BYTES, MAX_MCP_MESSAGE_BYTES, readBoundedResponseText } from "./transport-limits.ts";
 
 interface SseEvent {
   event?: string;
@@ -122,7 +123,7 @@ export class HttpTransport extends EventEmitter {
       return;
     }
     if (isJsonContentType(contentType)) {
-      const payload = await response.json();
+      const payload = JSON.parse(await readBoundedResponseText(response, MAX_MCP_MESSAGE_BYTES));
       this.emitJsonPayload(payload);
       return;
     }
@@ -261,14 +262,23 @@ async function readSseStream(
   let id: string | undefined;
   let retry: number | undefined;
   let dataLines: string[] = [];
+  let eventBytes = 0;
+
+  const assertBounded = (bytes: number) => {
+    if (bytes > MAX_MCP_MESSAGE_BYTES) throw new Error(`HTTP MCP SSE event exceeded ${MAX_MCP_MESSAGE_BYTES} byte limit`);
+  };
 
   const dispatch = async (): Promise<boolean> => {
-    if (!eventName && id === undefined && retry === undefined && dataLines.length === 0) return false;
+    if (!eventName && id === undefined && retry === undefined && dataLines.length === 0) {
+      eventBytes = 0;
+      return false;
+    }
     const event: SseEvent = { event: eventName, data: dataLines.join("\n"), id, retry };
     eventName = undefined;
     id = undefined;
     retry = undefined;
     dataLines = [];
+    eventBytes = 0;
     const result = await onEvent(event);
     if (result === "stop") {
       await reader.cancel().catch(() => undefined);
@@ -280,6 +290,8 @@ async function readSseStream(
   const processLine = async (line: string): Promise<boolean> => {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     if (line === "") return dispatch();
+    eventBytes += Buffer.byteLength(line, "utf8") + 1;
+    assertBounded(eventBytes);
     if (line.startsWith(":")) return false;
     const colon = line.indexOf(":");
     const field = colon === -1 ? line : line.slice(0, colon);
@@ -306,9 +318,11 @@ async function readSseStream(
       buffer = buffer.slice(newline + 1);
       if (await processLine(line)) return;
     }
+    assertBounded(eventBytes + Buffer.byteLength(buffer, "utf8"));
   }
 
   buffer += decoder.decode();
+  assertBounded(eventBytes + Buffer.byteLength(buffer, "utf8"));
   if (buffer) await processLine(buffer);
   await dispatch();
 }
@@ -354,7 +368,7 @@ function isJsonContentType(contentType: string): boolean {
 
 async function safeText(response: Response): Promise<string> {
   try {
-    return await response.text();
+    return await readBoundedResponseText(response, MAX_MCP_ERROR_BODY_BYTES, "HTTP MCP error response");
   } catch {
     return "";
   }

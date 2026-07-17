@@ -9,6 +9,7 @@ import { readState, writeState } from "./src/state.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
 import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type SettingsRegistry } from "../pip-common/index.ts";
 import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
+import { readBoundedResponseText } from "./src/transport-limits.ts";
 
 const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fixtures", name);
 
@@ -184,6 +185,20 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ search: "echo" }, dir)).content[0].text).toContain("basic_echo");
     expect((await executeTinyMcp({ describe: "basic_echo" }, dir)).content[0].text).toContain("Original: echo");
     expect((await executeTinyMcp({ tool: "basic_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
+  });
+
+  it("rejects HTTP response bodies before parsing beyond the transport limit", async () => {
+    const declared = new Response("ignored", { headers: { "content-length": "20" } });
+    await expect(readBoundedResponseText(declared, 10)).rejects.toThrow(/exceeded 10 byte limit/);
+
+    const streamed = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("123456"));
+        controller.enqueue(new TextEncoder().encode("789012"));
+        controller.close();
+      },
+    }));
+    await expect(readBoundedResponseText(streamed, 10)).rejects.toThrow(/exceeded 10 byte limit/);
   });
 
   it("throws MCP tool failures and stores oversized full output in a bounded artifact", async () => {
