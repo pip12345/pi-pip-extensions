@@ -1,4 +1,4 @@
-import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent, type ScopedSettings } from "pip-common";
+import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent, type ScopedSettings } from "../pip-common/index.ts";
 import { EXT, SUMMARY_CUSTOM_TYPE, type Clipboard, type Entry, type FilterMode, type SnapshotToolResults, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
 
 export function clone<T>(value: T): T {

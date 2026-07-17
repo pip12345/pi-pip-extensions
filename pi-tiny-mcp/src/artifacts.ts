@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pipPath } from "pip-common";
+import { pipPath } from "../../pip-common/index.ts";
 
 function safePart(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 20);

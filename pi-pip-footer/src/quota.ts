@@ -1,4 +1,4 @@
-import { formatResetTime, getWindowLabel, type QuotaSnapshot as UsageSnapshot, type QuotaWindow as RateWindow } from "pip-common";
+import { formatResetTime, getWindowLabel, type QuotaSnapshot as UsageSnapshot, type QuotaWindow as RateWindow } from "../../pip-common/index.ts";
 import { fitSegment, padEndVisible, renderBar, wrapSegments } from "./layout.ts";
 
 export const usageCache = new Map<string, UsageSnapshot>();

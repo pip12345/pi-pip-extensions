@@ -1,5 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
-import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi, type ScopedSettings } from "pip-common";
+import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi, type ScopedSettings } from "../../pip-common/index.ts";
 import type { SubagentEvent, SubagentSnapshot } from "./types.ts";
 import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_STATUS_CHARS } from "./bounds.ts";
 

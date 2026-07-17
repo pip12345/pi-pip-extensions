@@ -5,8 +5,8 @@ import { formatAnsweredOutput } from "./src/format.ts";
 import { createQuestionState, questionSaveCustom, questionSelect, questionSetTab, questionStoreCustom, questionSubmit } from "./src/state.ts";
 import { validateQuestions, type QuestionInfo } from "./src/schema.ts";
 import { __test as uiTest } from "./src/ui.ts";
-import { resetPipToolsForTests, flushPipTools, visibleWidth } from "pip-common";
-import { createMockPi, getRegisteredTool } from "pip-common/testing";
+import { resetPipToolsForTests, flushPipTools, visibleWidth } from "../pip-common/index.ts";
+import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const questions: QuestionInfo[] = [
   {

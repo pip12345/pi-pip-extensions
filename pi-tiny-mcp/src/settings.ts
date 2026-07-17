@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSettingsSection, setting, settingsFor } from "pip-common";
+import { registerSettingsSection, setting, settingsFor } from "../../pip-common/index.ts";
 
 export const SETTINGS_ID = "tiny-mcp";
 

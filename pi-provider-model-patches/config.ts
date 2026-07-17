@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { pipPath } from "pip-common";
+import { pipPath } from "../pip-common/index.ts";
 import type { PatchModelDefinition, ProviderModelPatch, UserModelPatchesFile } from "./types.ts";
 
 export const USER_PATCHES_PATH = pipPath("model-patches.json");

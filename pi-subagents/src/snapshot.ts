@@ -1,4 +1,4 @@
-import { emptyUsage } from "pip-common";
+import { emptyUsage } from "../../pip-common/index.ts";
 import type { SubagentRun, SubagentSnapshot } from "./types.ts";
 import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_EVENTS, MAX_SUBAGENT_EVENT_TEXT_CHARS, MAX_SUBAGENT_PERSISTED_PROMPT_CHARS } from "./bounds.ts";
 

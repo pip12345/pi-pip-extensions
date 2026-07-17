@@ -6,8 +6,8 @@ import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
-import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "pip-common";
-import { createMockPi, getRegisteredTool } from "pip-common/testing";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "../pip-common/index.ts";
+import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
 const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${name}>`, bg: (name: string, text: string) => `<bg:${name}>${text}</bg:${name}>`, bold: (text: string) => text } as any;

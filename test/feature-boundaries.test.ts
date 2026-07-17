@@ -71,13 +71,20 @@ describe("feature module boundaries", () => {
     expect(violations).toEqual([]);
   });
 
-  it("uses the packaged pip-common entrypoint instead of source-relative imports", () => {
+  it("resolves shared source imports directly to pip-common", () => {
     const violations: string[] = [];
+    const allowedTargets = new Set([
+      resolve(repoRoot, "pip-common", "index.ts"),
+      resolve(repoRoot, "pip-common", "testing.ts"),
+    ]);
     for (const feature of featureNames) {
       for (const file of productionTypeScriptFiles(resolve(repoRoot, feature))) {
         for (const specifier of moduleSpecifiers(readFileSync(file, "utf8"))) {
-          if (specifier.includes("pip-common") && specifier !== "pip-common" && specifier !== "pip-common/testing") {
-            violations.push(`${relative(repoRoot, file)} imports ${specifier}`);
+          if (specifier === "pip-common" || specifier === "pip-common/testing") {
+            violations.push(`${relative(repoRoot, file)} requires an installed workspace package via ${specifier}`);
+          } else if (specifier.includes("pip-common")) {
+            const target = resolve(dirname(file), specifier);
+            if (!allowedTargets.has(target)) violations.push(`${relative(repoRoot, file)} imports ${specifier}`);
           }
         }
       }

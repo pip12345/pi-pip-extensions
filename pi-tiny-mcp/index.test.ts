@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import tinyMcp, { executeTinyMcp as executeWithRuntime, loadTinyMcpConfig, TinyMcpRuntime } from "./index.ts";
 import { readState, writeState } from "./src/state.ts";
-import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type SettingsRegistry } from "pip-common";
+import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type SettingsRegistry } from "../pip-common/index.ts";
 import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
 
 const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fixtures", name);

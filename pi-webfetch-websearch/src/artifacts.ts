@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { pipPath, truncateToWidth, type ScopedSettings } from "pip-common";
+import { pipPath, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
 import { formatChars } from "./limits.ts";
 
 export const ARTIFACT_CUSTOM_TYPE = "pip.webfetchWebsearch.artifact";

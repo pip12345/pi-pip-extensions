@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { themeFg, truncateToWidth, type ScopedSettings } from "pip-common";
+import { themeFg, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
 import { artifactPathLabel, artifactSummary, writeArtifact } from "./artifacts.ts";
 import { extractHtml, extractTitle, htmlToMarkdown, htmlToText, type HtmlExtractMode } from "./html.ts";
 import { rewriteGitHubUrl, type SiteFetchRewrite } from "./sites/github.ts";

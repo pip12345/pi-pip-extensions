@@ -1,4 +1,4 @@
-import { formatTokenCount } from "pip-common";
+import { formatTokenCount } from "../../../pip-common/index.ts";
 
 export function renderTokenMetric(label: string, value: number, changed: boolean, theme: any, suffix = ""): string {
   const labelColor = (s: string) => theme.fg("dim", s);

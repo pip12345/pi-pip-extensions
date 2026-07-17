@@ -271,7 +271,7 @@ OAuth HTTP and validation errors now omit response bodies and values rather than
 
 ### 20. Every standalone extension package has an unresolved/unbundled `pip-common` dependency — **resolved**
 
-Every feature now imports `pip-common` by package name, declares it in `bundledDependencies`, and loads `node_modules/pip-common/index.ts` before its own entrypoint. Because npm hoists workspace dependencies, `scripts/pack-workspaces.mjs` stages the common package into each feature before packing and cleans the staging directories afterward.
+Feature source imports resolve directly to the repository's `pip-common`, so aggregate loading does not depend on npm workspace links. Each feature still declares `pip-common` in `bundledDependencies` and loads `node_modules/pip-common/index.ts` before its own entrypoint. `scripts/pack-workspaces.mjs` builds isolated package staging trees, rewrites only the staged shared imports to the package name, and bundles the common runtime without mutating the source checkout.
 
 The common settings bootstrap deduplicates by the shared `session_start` context when multiple physical standalone copies load in one runtime. Pip-tool broker states now register shutdown cleanup through their owning feature API rather than relying on the unrelated common API wrapper.
 

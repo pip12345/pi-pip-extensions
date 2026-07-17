@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { addUsage, emptyUsage, normalizeUsage, pipPath } from "pip-common";
+import { addUsage, emptyUsage, normalizeUsage, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { parseModelRef } from "./model-ref.ts";

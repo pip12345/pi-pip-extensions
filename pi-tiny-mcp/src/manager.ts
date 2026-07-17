@@ -1,4 +1,4 @@
-import type { ScopedSettings } from "pip-common";
+import type { ScopedSettings } from "../../pip-common/index.ts";
 import { loadTinyMcpConfig } from "./config.ts";
 import { readCache, updateCachedTools } from "./cache.ts";
 import type { StderrMode, TimeoutSetting, ToolPrefix } from "./settings.ts";

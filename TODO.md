@@ -30,7 +30,7 @@
 - [x] Define `pip-common` as the shared runtime package with a stable package identity.
 - [x] Bundle `pip-common` into every standalone feature package according to Pi package rules.
 - [x] Ensure a standalone feature loads the required `pip-common` extension bootstrap.
-- [x] Replace source-relative `pip-common` imports with package imports that resolve in both workspace development and installed packages.
+- [x] Keep aggregate source imports independent of installed workspace links while emitting standalone packages that resolve bundled `pip-common` imports.
 - [x] Make the shared bootstrap idempotent so aggregate and standalone loading cannot double-register commands or lifecycle handlers.
 - [x] Correct every feature package's `files` allowlist.
 - [x] Include all Tree Edit runtime source files in its tarball.

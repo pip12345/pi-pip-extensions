@@ -2,7 +2,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "pip-common";
+import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "../pip-common/index.ts";
 import { safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 

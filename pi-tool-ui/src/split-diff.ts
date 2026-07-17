@@ -1,4 +1,4 @@
-import { padAnsi, safeTruncateToWidth, themeFg, visibleWidth } from "pip-common";
+import { padAnsi, safeTruncateToWidth, themeFg, visibleWidth } from "../../pip-common/index.ts";
 
 type Prefix = " " | "+" | "-";
 

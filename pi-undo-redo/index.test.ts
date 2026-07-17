@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import undoRedo, { __test } from "./index.ts";
-import { createMockCtx, createMockPi, emitEvent, runCommand } from "pip-common/testing";
-import { parseSessionFile, serializeSessionFile, type SessionEntry } from "pip-common";
+import { createMockCtx, createMockPi, emitEvent, runCommand } from "../pip-common/testing.ts";
+import { parseSessionFile, serializeSessionFile, type SessionEntry } from "../pip-common/index.ts";
 
 function user(id: string, parentId: string | null, text: string): SessionEntry {
   return { type: "message", id, parentId, message: { role: "user", content: [{ type: "text", text }] } };

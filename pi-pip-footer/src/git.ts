@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename } from "node:path";
-import type { ScopedSettings } from "pip-common";
+import type { ScopedSettings } from "../../pip-common/index.ts";
 
 export interface GitState {
   branch: string | null;

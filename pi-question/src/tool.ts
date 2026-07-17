@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerPipTool } from "pip-common";
+import { registerPipTool } from "../../pip-common/index.ts";
 import { QuestionParams, normalizeQuestions, validateQuestions, type QuestionResultDetails } from "./schema.ts";
 import { askQuestions } from "./ui.ts";
 import { formatAnsweredOutput, formatRejectedOutput } from "./format.ts";

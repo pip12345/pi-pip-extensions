@@ -1,4 +1,4 @@
-import { renderRegisteredFooterItems, stripAnsi } from "pip-common";
+import { renderRegisteredFooterItems, stripAnsi } from "../../pip-common/index.ts";
 import { buildSessionContext } from "./session-context.ts";
 
 export function renderModelLine(ctx: any, theme: any): string {

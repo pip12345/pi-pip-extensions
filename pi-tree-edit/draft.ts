@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { generateSummary } from "@earendil-works/pi-coding-agent";
-import { setTextContent } from "pip-common";
+import { setTextContent } from "../pip-common/index.ts";
 import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header, type SummarySnapshotPolicy } from "./types.ts";
 import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entryMap, estimateContextTokensForEntry, flattenEntries, isNormalMessageEntry, messagesFromEntries, nearestExistingParent, pathBetween, pathToRoot, snapshotEntries, textFromContent } from "./tree.ts";
 

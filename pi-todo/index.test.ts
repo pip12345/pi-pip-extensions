@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import todoExtension, { __test, renderCompactTodos, stateFromBranch } from "./index.ts";
-import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "pip-common/testing";
-import { flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, stripAnsi } from "pip-common";
+import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
+import { flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, stripAnsi } from "../pip-common/index.ts";
 
 const theme = {
   fg: (_name: string, text: string) => text,

@@ -1,4 +1,4 @@
-import { clampPercent, truncateToWidth, visibleWidth } from "pip-common";
+import { clampPercent, truncateToWidth, visibleWidth } from "../../pip-common/index.ts";
 import { BAR_EMPTY, BAR_FILLED } from "./constants.ts";
 
 export function fitSegment(width: number, variants: string[]): string {

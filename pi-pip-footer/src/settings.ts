@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSettingsSection, setting } from "pip-common";
+import { registerSettingsSection, setting } from "../../pip-common/index.ts";
 import { FOOTER_SETTINGS_ID } from "./constants.ts";
 
 export function registerFooterSettings(pi: ExtensionAPI): void {

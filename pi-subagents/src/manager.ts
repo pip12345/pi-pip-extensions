@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { emptyUsage, type ScopedSettings } from "pip-common";
+import { emptyUsage, type ScopedSettings } from "../../pip-common/index.ts";
 import type { AgentConfig, LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";

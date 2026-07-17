@@ -18,7 +18,7 @@ This repository is one aggregate Pi package with separately filterable feature e
 - `pi-tiny-mcp` - tiny stdio/HTTP MCP adapter
 - `pi-webfetch-websearch` - cleaned web fetching and no-key web search
 
-Shared code lives in `pip-common`. Feature sources import it by package name, and standalone tarballs bundle it under each feature's `node_modules`. Run `npm install` before loading a local checkout so npm creates the workspace links.
+Shared code lives in `pip-common`. Feature sources import it directly by relative source path, so the aggregate package loads from a clean checkout without workspace links. The standalone packaging script builds isolated staging trees, rewrites those staged imports to the `pip-common` package name, and bundles the common runtime under each feature's `node_modules`.
 
 ## `/pip-settings`
 

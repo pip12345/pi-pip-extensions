@@ -4,7 +4,7 @@ One aggregate Pi package containing separately filterable extension features. Ea
 
 ## Dependencies
 
-The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Git package installation runs `npm install` automatically; local checkouts must run `npm install` once to link the workspace packages.
+The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Aggregate source checkouts load `pip-common` directly from this repository without installed workspace links. Standalone feature packages bundle their own copy.
 
 ## Install
 
@@ -24,13 +24,7 @@ pi update --extensions
 
 Then restart Pi or run `/reload`.
 
-For local development, install the workspace links and point Pi directly at this folder in `settings.json`:
-
-```bash
-npm install
-```
-
-Then configure:
+For local development, point Pi directly at this folder in `settings.json`:
 
 ```json
 {

@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { firstResultText, registerPipTool, type ScopedSettings } from "pip-common";
+import { firstResultText, registerPipTool, type ScopedSettings } from "../../pip-common/index.ts";
 import { parseTinyMcpServerConfig } from "./config.ts";
 import type { ResultLimitSetting } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";

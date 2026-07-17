@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSettingsSection, setting, settingsFor, type ScopedSettings } from "pip-common";
+import { registerSettingsSection, setting, settingsFor, type ScopedSettings } from "../pip-common/index.ts";
 
 const execFileAsync = promisify(execFile);
 

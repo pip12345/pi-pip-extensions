@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import secretsGuard, { bashPathTokens, isGitIgnored, resolveToolPath, __test } from "./index.ts";
-import { getPipSettingsRegistry } from "pip-common";
-import { createMockCtx, createMockPi, emitEvent } from "pip-common/testing";
+import { getPipSettingsRegistry } from "../pip-common/index.ts";
+import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), "pi-secrets-guard-"));
