@@ -32,7 +32,8 @@
     "src/usage/locks.ts",
     "src/usage/rollups.ts",
     "src/usage/storage.ts",
-    "src/usage/types.ts"
+    "src/usage/types.ts",
+    "README.md"
   ],
   "dependencies": {
     "pip-common": "0.1.0"

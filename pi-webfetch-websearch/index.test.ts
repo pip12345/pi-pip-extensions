@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import extension, { parseMcpResponse } from "./index.ts";
 import { isPrivateAddress, resolvePublicAddress } from "./src/http.ts";
 import { formatChars, signalWithTimeout } from "./src/limits.ts";
 import { formatWebSearchArtifact } from "./src/websearch-format.ts";
+import { cleanupArtifacts, sessionArtifactDir } from "./src/artifacts.ts";
 import { rewriteGitHubUrl } from "./src/sites/github.ts";
 import { createSettingsRegistry, setPipSettingsRegistryForTests } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
@@ -198,6 +200,40 @@ describe("pi-webfetch-websearch", () => {
       expect(result.details.mode).toBe("inline");
       expect(result.details.artifact).toBeUndefined();
     });
+  });
+
+  it("quarantines artifact indexes whose deletion paths escape the managed files directory", () => {
+    const temp = mkdtempSync(join(tmpdir(), "pi-web-artifact-guard-"));
+    const victim = join(temp, "victim.txt");
+    const sessionId = `artifact-guard-${Date.now()}-${Math.random()}`;
+    const artifactDir = sessionArtifactDir(sessionId);
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(victim, "keep");
+    writeFileSync(join(artifactDir, "artifacts.json"), JSON.stringify({
+      version: 1,
+      parentSessionKey: sessionId,
+      artifacts: [{
+        id: "forged",
+        kind: "webfetch",
+        path: victim,
+        chars: 4,
+        lines: 1,
+        createdAt: 0,
+        parentSessionKey: sessionId,
+      }],
+    }));
+
+    try {
+      cleanupArtifacts(
+        { sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined } },
+        { get: (_key: string, fallback: unknown) => fallback } as any,
+      );
+      expect(existsSync(victim)).toBe(true);
+      expect(readdirSync(artifactDir).some((name) => name.startsWith("artifacts.json.invalid."))).toBe(true);
+    } finally {
+      rmSync(artifactDir, { recursive: true, force: true });
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it("keeps multiple saved artifacts below the per-session limit", async () => {

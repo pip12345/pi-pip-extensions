@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pipPath, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
 import { formatChars } from "./limits.ts";
 
@@ -55,14 +55,71 @@ function filesDir(parentSessionKey: string): string {
   return join(sessionArtifactDir(parentSessionKey), "files");
 }
 
+function optionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function managedArtifactPath(parentSessionKey: string, id: string, value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) return undefined;
+  const root = resolve(filesDir(parentSessionKey));
+  const target = resolve(value);
+  if (dirname(target) !== root || !basename(target).startsWith(`${id}.`)) return undefined;
+  return target;
+}
+
+function normalizeArtifactRecord(value: unknown, parentSessionKey: string): ArtifactRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const id = typeof raw.id === "string" ? raw.id : "";
+  const path = managedArtifactPath(parentSessionKey, id, raw.path);
+  if (
+    !path ||
+    (raw.kind !== "webfetch" && raw.kind !== "websearch") ||
+    raw.parentSessionKey !== parentSessionKey ||
+    typeof raw.chars !== "number" || !Number.isFinite(raw.chars) || raw.chars < 0 ||
+    typeof raw.lines !== "number" || !Number.isFinite(raw.lines) || raw.lines < 0 ||
+    typeof raw.createdAt !== "number" || !Number.isFinite(raw.createdAt) ||
+    !optionalString(raw.parentSessionFile) ||
+    !optionalString(raw.url) || !optionalString(raw.query) || !optionalString(raw.title) || !optionalString(raw.format) ||
+    (raw.kept !== undefined && typeof raw.kept !== "boolean")
+  ) return undefined;
+  return {
+    id,
+    kind: raw.kind,
+    path,
+    url: raw.url,
+    query: raw.query,
+    title: raw.title,
+    format: raw.format,
+    chars: raw.chars,
+    lines: raw.lines,
+    createdAt: raw.createdAt,
+    parentSessionKey,
+    parentSessionFile: raw.parentSessionFile,
+    kept: raw.kept,
+  };
+}
+
+function quarantineIndex(path: string): void {
+  try { renameSync(path, `${path}.invalid.${Date.now()}.${process.pid}`); } catch {}
+}
+
 function readIndex(parentSessionKey: string, parentSessionFile?: string): ArtifactIndex {
   const path = indexPath(parentSessionKey);
   if (!existsSync(path)) return { version: 1, parentSessionKey, parentSessionFile, artifacts: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8"));
-    if (parsed?.version !== 1 || parsed?.parentSessionKey !== parentSessionKey || !Array.isArray(parsed.artifacts)) throw new Error("invalid index");
-    return { version: 1, parentSessionKey, parentSessionFile: parsed.parentSessionFile ?? parentSessionFile, artifacts: parsed.artifacts };
+    if (
+      parsed?.version !== 1 ||
+      parsed?.parentSessionKey !== parentSessionKey ||
+      !optionalString(parsed.parentSessionFile) ||
+      !Array.isArray(parsed.artifacts)
+    ) throw new Error("invalid index");
+    const artifacts = parsed.artifacts.map((artifact: unknown) => normalizeArtifactRecord(artifact, parentSessionKey));
+    if (artifacts.some((artifact: ArtifactRecord | undefined) => !artifact)) throw new Error("invalid artifact record");
+    return { version: 1, parentSessionKey, parentSessionFile: parsed.parentSessionFile ?? parentSessionFile, artifacts: artifacts as ArtifactRecord[] };
   } catch {
+    quarantineIndex(path);
     return { version: 1, parentSessionKey, parentSessionFile, artifacts: [] };
   }
 }
@@ -71,9 +128,13 @@ function writeIndex(index: ArtifactIndex): void {
   const dir = sessionArtifactDir(index.parentSessionKey);
   mkdirSync(dir, { recursive: true });
   const target = join(dir, "artifacts.json");
-  const tmp = join(dir, `artifacts.${process.pid}.${Date.now()}.tmp`);
-  writeFileSync(tmp, JSON.stringify(index, null, 2));
-  renameSync(tmp, target);
+  const tmp = join(dir, `artifacts.${process.pid}.${randomUUID().slice(0, 8)}.tmp`);
+  try {
+    writeFileSync(tmp, JSON.stringify(index, null, 2));
+    renameSync(tmp, target);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 function lineCount(text: string): number {

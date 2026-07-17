@@ -9,7 +9,7 @@ import { readState, writeState } from "./src/state.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
 import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type SettingsRegistry } from "../pip-common/index.ts";
 import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
-import { readBoundedResponseText } from "./src/transport-limits.ts";
+import { MAX_MCP_MESSAGE_BYTES, readBoundedResponseText } from "./src/transport-limits.ts";
 
 const fixture = (name: string) => join(process.cwd(), "pi-tiny-mcp", "test", "fixtures", name);
 
@@ -187,6 +187,55 @@ describe("pi-tiny-mcp", () => {
     expect((await executeTinyMcp({ tool: "basic_echo", args: '{"text":"hi"}' }, dir)).content[0].text).toBe("hi");
   });
 
+  it("shares one in-flight connection across concurrent callers", async () => {
+    let initializeCalls = 0;
+    let markToolsListStarted!: () => void;
+    let releaseToolsList!: () => void;
+    const toolsListStarted = new Promise<void>((resolve) => { markToolsListStarted = resolve; });
+    const toolsListReleased = new Promise<void>((resolve) => { releaseToolsList = resolve; });
+    await withServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      const payload = await readBody(req);
+      if (payload.method === "initialize") {
+        initializeCalls++;
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-03-26", capabilities: {} }));
+        return;
+      }
+      if (payload.method === "notifications/initialized") {
+        res.statusCode = 202;
+        res.end();
+        return;
+      }
+      if (payload.method === "tools/list") {
+        markToolsListStarted();
+        await toolsListReleased;
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { tools: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: base } } }));
+      const first = executeTinyMcp({ connect: "remote" }, dir);
+      await toolsListStarted;
+      let secondResolved = false;
+      const second = executeTinyMcp({ connect: "remote" }, dir).then(() => { secondResolved = true; });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(secondResolved).toBe(false);
+      releaseToolsList();
+      await Promise.all([first, second]);
+      expect(initializeCalls).toBe(1);
+      await executeTinyMcp({ action: "disconnect" }, dir);
+    });
+  });
+
   it("rejects HTTP response bodies before parsing beyond the transport limit", async () => {
     const declared = new Response("ignored", { headers: { "content-length": "20" } });
     await expect(readBoundedResponseText(declared, 10)).rejects.toThrow(/exceeded 10 byte limit/);
@@ -323,6 +372,52 @@ describe("pi-tiny-mcp", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(callClosed).toBe(true);
       await executeTinyMcp({ action: "disconnect" }, dir);
+    });
+  });
+
+  it("cancels an active SSE response when parsing exceeds the event limit", async () => {
+    let callClosed = false;
+    await withServer(async (req, res) => {
+      if (req.method === "GET") {
+        res.statusCode = 405;
+        res.end();
+        return;
+      }
+      const payload = await readBody(req);
+      if (payload.method === "initialize") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { protocolVersion: "2025-03-26", capabilities: {} }));
+        return;
+      }
+      if (payload.method === "notifications/initialized") {
+        res.statusCode = 202;
+        res.end();
+        return;
+      }
+      if (payload.method === "tools/list") {
+        res.setHeader("content-type", "application/json");
+        res.end(rpcResponse(payload.id, { tools: [{ name: "oversized", description: "Oversized SSE", inputSchema: { type: "object" } }] }));
+        return;
+      }
+      if (payload.method === "tools/call") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.on("close", () => { callClosed = true; });
+        res.write(`data: ${"x".repeat(MAX_MCP_MESSAGE_BYTES + 1)}`);
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    }, async (base) => {
+      const dir = tempProject();
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { remote: { url: base } } }));
+      await executeTinyMcp({ connect: "remote" }, dir);
+      try {
+        await expect(executeTinyMcp({ tool: "remote_oversized", args: "{}" }, dir)).rejects.toThrow(/SSE event exceeded/);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(callClosed).toBe(true);
+      } finally {
+        await executeTinyMcp({ action: "disconnect" }, dir);
+      }
     });
   });
 

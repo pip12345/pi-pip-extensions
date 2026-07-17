@@ -97,6 +97,10 @@ describe("pi-stats", () => {
     expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, undefined, 4)).toBe("  3k/75%");
     expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, undefined, 4, 5)).toBe("  3k/75% ");
     expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 0, cacheWrite: 0, cache: 0, total: 1010, cost: 0 }, true)).toBe("0");
+    expect(__test.cacheColumnWidths([
+      { input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 },
+      { input: 0, output: 10, cacheRead: 1_300_000, cacheWrite: 0, cache: 1_300_000, total: 1_300_010, cost: 0 },
+    ], true)).toEqual({ value: 4, hit: 5, text: 9 });
   });
 
   it("records assistant message usage through global usage storage", async () => {

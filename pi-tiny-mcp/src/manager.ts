@@ -10,6 +10,7 @@ interface ServerState {
   name: string;
   status: ServerStatus;
   client?: TinyMcpClient;
+  connectPromise?: Promise<void>;
   tools: McpToolInfo[];
   lastError?: string;
   runtime?: boolean;
@@ -60,7 +61,7 @@ export class TinyMcpManager {
     if (!name) throw new Error("Runtime MCP server name is required");
     if (config.disabled) throw new Error(`Runtime MCP server cannot be disabled: ${name}`);
     const existing = this.states.get(name);
-    await existing?.client?.close().catch(() => undefined);
+    if (existing) await this.close(name);
     this.config.mcpServers[name] = config;
     this.states.set(name, { name, status: "disconnected", tools: [], runtime: true });
     this.rebuildVisibleTools();
@@ -69,7 +70,9 @@ export class TinyMcpManager {
   async connect(serverName: string, signal?: AbortSignal): Promise<void> {
     const state = this.requireState(serverName);
     if (!state.runtime) setExplicitlyDisconnected([serverName], false);
+    if (state.connectPromise) return waitForConnection(state.connectPromise, signal);
     if (state.status === "connected") return;
+
     const config = this.config.mcpServers[serverName];
     if (!config || config.disabled) throw new Error(`Server not configured: ${serverName}`);
     state.status = "connecting";
@@ -79,18 +82,31 @@ export class TinyMcpManager {
       if (method === "notifications/tools/list_changed") void this.refreshTools(serverName).catch((error) => { state.lastError = error instanceof Error ? error.message : String(error); });
     });
     client.on("close", () => {
-      if (state.status !== "error") state.status = "disconnected";
+      if (state.client === client && state.status !== "error") state.status = "disconnected";
     });
+    state.client = client;
+
+    const connectPromise = (async () => {
+      try {
+        await client.connect(signal);
+        if (state.client !== client) throw new Error(`MCP connection was replaced: ${serverName}`);
+        await this.refreshTools(serverName, signal);
+        if (state.client !== client) throw new Error(`MCP connection was replaced: ${serverName}`);
+        state.status = "connected";
+      } catch (error) {
+        if (state.client === client) {
+          state.status = "error";
+          state.lastError = error instanceof Error ? error.message : String(error);
+        }
+        await client.close().catch(() => undefined);
+        throw error;
+      }
+    })();
+    state.connectPromise = connectPromise;
     try {
-      state.client = client;
-      await client.connect(signal);
-      state.status = "connected";
-      await this.refreshTools(serverName, signal);
-    } catch (error) {
-      state.status = "error";
-      state.lastError = error instanceof Error ? error.message : String(error);
-      await client.close().catch(() => undefined);
-      throw error;
+      await connectPromise;
+    } finally {
+      if (state.connectPromise === connectPromise) state.connectPromise = undefined;
     }
   }
 
@@ -130,8 +146,11 @@ export class TinyMcpManager {
   async close(serverName?: string): Promise<void> {
     const targets = serverName ? [this.requireState(serverName)] : [...this.states.values()];
     await Promise.all(targets.map(async (state) => {
-      await state.client?.close().catch(() => undefined);
+      const client = state.client;
       state.client = undefined;
+      await client?.close().catch(() => undefined);
+      await state.connectPromise?.catch(() => undefined);
+      state.connectPromise = undefined;
       state.status = "disconnected";
     }));
   }
@@ -165,6 +184,21 @@ export class TinyMcpManager {
       }
     }
     this.visibleTools = next;
+  }
+}
+
+async function waitForConnection(promise: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return promise;
+  if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("MCP connection wait aborted");
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("MCP connection wait aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 

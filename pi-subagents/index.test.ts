@@ -425,6 +425,39 @@ describe("pi-subagents", () => {
     expect(completion).toContain("full child transcript");
   });
 
+  it("coalesces burst persistence requests and flushes final run state", async () => {
+    const persistenceDir = mkdtempSync(join(tmpdir(), "pi-subagent-persistence-"));
+    const parentDir = mkdtempSync(join(tmpdir(), "pi-subagent-parent-"));
+    const parentFile = join(parentDir, "parent.jsonl");
+    writeFileSync(parentFile, "{}\n");
+    const runner: Runner = {
+      async launch(_input, run) {
+        run.sessionFile = join(parentDir, "child.jsonl");
+        for (let index = 0; index < 200; index++) run.persist?.();
+        run.resultText = "done";
+        run.status = "completed";
+        return run;
+      },
+    };
+    const manager = new SubagentManager({ runner, persistenceDir });
+    const saveParent = vi.spyOn(manager as any, "saveParent");
+    const agent = { name: "explore", description: "", systemPrompt: "", tools: undefined, source: "test", filePath: "test" } as any;
+
+    try {
+      const run = manager.launch({ agent, prompt: "burst", cwd: process.cwd(), parentSessionKey: parentFile, parentSessionFile: parentFile, keep: true, background: false });
+      await run.runPromise;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      expect(saveParent.mock.calls.length).toBeLessThanOrEqual(3);
+      expect(existsSync(parentIndexPath(parentFile, persistenceDir))).toBe(true);
+      expect(manager.resolve(run.id, parentFile)?.resultText).toBe("done");
+    } finally {
+      await manager.shutdown();
+      rmSync(persistenceDir, { recursive: true, force: true });
+      rmSync(parentDir, { recursive: true, force: true });
+    }
+  });
+
   it("recomputes persisted context paths before recursive deletion", () => {
     const persistenceDir = mkdtempSync(join(tmpdir(), "pi-subagent-persistence-"));
     const contextDir = mkdtempSync(join(tmpdir(), "pi-subagent-context-"));

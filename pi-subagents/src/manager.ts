@@ -38,6 +38,7 @@ function wrapSteerMessage(message: string): string {
 
 export class SubagentManager {
   private shuttingDown = false;
+  private pendingPersistence = new Map<string, ReturnType<typeof setTimeout>>();
   runs = new Map<string, SubagentRun>();
   aliases = new Map<string, string>();
   foreground = new Set<string>();
@@ -123,7 +124,7 @@ export class SubagentManager {
       const run = restoredRun(record, this.now());
       run.contextRoot = contextRoot(parentSessionKey, this.contextDir);
       run.runContextDir = runContextDir(parentSessionKey, run.id, this.contextDir);
-      run.persist = () => this.saveRun(run);
+      run.persist = () => this.scheduleSaveRun(run);
       this.runs.set(run.id, run);
       if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
     }
@@ -131,6 +132,9 @@ export class SubagentManager {
   }
 
   private saveParent(parentSessionKey: string): void {
+    const pending = this.pendingPersistence.get(parentSessionKey);
+    if (pending) clearTimeout(pending);
+    this.pendingPersistence.delete(parentSessionKey);
     const persisted = [...this.runs.values()].filter((run) => run.parentSessionKey === parentSessionKey).map(toPersistedRun).filter((run): run is NonNullable<typeof run> => Boolean(run));
     const parentSessionFile = persisted[0]?.parentSessionFile;
     if (!parentSessionFile) {
@@ -142,6 +146,17 @@ export class SubagentManager {
 
   private saveRun(run: SubagentRun): void {
     this.saveParent(run.parentSessionKey);
+  }
+
+  private scheduleSaveRun(run: SubagentRun): void {
+    const parentSessionKey = run.parentSessionKey;
+    if (this.pendingPersistence.has(parentSessionKey)) return;
+    const timer = setTimeout(() => {
+      this.pendingPersistence.delete(parentSessionKey);
+      this.saveParent(parentSessionKey);
+    }, 250);
+    timer.unref?.();
+    this.pendingPersistence.set(parentSessionKey, timer);
   }
 
   private touchRun(run: SubagentRun, at = this.now()): void {
@@ -296,7 +311,7 @@ export class SubagentManager {
       abortController: new AbortController(),
       forwarding: !input.background,
     };
-    run.persist = () => this.saveRun(run);
+    run.persist = () => this.scheduleSaveRun(run);
     this.runs.set(run.id, run);
     if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
 
@@ -486,5 +501,7 @@ export class SubagentManager {
     this.aliases.clear();
     this.foreground.clear();
     this.pendingCompletions.clear();
+    for (const timer of this.pendingPersistence.values()) clearTimeout(timer);
+    this.pendingPersistence.clear();
   }
 }

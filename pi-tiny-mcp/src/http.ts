@@ -307,24 +307,31 @@ async function readSseStream(
     return false;
   };
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
     while (true) {
-      const newline = buffer.indexOf("\n");
-      if (newline === -1) break;
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (await processLine(line)) return;
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      while (true) {
+        const newline = buffer.indexOf("\n");
+        if (newline === -1) break;
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (await processLine(line)) return;
+      }
+      assertBounded(eventBytes + Buffer.byteLength(buffer, "utf8"));
     }
-    assertBounded(eventBytes + Buffer.byteLength(buffer, "utf8"));
-  }
 
-  buffer += decoder.decode();
-  assertBounded(eventBytes + Buffer.byteLength(buffer, "utf8"));
-  if (buffer) await processLine(buffer);
-  await dispatch();
+    buffer += decoder.decode();
+    assertBounded(eventBytes + Buffer.byteLength(buffer, "utf8"));
+    if (buffer) await processLine(buffer);
+    await dispatch();
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function parseJsonRpcEvent(data: string): JsonRpcMessage {

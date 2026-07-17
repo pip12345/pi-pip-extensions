@@ -73,6 +73,12 @@ function formatCacheWithHit(tokens: Tokens, compact: boolean, theme?: Theme, cac
   return `${cacheText}${theme ? theme.fg("dim", suffixText) : suffixText}`;
 }
 
+function cacheColumnWidths(rows: Tokens[], compact: boolean): { value: number; hit: number; text: number } {
+  const value = Math.max(1, ...rows.map((row) => fmt(row.cache, compact).length));
+  const hit = Math.max(0, ...rows.map((row) => (row.cache > 0 ? `/${Math.round(cacheHitRate(row) ?? 0)}%`.length : 0)));
+  return { value, hit, text: value + hit };
+}
+
 function hashId(parts: unknown[]): string {
   return createHash("sha1").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
 }
@@ -363,7 +369,9 @@ class TokenInspector extends PipCustomComponent<void> {
     const ctxW = 20;
     const inW = 15;
     const outW = 15;
-    const cacheW = 16;
+    const cacheBarW = 7;
+    const cacheWidths = cacheColumnWidths(rows, this.compact);
+    const cacheW = Math.max("ΔCache".length, cacheWidths.text + 1 + cacheBarW);
     lines.push(
       th.fg(
         "dim",
@@ -371,8 +379,6 @@ class TokenInspector extends PipCustomComponent<void> {
       )
     );
     const visible = rows.slice(this.scroll, this.scroll + 14);
-    const cacheValueW = Math.max(1, ...visible.map((r) => fmt(r.cache, this.compact).length));
-    const cacheHitW = Math.max(0, ...visible.map((r) => (r.cache > 0 ? `/${Math.round(cacheHitRate(r) ?? 0)}%`.length : 0)));
     visible.forEach((r, i) => {
       const realIndex = this.scroll + i;
       const sel = realIndex === this.selected;
@@ -384,7 +390,7 @@ class TokenInspector extends PipCustomComponent<void> {
       const promptTokens = promptTokensFromUsage(r);
       const inCell = `${padLeftAnsi(fmt(promptTokens, this.compact), 8)} ${bar(promptTokens, maxIn, 6, th)}`;
       const outCell = `${padLeftAnsi(fmt(r.output, this.compact), 9)} ${bar(r.output, maxOut, 5, th)}`;
-      const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheValueW, cacheHitW)} ${bar(r.cache, maxCache, 7, th)}`;
+      const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheWidths.value, cacheWidths.hit)} ${bar(r.cache, maxCache, cacheBarW, th)}`;
       lines.push(
         `${padAnsi(idx, 3)} ${padAnsi(prompt, promptW)} ${padAnsi(ctxCell, ctxW)} ${padAnsi(inCell, inW)} ${padAnsi(outCell, outW)} ${padAnsi(cacheCell, cacheW)}`
       );
@@ -413,10 +419,10 @@ class TokenInspector extends PipCustomComponent<void> {
     const lines = this.renderHeader();
     lines.push(`Range: ${th.fg("accent", RANGE_LABELS[this.range])} ${th.fg("dim", "[1 today · 2 7d · 3 30d · 4 all]")}   Group: ${th.fg("accent", this.groupBy)} ${th.fg("dim", "[g]")}   Search: ${this.searching ? th.fg("accent", this.search + "_") : this.search ? th.fg("accent", this.search) : th.fg("dim", "press /")}`);
     lines.push("");
-    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Turns", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Prompt", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", 9)} ${padLeftAnsi("Cost", 8)}`));
+    const cacheWidths = cacheColumnWidths(rows, this.compact);
+    const cacheW = Math.max("Cache".length, cacheWidths.text);
+    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Turns", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Prompt", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", cacheW)} ${padLeftAnsi("Cost", 8)}`));
     const visible = rows.slice(this.scroll, this.scroll + 16);
-    const cacheValueW = Math.max(1, ...visible.map((r) => fmt(r.cache, this.compact).length));
-    const cacheHitW = Math.max(0, ...visible.map((r) => (r.cache > 0 ? `/${Math.round(cacheHitRate(r) ?? 0)}%`.length : 0)));
     visible.forEach((r, i) => {
       const realIndex = this.scroll + i;
       const sel = realIndex === this.selected;
@@ -426,7 +432,7 @@ class TokenInspector extends PipCustomComponent<void> {
       lines.push(`${prefix}${padAnsi(key, 34)} ${padLeftAnsi(String(r.turns), 5)}   ${padAnsi(totalCell, 22)} ${padLeftAnsi(
         fmt(promptTokensFromUsage(r), this.compact),
         9
-      )} ${padLeftAnsi(fmt(r.output, this.compact), 9)} ${padLeftAnsi(formatCacheWithHit(r, this.compact, th, cacheValueW, cacheHitW), 9)} ${padLeftAnsi(money(r.cost), 8)}`);
+      )} ${padLeftAnsi(fmt(r.output, this.compact), 9)} ${padLeftAnsi(formatCacheWithHit(r, this.compact, th, cacheWidths.value, cacheWidths.hit), cacheW)} ${padLeftAnsi(money(r.cost), 8)}`);
     });
     if (rows.length > 0) lines.push(scrollIndicator(this.selected, rows.length, 24, th));
     const selected = rows[this.selected];
@@ -469,4 +475,4 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-export const __test = { buildSessionRows, cacheHitRate, formatCacheHit, formatCacheWithHit, subagentUsagesFromToolResult };
+export const __test = { buildSessionRows, cacheColumnWidths, cacheHitRate, formatCacheHit, formatCacheWithHit, subagentUsagesFromToolResult };

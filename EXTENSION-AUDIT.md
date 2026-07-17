@@ -22,10 +22,18 @@ This records the repository audit and its completed remediation pass. Every numb
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
+## Follow-up audit remediation
+
+- Tiny MCP now shares one in-flight connection per server, so concurrent callers cannot overwrite ownership and leak an earlier subprocess. SSE parse/size failures cancel and release the response stream.
+- Webfetch/Websearch validates every persisted artifact record, quarantines malformed indexes, and deletes only direct children of the session-managed artifact directory.
+- Subagent streaming persistence is coalesced per parent while lifecycle transitions and generation completion still flush final state synchronously.
+- Locked vulnerable dependency resolutions were refreshed, and standalone READMEs were added for Secrets Guard and Stats.
+
 ## Validation completed
 
-- `npm test`: **42 files, 418 tests passed**.
+- `npm test`: **42 files, 422 tests passed**.
 - `npm run typecheck`: **passed**, including `noUnusedLocals` and `noUnusedParameters`.
+- `npm audit`: **0 vulnerabilities**.
 - Aggregate package test loads all source entrypoints from a clean checkout without workspace links.
 - Standalone tarball tests generate, install, inspect, and load every feature through Pi package rules; test sources are rejected from runtime tarballs.
 - Static boundaries reject sibling production imports and reverse `pip-common` dependencies, and package-filtering tests verify independent aggregate resources.
@@ -285,9 +293,9 @@ Resolved during cleanup:
 - Resolved all strict unused-code diagnostics and enabled `noUnusedLocals` plus `noUnusedParameters` in `tsconfig.json`.
 - Corrected the top-level local-development path example.
 
-Remaining documentation gaps:
+Documentation gaps resolved:
 
-- `pi-secrets-guard` and `pi-stats` have no package README, while the other feature packages do.
+- `pi-secrets-guard` and `pi-stats` now include package READMEs and ship them in standalone tarballs.
 
 ---
 
