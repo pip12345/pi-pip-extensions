@@ -15,7 +15,7 @@ export function registerFooterSettings(pi: ExtensionAPI): void {
         default: "auto",
         choices: ["auto", "codex", "anthropic", "copilot", "off"] as const,
         order: 2,
-        description: "Choose which subscription quota source to display, or disable quota checks.",
+        description: "Auto follows the active model only with subscription OAuth; choose a source explicitly to override, or disable quota checks.",
       }),
       showContext: setting.boolean({ label: "Context bar", default: true, order: 3, description: "Show current context-window usage as a compact progress bar." }),
       showModel: setting.boolean({ label: "Model", default: true, order: 4, description: "Show the active model and thinking level in the lower footer." }),

@@ -7,6 +7,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 ## Cleanup progress — 2026-07-14
 
 - Findings 1–2 were resolved by removing `pi-plan-mode` and its shared read-only machinery.
+- Finding 26 was resolved with OAuth-capability quota detection, account/base-URL cache identities, request generations, and disabled/headless lifecycle gating.
 - Findings 27–28 were resolved with correct Todo overflow counts plus terminal-bounded, selection-following Question and Todo viewports and bounded Question schemas.
 - Finding 35 was resolved by deleting the unused capability, prompt, and status registries; the consumed footer registry remains supported.
 - Findings 6, 20, and 36 were resolved by producing self-contained standalone packages with bundled `pip-common`, explicit runtime allowlists, and isolated Pi-loader tests.
@@ -243,24 +244,13 @@ The effective-final-record invariant now belongs to `pip-common` and is shared b
 
 ---
 
-### 26. Footer quota selection/cache can show the wrong account or provider
+### 26. Footer quota selection/cache can show the wrong account or provider — **resolved**
 
-**Evidence**
+Auto detection now requires Pi's authoritative `modelRegistry.isUsingOAuth(model)` capability and an exact supported provider ID (`openai-codex`, `anthropic`, or `github-copilot`). Standard OpenAI/Anthropic API keys are no longer accepted for subscription usage endpoints. Footer resolves the active model's effective OAuth token/account through Pi and passes it directly to the adapter.
 
-- `pip-common/src/quota/index.ts:16-22` maps plain provider IDs `openai`, `openai-completions`, and broad `github` matches to Codex/Copilot subscription quota.
-- `pip-common/src/quota/auth.ts:35-47` can then use a Codex subscription credential—or even `OPENAI_API_KEY`—for the ChatGPT `/wham/usage` endpoint.
-- The global quota cache is keyed only by provider at `pi-pip-footer/src/quota.ts:4`, not account, base URL, or credential identity.
-- `refreshUsageForModel()` at `pi-pip-footer/index.ts:113-131` leaves the previous provider’s `latestUsage` in place when switching to an uncached provider and silently ignores rejected fetches.
-- The only race guard is provider ID, so two same-provider requests for different model base URLs/accounts can overwrite one another.
-- Footer-disabled/headless sessions still call refresh and start the interval at `pi-pip-footer/index.ts:156-158`.
+Quota cache keys are SHA-256 identities over quota provider, credential/account, and effective base URL; raw secrets never appear in keys. The cache is runtime-local and bounded to 25 identities. Model selection immediately clears displayed quota, while request generations and full identity checks reject stale same-provider responses. Disabled/headless sessions skip footer, token, pricing, quota, and timer work entirely; quota `off` also starts no refresh timer.
 
-**Impact**
-
-A standard OpenAI API model can display unrelated Codex subscription quota, model/account switches can temporarily or permanently show stale quota, and child/headless sessions perform unnecessary credential lookup/network work. Cached quota can bleed between accounts in one process.
-
-**Recommended direction**
-
-Detect subscription quota from the actual auth/provider capability, not broad provider-name substrings. Key cache/request generations by provider + account/base URL identity, clear display state immediately on identity changes, and do no footer work when the footer has no UI/has been disabled.
+Regression tests cover API-key exclusion, hashed identity separation, endpoint/account/model switches, stale response ordering, active proxy base URLs, and disabled/headless sessions.
 
 ---
 

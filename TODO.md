@@ -142,8 +142,8 @@
 - [x] Show a bounded first line for every collapsed failed execution.
 - [x] Add scrolling viewports and hidden-count indicators to Question and Todo inspectors.
 - [x] Add defensible Question schema count and text limits.
-- [ ] Fix Footer quota identity, account/base-URL cache keys, stale state, and request races.
-- [ ] Skip Footer quota work entirely when disabled or headless.
+- [x] Fix Footer quota identity, account/base-URL cache keys, stale state, and request races.
+- [x] Skip Footer quota work entirely when disabled or headless.
 - [x] Stream and cap Webfetch response bodies before buffering.
 - [x] Validate every Webfetch redirect and private-network destination.
 - [x] Stream and cap Websearch provider responses before parsing.

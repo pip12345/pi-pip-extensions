@@ -44,7 +44,7 @@ export function resolveCodexUsageUrl(modelBaseUrl?: string): string {
 }
 
 export async function fetchCodexUsage(options: QuotaFetchOptions = {}): Promise<QuotaSnapshot> {
-  const creds = getCodexQuotaCredentials();
+  const creds = options.credentials === undefined ? getCodexQuotaCredentials() : options.credentials ?? undefined;
   if (!creds) return snapshot([], options, undefined, "no-auth");
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${creds.token}`, "User-Agent": "pi-agent", Accept: "application/json" };
