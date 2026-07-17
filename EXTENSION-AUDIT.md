@@ -24,7 +24,7 @@ This records the repository audit and its completed remediation pass. Every numb
 
 ## Validation completed
 
-- `npm test`: **42 files, 409 tests passed**.
+- `npm test`: **42 files, 418 tests passed**.
 - `npm run typecheck`: **passed**, including `noUnusedLocals` and `noUnusedParameters`.
 - Aggregate package test loads all source entrypoints from a clean checkout without workspace links.
 - Standalone tarball tests generate, install, inspect, and load every feature through Pi package rules; test sources are rejected from runtime tarballs.
@@ -96,7 +96,7 @@ Concurrent independent Pi processes still have documented last-writer-wins seman
 
 ### 10. Webfetch’s private-host block is not a complete SSRF boundary, and its byte cap is post-buffer — **resolved**
 
-Webfetch now uses a dependency-free HTTP(S) transport that validates every redirect, resolves each hostname once, rejects mixed/private/local IPv4 and IPv6 answers (including IPv4-mapped IPv6), and pins the approved address into the actual connection lookup to prevent a second DNS resolution. URL credentials and non-HTTP redirect targets are rejected. Response bodies share a streaming byte-cap reader that cancels as soon as the configured limit is crossed, including chunked bodies without `Content-Length`. Regression tests cover address classification, mixed DNS answers, redirect handling, and early chunked-response cancellation.
+Webfetch now uses a dependency-free HTTP(S) transport that validates every redirect, resolves each hostname once, rejects mixed/private/local IPv4 and IPv6 answers (including IPv4-mapped IPv6), and pins the approved address into the actual connection lookup to prevent a second DNS resolution. URL credentials and non-HTTP redirect targets are rejected. Response bodies share a streaming byte-cap reader that cancels as soon as the configured limit is crossed, including chunked bodies without `Content-Length`. Request cancellation and timeout signals also bound the explicit DNS-resolution phase. Regression tests cover address classification, mixed DNS answers, DNS cancellation, redirect handling, and early chunked-response cancellation.
 
 ---
 
@@ -132,7 +132,7 @@ Settings whose registrations/resources cannot safely change in place carry decla
 
 Call, list, search, describe, connect, add, disconnect, and status now share one bounded-result path. `details` contains only bounded metadata (`action`, character count, truncation flag, and optional artifact path), while oversized full text is written under the managed Tiny MCP artifact root and linked from the result.
 
-Execution and MCP `isError` failures are thrown so Pi marks tool errors at the framework level. `AbortSignal` now flows through the tool, manager, MCP client, JSON-RPC pending request, and HTTP POST/legacy transport; abort removes pending timers/listeners, sends cancellation notification where possible, and aborts fetch work. Live disable closes owned managers and blocks subsequent tool/command work.
+Execution and MCP `isError` failures are thrown so Pi marks tool errors at the framework level. `AbortSignal` now flows through the tool, manager, MCP client, JSON-RPC pending request, and HTTP POST/legacy transport; abort removes pending timers/listeners, sends cancellation notification where possible, and aborts fetch work. HTTP JSON bodies, SSE events, stdio JSON lines, error bodies, and retained stderr are bounded before parsing or retention, so the result cap is not merely post-buffer. Live disable closes owned managers and blocks subsequent tool/command work.
 
 ---
 
@@ -244,19 +244,19 @@ When the active/pending window starts in the middle or near the end of a long to
 
 Question and Todo now derive bounded body heights from the shared terminal-aware overlay row budget and use shared selection/scroll windows. Their viewports follow selection, show position and hidden-row/item counts, and wrap explanatory hints. Question additionally keeps the active late tab visible, aligns wrapped option windows to label boundaries, and supports review scrolling; Todo supports line, page, Home, and End navigation.
 
-Question input is independently resource-bounded to 8 questions, 12 options per question, 500-character question/description prose, and 120-character labels. Runtime validation mirrors the TypeBox schema. Regression tests exercise late tabs, long wrapped option lists, terminal-height bounds, Todo selection near the end, and each schema count/text ceiling.
+Question input is independently resource-bounded to 8 questions, 12 options per question, 500-character question/description prose, and 120-character labels. Todo is bounded to 100 items, 100 updates per call, and 500 characters per todo/match; restoration normalizes legacy oversized state and read/details output stays within those ceilings. Runtime validation mirrors the TypeBox schemas. Regression tests exercise late tabs, long wrapped option lists, terminal-height bounds, Todo selection near the end, and each schema count/text ceiling.
 
 ---
 
 ### 29. Websearch buffers unbounded provider responses and may suppress automatic fallback — **resolved**
 
-MCP responses now use the shared streaming byte-cap reader with a client-side limit derived from the requested context and capped at 1 MB. Malformed JSON, JSON-RPC errors, missing content, and missing text are provider failures, so automatic mode continues to the next provider. Timeout signals are explicitly disposed in `finally`, clearing timers and removing parent abort listeners after both success and failure. Tests cover oversized chunked responses, all invalid-response fallback cases, and signal cleanup.
+MCP responses now use the shared streaming byte-cap reader with a client-side limit derived from the requested context and capped at 1 MB. Malformed JSON, JSON-RPC errors, MCP result-level `isError`, missing content, and missing text are provider failures, so automatic mode continues to the next provider. Timeout signals are explicitly disposed in `finally`, clearing timers and removing parent abort listeners after both success and failure. Tests cover oversized chunked responses, all invalid-response fallback cases, and signal cleanup.
 
 ---
 
 ### 30. Provider Proxy does not fully reconcile or tear down dynamic provider overrides — **resolved**
 
-Provider Proxy now derives the complete desired provider set from each changed config load, removes no-longer-desired contributions, and reapplies changed routes. Shutdown disposes all of its coordinator contributions, restoring either the remaining catalog contribution or Pi's built-in provider. Config writes use a same-directory private temporary file and atomic rename.
+Provider Proxy now derives the complete desired provider set from each changed config load, removes no-longer-desired contributions, and reapplies changed routes. Multi-provider reconciliation rolls back every changed contribution on failure; commands apply runtime state before atomically replacing the config and restore runtime state if persistence fails. Shutdown disposes all coordinator contributions, restoring either the remaining catalog contribution or Pi's built-in provider. OAuth relay requests use per-request deadlines and bounded response readers.
 
 ---
 
@@ -297,7 +297,7 @@ After removing `pi-plan-mode`, the repository contains 15 `pi-*` extensions plus
 
 ### 33. Provider Model Patches and Provider Proxy cannot safely compose ownership of one provider — **resolved**
 
-`pip-common` now owns one runtime-scoped provider coordinator. Model Patches contributes the `catalog` slot and Provider Proxy contributes the `transport` slot; the coordinator emits one composed Pi registration and applies proxy endpoints to every patched model. Duplicate owners for either slot fail explicitly instead of silently replacing each other. Removing either contribution reconciles the remaining registration, while last-owner shutdown unregisters the override and drops the stale registrar before reload. Tests cover composition, duplicate ownership, parent/child isolation, and registrar replacement across reload.
+`pip-common` now owns one runtime-scoped provider coordinator. Model Patches contributes the `catalog` slot and Provider Proxy contributes the `transport` slot; the coordinator emits one composed Pi registration and applies proxy endpoints to every patched model. Duplicate owners for either slot fail explicitly instead of silently replacing each other. Catalog replacement occurs in place so coordinator rollback retains the last working model patch if Pi rejects the replacement; policy-filtered replacement also restores a previously available catalog. Removing either contribution reconciles the remaining registration, while last-owner shutdown unregisters the override and drops the stale registrar before reload. Tests cover composition, duplicate ownership, rollback, parent/child isolation, and registrar replacement across reload.
 
 ---
 
