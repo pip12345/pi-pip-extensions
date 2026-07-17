@@ -2,12 +2,12 @@
 
 ## Product model
 
-- [ ] Treat this repository as one aggregate Pi package with multiple extension entrypoints.
-- [ ] Keep every `pi-*` feature independently installable as a standalone package.
-- [ ] Keep `pip-common` as the required shared runtime.
-- [ ] Keep production features independent: a feature may depend on Pi and `pip-common`, but not on sibling features.
-- [ ] Make feature removal local: deleting a feature should require only deleting its folder, aggregate manifest entry, feature-specific tests, and documentation.
-- [ ] Preserve Pi package filtering by retaining separate extension entrypoints; do not hide every feature behind one root extension.
+- [x] Treat this repository as one aggregate Pi package with multiple extension entrypoints.
+- [x] Keep every `pi-*` feature independently installable as a standalone package.
+- [x] Keep `pip-common` as the required shared runtime.
+- [x] Keep production features independent: a feature may depend on Pi and `pip-common`, but not on sibling features.
+- [x] Make feature removal local: deleting a feature should require only deleting its folder, aggregate manifest entry, feature-specific tests, and documentation.
+- [x] Preserve Pi package filtering by retaining separate extension entrypoints; do not hide every feature behind one root extension.
 
 ## 1. Dead-code and compiler-signal cleanup
 
@@ -115,7 +115,7 @@
 - [x] Make OAuth callback waits directly abort-aware.
 - [x] Remove polling abort listeners after both timer resolution and rejection.
 - [x] Add timeouts and retry expiry to temporary live pricing fetches.
-- [ ] Remove the live-pricing workaround when upstream Pi data makes it obsolete.
+- [x] Remove the live-pricing workaround when upstream Pi data makes it obsolete.
 
 ## 9. Repair high-use Tree Edit and Context features
 
@@ -153,14 +153,14 @@
 
 ## Completion criteria
 
-- [ ] Aggregate Git installation works and remains the documented default.
-- [ ] Every standalone feature tarball installs and loads in isolation.
-- [ ] Removing a feature does not require changes inside sibling features.
-- [ ] Pi package filtering can independently enable or disable aggregate features.
-- [ ] Trust boundaries prevent untrusted project configuration from executing code.
-- [ ] Parent and child runtimes cannot close or mutate each other's owned resources.
-- [ ] Settings and session writes are atomic and preserve unknown data.
-- [ ] Tool errors, cancellation, and output bounds follow Pi's runtime contracts.
-- [ ] `npm test` passes.
-- [ ] `npm run typecheck` passes.
-- [ ] Strict unused-local and unused-parameter checking passes.
+- [x] Aggregate Git installation works and remains the documented default.
+- [x] Every standalone feature tarball installs and loads in isolation.
+- [x] Removing a feature does not require changes inside sibling features.
+- [x] Pi package filtering can independently enable or disable aggregate features.
+- [x] Trust boundaries prevent untrusted project configuration from executing code.
+- [x] Parent and child runtimes cannot close or mutate each other's owned resources.
+- [x] Settings and session writes are atomic and preserve unknown data.
+- [x] Tool errors, cancellation, and output bounds follow Pi's runtime contracts.
+- [x] `npm test` passes.
+- [x] `npm run typecheck` passes.
+- [x] Strict unused-local and unused-parameter checking passes.

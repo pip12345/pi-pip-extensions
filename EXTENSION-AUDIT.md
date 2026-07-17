@@ -1,8 +1,8 @@
-# Extension Audit — Preliminary Findings
+# Extension Audit — Final Findings
 
-Date: 2026-07-09
+Date: 2026-07-09; remediation completed 2026-07-14
 
-This is a read-only audit checkpoint of the current Pi extensions in `/workspace`. It records the important findings verified so far, including the continuation pass performed after the initial checkpoint. Narrow parallel reviews are still running, so this is not yet the final exhaustive report.
+This records the repository audit and its completed remediation pass. Every numbered finding below is resolved by removal, implementation, or an explicitly documented architectural constraint.
 
 ## Cleanup progress — 2026-07-14
 
@@ -18,25 +18,19 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Finding 9's corruption/data-loss paths and finding 32 were resolved with strict loads, unknown-section preservation, transactional atomic commits, batched UI saves, and central bound/default validation.
 - Finding 17 was resolved by replacing the global raw-prompt cache with bounded, session-owned metadata that follows undo/redo and session retention.
 - Finding 14 was resolved with batched settings notifications, live consumers, and declarative reload warnings.
-- The runtime-ownership half of findings 21 and 34 was resolved by keying common services to Pi's shared event bus and giving Tiny MCP/Subagents runtime-local managers.
+- Findings 21 and 34 were resolved by keying common services to Pi's shared event bus, giving Tiny MCP/Subagents runtime-local managers, and applying an explicit child extension capability profile.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
 - All strict unused-code diagnostics were resolved, and `noUnusedLocals` plus `noUnusedParameters` are now part of the normal typecheck.
 
 ## Validation completed
 
-- `npm test`: **39 files, 329 tests passed**
-- `npm run typecheck`: **passed**
-- `npm pack --dry-run --json --workspaces`: inspected package contents
-- `tsc --noUnusedLocals --noUnusedParameters`: found **21 unused-code diagnostics**
-- Pi 0.80.1 extension, TUI, session, compaction, package, and keybinding contracts were checked against the installed documentation and type declarations.
-- Runtime reproduction of the plan-mode classifier confirmed that all of these mutating commands are currently accepted as read-only:
-  - `find . -delete`
-  - `find . -exec rm {} +`
-  - `env rm victim`
-- `npm view pip-common@0.1.0`: **404 Not Found**, confirming that current standalone extension tarballs cannot resolve their shared runtime dependency from npm.
-- Installed Pi extension-loader source was inspected to verify that child sessions in the same CWD reuse cached extension factory/module state (`loadExtensionsCached()`), which matters for the Tiny MCP/subagent lifecycle finding below.
-
-Passing tests/typecheck do not cover several lifecycle, trust, packaging, and runtime-policy failures below. Extensive `any` usage also prevents TypeScript from detecting API mistakes such as the nonexistent `session_end` event.
+- `npm test`: **42 files, 409 tests passed**.
+- `npm run typecheck`: **passed**, including `noUnusedLocals` and `noUnusedParameters`.
+- Aggregate package test loads all source entrypoints from a clean checkout without workspace links.
+- Standalone tarball tests generate, install, inspect, and load every feature through Pi package rules; test sources are rejected from runtime tarballs.
+- Static boundaries reject sibling production imports and reverse `pip-common` dependencies, and package-filtering tests verify independent aggregate resources.
+- Focused regression suites cover trust, symlink/path containment, runtime ownership, child capabilities, provider composition, cancellation, output bounds, persistence, network SSRF/streaming limits, and UI viewport behavior.
+- Pi extension, TUI, session, compaction, model/auth, package, and keybinding contracts were checked against the installed documentation, declarations, and runtime source.
 
 ---
 
@@ -78,51 +72,25 @@ Tree Edit's standalone allowlist now includes `draft.ts`, `session.ts`, `tree.ts
 
 ---
 
-### 7. Tiny MCP manager reset leaks live subprocesses and HTTP connections
+### 7. Tiny MCP manager reset leaks live subprocesses and HTTP connections — **resolved**
 
-**Evidence**
-
-- `/tiny-mcp config` calls `resetManager()` at `pi-tiny-mcp/index.ts:50-53` after editing configuration.
-- `pi-tiny-mcp/src/proxy-tool.ts:25-27` implements reset as only `managers.clear()`.
-- The correct shutdown path at `pi-tiny-mcp/src/proxy-tool.ts:20-22` closes every manager before clearing the map.
-
-**Impact**
-
-Previously connected stdio MCP child processes and HTTP/SSE connections become unreachable and are never closed by later `session_shutdown`, because their managers were removed from the map.
-
-**Recommended direction**
-
-Remove the unsafe reset operation. Configuration reload should await the existing `shutdownManager()` and only then create a fresh manager.
+`TinyMcpRuntime.reset()` now awaits `shutdown()`, which closes every owned manager before clearing the runtime-local map. Config editing awaits reset before later manager recreation; disable and session shutdown use the same close path. Parent and child runtimes have separate manager ownership, and lifecycle tests verify one runtime cannot close the other's connections.
 
 ---
 
-### 8. Custom tool failures are often reported as successful tool executions
+### 8. Custom tool failures are often reported as successful tool executions — **resolved**
 
-**Evidence**
-
-Pi 0.80.1’s tool contract says `execute()` must **throw** to set `isError: true`; returning an `isError` property never marks failure.
-
-- `pi-subagents/index.ts:55-56` returns `{ ..., isError }`.
-- Many subagent failure paths call `textResult(..., true)`, including disabled/error/status paths around `pi-subagents/index.ts:221-317`.
-- `pi-tiny-mcp/src/proxy-tool.ts:112-114` catches every error and returns normal text beginning with `Error:`.
-
-**Impact**
-
-Pi, extensions, renderers, and the model receive a successful tool result for failed launches, invalid arguments, timeouts, transport failures, and MCP call errors. Error styling, telemetry, retry behavior, and tool-batch semantics are wrong.
-
-**Recommended direction**
-
-Throw execution errors. Reserve normal returned results for domain-level non-errors. Update tests to assert framework-level `isError`, not merely an `isError` property returned by the implementation.
+Tiny MCP now throws validation, transport, JSON-RPC, timeout, disabled-state, unknown-tool, and MCP `isError` failures. Subagent now throws disabled-state, argument/model validation, missing-run, failed foreground launch/continue, and parent-cancellation failures instead of returning an ignored `isError` field. Successful status inspection of an already-failed retained run remains a normal domain query. Regression tests assert rejected execution promises for framework failures.
 
 ---
 
-### 9. Shared settings registration can silently destroy or discard persisted settings — **substantially resolved**
+### 9. Shared settings registration can silently destroy or discard persisted settings — **resolved**
 
 Settings loads now distinguish missing files from malformed JSON/shape errors. A malformed file remains untouched, writes are refused, and `/pip-settings` reports the exact failure. Stored sections and keys are retained independently of loaded definitions, so unloaded features survive later saves.
 
 Registration validates defaults and normalizes in-memory values without persisting. Intentional changes are validated into a cloned snapshot, written through temp-file plus rename, and only then committed in memory. `/pip-settings` applies its draft through one transactional write instead of one rewrite per row.
 
-Concurrent independent Pi processes can still produce last-writer-wins updates because there is no cross-process merge/lock; atomic replacement prevents partial-file corruption but not semantic write races.
+Concurrent independent Pi processes still have documented last-writer-wins semantics because settings do not implement a cross-process merge protocol. Atomic replacement prevents partial-file corruption; this concurrency constraint does not reintroduce the original registration-time overwrite, malformed-file destruction, or unloaded-section loss.
 
 ---
 
@@ -292,9 +260,9 @@ Provider Proxy now derives the complete desired provider set from each changed c
 
 ---
 
-### 31. Live Copilot pricing fallback has no timeout and permanently caches transient failure — **resolved pending upstream removal**
+### 31. Live Copilot pricing fallback has no timeout and permanently caches transient failure — **resolved**
 
-The temporary fetch now aborts after five seconds, deduplicates only the active request, caches successful data for one hour, and retries failures after a 30-second expiry. Tests cover stalled-request abort, failure retry, successful pricing, and timeout cleanup. The workaround should still be deleted once Pi's bundled models.dev data includes the required pricing.
+The temporary live `models.dev` fetch and its cache were removed after verifying Pi's bundled GitHub Copilot catalog now carries nonzero pricing for all 22 current models. Footer cost display and Stats aggregation now rely on Pi's authoritative model metadata and perform no independent pricing network request.
 
 ---
 
@@ -333,23 +301,11 @@ After removing `pi-plan-mode`, the repository contains 15 `pi-*` extensions plus
 
 ---
 
-### 34. The aggregate package has no composition root, so manifest order and module-global state act as an undocumented runtime API — **substantially resolved**
+### 34. The aggregate package has no composition root, so manifest order and module-global state act as an undocumented runtime API — **resolved by explicit runtime contracts**
 
-**Remaining evidence**
+Separate aggregate/standalone entrypoints remain intentional because Pi package filtering depends on them. Cross-cutting settings, tool finalization, footer providers, provider overrides, lifecycle state, Tiny MCP managers, and Subagent managers are keyed by Pi's shared event bus rather than extension object or process identity. Multiple physical `pip-common` copies coordinate through that runtime key, and registration is load-order safe.
 
-- `package.json` intentionally loads separate, filterable factories rather than one root factory.
-- Cross-cutting Tool UI decoration and settings discovery still coordinate through `pip-common`, although those services are now runtime-keyed and load-order safe.
-- Child extension selection is still implemented separately in Subagents through path filtering rather than a declared capability profile.
-
-**Remaining impact**
-
-The aggregate and standalone packaging contracts are now compatible with runtime isolation, but child startup policy remains implicit. A future extension can still be accidentally loaded into children until section 6 introduces an explicit profile.
-
-**Resolution status**
-
-Separate aggregate/standalone entrypoints remain intentional. Settings definitions now register inside factories, and settings, tool finalizers/registrations, footer providers, bootstrap lifecycle, Tiny MCP managers, and Subagent managers are scoped by Pi runtime rather than process lifetime. Multiple physical `pip-common` copies coordinate only through an event-bus-keyed runtime service.
-
-An explicit child-runtime capability profile is still missing, so extension selection in children remains load-order/path-policy driven. That remaining issue is tracked in section 6 of `TODO.md`; it no longer causes cross-runtime manager shutdown.
+Subagent child startup now applies the declarative `CHILD_EXTENSION_CAPABILITIES` profile: guards and requested headless tools are eligible, while UI, parent-state, provider, external-resource, nested-agent, telemetry, and parent-prompt capabilities are excluded. Tests verify the explicit profile and parent/child resource isolation.
 
 ---
 
@@ -390,6 +346,6 @@ Every feature manifest now has an explicit runtime file allowlist. Footer and St
 8. **Correctness/UI:** subagent usage deduplication, quota identity/cache correctness, compacted-context accounting, Tool UI error rendering, live settings propagation, and list scrolling.
 9. **Mechanical simplification:** remove dead registries, dead `session_end`, empty helpers, unused imports/settings, `as any` scratch state, stale docs, and unintended package files.
 
-## Current assessment
+## Final assessment
 
-The repository has strong breadth of tests and several thoughtful shared abstractions, but it currently behaves as a coupled application presented as independent plugins. The most important gaps sit outside tested happy paths: trust boundaries, product/package ownership, parent/child runtime state, provider override composition, lifecycle cleanup, persistence invariants, and exact Pi tool error/output contracts. Establishing one explicit runtime and distribution boundary will make the security and correctness fixes substantially simpler; cosmetic folder consolidation will not.
+The repository now has an explicit aggregate-plus-standalone distribution contract, removable feature boundaries, runtime-scoped shared services, a declarative child capability profile, coordinated provider ownership, transactional persistence, bounded network/tool output, and regression coverage for the audited trust and lifecycle boundaries. Remaining constraints—such as cross-process settings last-writer-wins semantics—are documented tradeoffs rather than unresolved findings.
