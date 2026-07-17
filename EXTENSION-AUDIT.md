@@ -130,39 +130,15 @@ Webfetch now uses a dependency-free HTTP(S) transport that validates every redir
 
 ---
 
-### 11. Tool UI overrides five built-ins without preserving their prompt metadata
+### 11. Tool UI overrides five built-ins without preserving their prompt metadata — **resolved**
 
-**Evidence**
-
-- `pi-tool-ui/index.ts:265-281` constructs replacement definitions for `read`, `grep`, `find`, `ls`, and `edit` but copies only name, label, description, parameters, argument preparation, and execution mode.
-- It does not set `promptSnippet` or `promptGuidelines`.
-- Pi’s current extension contract explicitly says built-in prompt metadata is **not inherited** when overriding a built-in tool.
-
-**Impact**
-
-Loading `pi-tool-ui` removes Pi’s built-in one-line tool snippets/guidelines for those tools from the system prompt. This can degrade model tool selection and correct usage even though execution still works.
-
-**Recommended direction**
-
-Preserve the built-in prompt metadata explicitly, or avoid execution overrides when only rendering needs to change. The latter would be the cleaner architecture if Pi exposes a renderer-only registration mechanism.
+Tool UI now builds from Pi's public `create*ToolDefinition()` factories rather than the stripped core `AgentTool` wrappers. Each override spreads the complete built-in definition before replacing execution/rendering, preserving prompt snippets, guidelines, argument preparation, execution mode, and future definition metadata. Tests verify prompt snippets for all five overridden tools and Read/Edit guidelines.
 
 ---
 
-### 12. Tool UI can hide real errors in collapsed output
+### 12. Tool UI can hide real errors in collapsed output — **resolved**
 
-**Evidence**
-
-- `pi-tool-ui/index.ts:89-93` decides whether a result is an error by matching text prefixes (`error`, `access denied`, or `failed`).
-- `pi-tool-ui/index.ts:99-103` ignores the renderer context’s authoritative `context.isError` for quiet built-in results.
-- `pi-tool-ui/index.ts:198-201` does the same for edit fallback.
-
-**Impact**
-
-Errors whose message starts with another phrase—such as `ENOENT`, `Path not found`, or transport-specific text—can render as an empty collapsed result.
-
-**Recommended direction**
-
-Use `context.isError` as the source of truth and show the first bounded line for every failed execution.
+Built-in and Pip display adapters now treat renderer `context.isError` as authoritative instead of guessing from text prefixes. Every collapsed failure renders a first-line fallback bounded to 200 columns, including empty, `ENOENT`, and `Path not found` errors; error-looking successful text remains quiet. Edit errors suppress stale success diffs. Regression tests cover each case.
 
 ---
 

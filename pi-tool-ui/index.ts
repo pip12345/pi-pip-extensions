@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createEditTool, createFindTool, createGrepTool, createLsTool, createReadTool } from "@earendil-works/pi-coding-agent";
+import { createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition, createReadToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { createLifecycle, firstResultText, listPipToolRegistrations, onPipToolRegistrationChange, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "../pip-common/index.ts";
@@ -27,11 +27,11 @@ const COMPACT_PIP_TOOLS = new Set(["todo_write", "todo_update", "todo_read", "ti
 
 function createBuiltInTools(cwd: string): BuiltIns {
   return {
-    read: createReadTool(cwd),
-    grep: createGrepTool(cwd),
-    find: createFindTool(cwd),
-    ls: createLsTool(cwd),
-    edit: createEditTool(cwd),
+    read: createReadToolDefinition(cwd),
+    grep: createGrepToolDefinition(cwd),
+    find: createFindToolDefinition(cwd),
+    ls: createLsToolDefinition(cwd),
+    edit: createEditToolDefinition(cwd),
   };
 }
 
@@ -81,10 +81,13 @@ function builtinRenderFallback(name: BuiltinName, kind: "renderCall" | "renderRe
   return (getBuiltInTools(process.cwd())[name] as any)[kind]?.(...args) ?? fallback;
 }
 
-function renderErrorIfCollapsed(result: any, theme: any): Component {
-  const text = firstResultText(result).trim();
-  if (/^(error|access denied|failed)\b/i.test(text)) return new Text(themeFg(theme, "error", text.split("\n")[0] ?? text), 0, 0);
-  return EMPTY_COMPONENT;
+function collapsedError(result: any): string {
+  const firstLine = firstResultText(result).trim().split(/\r?\n/, 1)[0] || "Tool failed";
+  return safeTruncateToWidth(firstLine, 200);
+}
+
+function renderErrorIfCollapsed(result: any, theme: any, isError: boolean): Component {
+  return isError ? new Text(themeFg(theme, "error", collapsedError(result)), 0, 0) : EMPTY_COMPONENT;
 }
 
 function quietCall(label: string, summarize: (args: any) => string) {
@@ -94,7 +97,7 @@ function quietCall(label: string, summarize: (args: any) => string) {
 function quietResult(settings: ScopedSettings, tool: BuiltinName) {
   return (result: any, { expanded }: any, theme: any, context: any) => {
     if (!adapterEnabled(settings, settingKey(tool))) return builtinRenderFallback(tool, "renderResult", [result, { expanded }, theme, context], expandedOutput(result, theme));
-    if (!expanded) return renderErrorIfCollapsed(result, theme);
+    if (!expanded) return renderErrorIfCollapsed(result, theme, Boolean(context?.isError));
     return expandedOutput(result, theme);
   };
 }
@@ -193,8 +196,8 @@ function createBuiltinAdapters(settings: ScopedSettings): SlotAdapter[] {
     },
     renderResult(result, options, theme, context) {
       if (!adapterEnabled(settings, "editDiff")) return safeCachedComponent(builtinRenderFallback("edit", "renderResult", [result, options, theme, context], expandedOutput(result, theme)));
-      const renderedDiff = reusableEditResultComponent(settings, result, theme, context?.lastComponent);
-      return renderedDiff ?? safeCachedComponent(renderErrorIfCollapsed(result, theme));
+      const renderedDiff = context?.isError ? undefined : reusableEditResultComponent(settings, result, theme, context?.lastComponent);
+      return renderedDiff ?? safeCachedComponent(renderErrorIfCollapsed(result, theme, Boolean(context?.isError)));
     },
   },
   ];
@@ -207,15 +210,15 @@ function renderDisplayPipCall(toolName: string, display: any) {
 function renderDisplayPipResult(display: any) {
   return (result: any, options: any, theme: any, context?: any) => {
     const rawText = firstResultText(result);
-    const isError = context?.isError || /^(error|access denied|failed)\b/i.test(rawText.trim());
+    const isError = Boolean(context?.isError);
     const resultText = display.result?.(result);
     if (options?.expanded) {
       const expanded = display.expandedResult?.(result) ?? resultText ?? rawText;
       return textLines(expanded, theme);
     }
     if (display.hideSuccessfulResult && !isError) return EMPTY_COMPONENT;
-    const collapsed = resultText ?? (isError ? rawText.split("\n")[0] : undefined);
-    if (collapsed?.trim()) return new Text(themeFg(theme, isError ? "error" : "muted", collapsed), 0, 0);
+    const collapsed = isError ? collapsedError(result) : resultText;
+    if (collapsed?.trim()) return new Text(themeFg(theme, isError ? "error" : "muted", isError ? collapsed : safeTruncateToWidth(collapsed, 200)), 0, 0);
     return EMPTY_COMPONENT;
   };
 }
@@ -261,12 +264,7 @@ function registerToolUiSettings(pi: ExtensionAPI, adapters: SlotAdapter[]): void
 function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter, settings: ScopedSettings): void {
   const builtin = getBuiltInTools(process.cwd())[adapter.tool];
   const tool: ToolDefinition<any, any, any> = {
-    name: builtin.name,
-    label: builtin.label,
-    description: builtin.description,
-    parameters: builtin.parameters,
-    prepareArguments: builtin.prepareArguments,
-    executionMode: builtin.executionMode,
+    ...builtin,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       return getBuiltInTools(ctx.cwd ?? process.cwd())[adapter.tool].execute(toolCallId, params, signal, onUpdate, ctx);
     },
