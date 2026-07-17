@@ -8,7 +8,7 @@ Minimal session-scoped todo tools for pi.
 - `todo_update` - batch update existing todos by `id` or text match
 - `todo_read` - read the current todo list
 
-Todos are flat and use three states: `pending`, `active`, and `done`. Prefer batch writes/updates to avoid tool-call spam.
+Todos are flat and use three states: `pending`, `active`, and `done`. Prefer batch writes/updates to avoid tool-call spam. A session list is limited to 100 todos, each todo is limited to 500 characters, and one `todo_update` call accepts at most 100 updates.
 
 When `pi-tool-ui` is installed and enabled, todo tool rows render compactly while the always-on todo widget remains the main progress display.
 

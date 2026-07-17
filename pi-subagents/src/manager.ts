@@ -329,6 +329,7 @@ export class SubagentManager {
     });
     await generation;
     if (run.status === "error") throw new Error(run.errorText ?? `Subagent ${run.id} failed.`);
+    if (run.status === "cancelled") throw new Error(`Subagent ${run.id} was cancelled.`);
   }
 
   async steer(run: SubagentRun, message: string, agent?: AgentConfig, signal?: AbortSignal): Promise<void> {

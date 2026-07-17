@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import todoExtension, { __test, renderCompactTodos, stateFromBranch } from "./index.ts";
+import todoExtension, { __test, renderCompactTodos, stateFromBranch, TODO_LIMITS } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
 import { flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, stripAnsi } from "../pip-common/index.ts";
 
@@ -94,6 +94,30 @@ describe("pi-todo", () => {
     expect(result.details.errors).toContain("Update requires id or match");
     expect(result.details.errors).toContain('No change specified for "Only"');
     expect(pi.entries).toHaveLength(before);
+  });
+
+  it("bounds model-supplied todo counts and text before persistence", async () => {
+    const pi = createMockPi();
+    const ctx = createMockCtx();
+    todoExtension(pi as any);
+    flushPipTools(pi as any);
+    const write = getRegisteredTool(pi, "todo_write");
+    const update = getRegisteredTool(pi, "todo_update");
+
+    await expect(write.execute("call", { todos: Array.from({ length: TODO_LIMITS.items + 1 }, (_, index) => ({ text: `Todo ${index}` })) }, undefined, undefined, ctx)).rejects.toThrow(/at most 100 todos/);
+    await expect(write.execute("call", { todos: [{ text: "x".repeat(TODO_LIMITS.textLength + 1) }] }, undefined, undefined, ctx)).rejects.toThrow(/500 characters or fewer/);
+    await expect(update.execute("call", { updates: Array.from({ length: TODO_LIMITS.updates + 1 }, () => ({ id: 1, status: "done" })) }, undefined, undefined, ctx)).rejects.toThrow(/at most 100 updates/);
+    expect(pi.entries).toHaveLength(0);
+  });
+
+  it("bounds restored legacy todo state and read output", () => {
+    const state = stateFromBranch([{ customType: __test.CUSTOM_TYPE, data: {
+      todos: Array.from({ length: TODO_LIMITS.items + 20 }, (_, index) => ({ id: index + 1, text: "x".repeat(TODO_LIMITS.textLength + 20), status: "pending" })),
+      nextId: TODO_LIMITS.items + 21,
+    } }]);
+    expect(state.todos).toHaveLength(TODO_LIMITS.items);
+    expect(state.todos.every((todo) => todo.text.length <= TODO_LIMITS.textLength)).toBe(true);
+    expect(__test.compactList(state.todos).length).toBeLessThanOrEqual(TODO_LIMITS.items * (TODO_LIMITS.textLength + 30));
   });
 
   it("todo_read returns a compact list", async () => {

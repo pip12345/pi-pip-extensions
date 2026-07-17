@@ -763,6 +763,25 @@ describe("pi-subagents", () => {
     }
   });
 
+  it("reports parent-cancelled continuations as tool failures", async () => {
+    const manager = new SubagentManager({ runner: new FakeRunner() });
+    const pi = createMockPi();
+    setPipSettingsRegistryForTests(pi, createSettingsRegistry({}, { persistPath: false }));
+    createSubagentsExtension({ manager })(pi as any);
+    flushPipTools(pi as any);
+    const tool = getRegisteredTool(pi, "subagent");
+    const ctx = createMockCtx();
+    const launched = await tool.execute("1", { agent: "explore", prompt: "first", keep: true }, undefined, undefined, ctx);
+    const id = launched.content[0].text.match(/subagent_id: (\S+)/)?.[1];
+    const run = manager.resolve(id, "unknown")!;
+    run.continuePrompt = async () => new Promise<void>((resolve) => run.abortController.signal.addEventListener("abort", () => resolve(), { once: true }));
+    const controller = new AbortController();
+    const continuing = tool.execute("2", { id, prompt: "again" }, controller.signal, undefined, ctx);
+    await Promise.resolve();
+    controller.abort();
+    await expect(continuing).rejects.toThrow(/was cancelled/);
+  });
+
   it("failed kept continuation cleans up running state", async () => {
     const runner = new FakeRunner();
     runner.failContinue = true;
@@ -940,7 +959,7 @@ describe("pi-subagents", () => {
     expect(run.runPromise).not.toBe(previousRunPromise);
     expect(run.detachPromise).not.toBe(previousDetachPromise);
     parent.abort();
-    await continuing;
+    await expect(continuing).rejects.toThrow(/was cancelled/);
 
     expect(run.status).toBe("cancelled");
     expect(run.removeParentAbort).toBeUndefined();
