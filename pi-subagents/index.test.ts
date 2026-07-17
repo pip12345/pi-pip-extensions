@@ -232,6 +232,7 @@ describe("pi-subagents", () => {
     expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
     await getRegisteredShortcut(pi, "ctrl+shift+b").handler(ctx);
     expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+    await expect(getRegisteredTool(pi, "subagent").execute("disabled", {}, undefined, undefined, ctx)).rejects.toThrow(/disabled/);
   });
 
   it("injects project agent names from a trusted workspace", async () => {
@@ -330,24 +331,18 @@ describe("pi-subagents", () => {
   it("rejects model overrides outside launch", async () => {
     const { tool } = setup();
     const ctx = createMockCtx();
-    const result = await tool.execute("1", { action: "status", id: "missing", model: "openai/gpt-5.1" }, undefined, undefined, ctx);
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("only supported when launching");
+    await expect(tool.execute("1", { action: "status", id: "missing", model: "openai/gpt-5.1" }, undefined, undefined, ctx)).rejects.toThrow(/only supported when launching/);
 
     const launched = await tool.execute("2", { agent: "explore", prompt: "one" }, undefined, undefined, ctx);
     const id = launched.content[0].text.match(/subagent_id: (\S+)/)?.[1];
-    const ignoredContinuationOverride = await tool.execute("3", { action: "launch", id, prompt: "again", model: "openai/gpt-5.1" }, undefined, undefined, ctx);
-    expect(ignoredContinuationOverride.isError).toBe(true);
-    expect(ignoredContinuationOverride.content[0].text).toContain("only supported when launching");
+    await expect(tool.execute("3", { action: "launch", id, prompt: "again", model: "openai/gpt-5.1" }, undefined, undefined, ctx)).rejects.toThrow(/only supported when launching/);
   });
 
   it("rejects malformed launch model overrides", async () => {
     const { tool } = setup();
     const ctx = createMockCtx({ model: { provider: "openai", id: "gpt-parent" } });
     for (const model of ["gpt-5.1", "/gpt-5.1", "openai/", " openai/gpt-5.1", "openai/gpt 5.1"]) {
-      const result = await tool.execute("1", { agent: "explore", prompt: "bad", model }, undefined, undefined, ctx);
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("provider/model-id");
+      await expect(tool.execute("1", { agent: "explore", prompt: "bad", model }, undefined, undefined, ctx)).rejects.toThrow(/provider\/model-id/);
     }
   });
 
@@ -375,11 +370,7 @@ describe("pi-subagents", () => {
   it("real runner unknown model errors point to model discovery", async () => {
     const runner = new RealRunner(new ModelRuntime(false));
     const { tool } = setup(runner);
-    const result = await tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx());
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Unknown subagent model: openrouter/anthropic/claude-sonnet-4");
-    expect(result.content[0].text).toContain("action: \"models\"");
-    expect(result.content[0].text).toContain('query: "openrouter"');
+    await expect(tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx())).rejects.toThrow(/Unknown subagent model: openrouter\/anthropic\/claude-sonnet-4.*action: "models".*query: "openrouter"/s);
   });
 
   it("accumulates real child assistant usage and renders compact usage with cost", async () => {
@@ -607,8 +598,7 @@ describe("pi-subagents", () => {
 
       const otherBranch = ctxForSession(parentFile, process.cwd(), "m0", ["root", "m0"]);
       await emitEvent(secondPi, "session_start", {}, otherBranch);
-      const hidden = await secondTool.execute("3", { action: "status", id }, undefined, undefined, otherBranch);
-      expect(hidden.isError).toBe(true);
+      await expect(secondTool.execute("3", { action: "status", id }, undefined, undefined, otherBranch)).rejects.toThrow(/Subagent not found/);
       const listed = await secondTool.execute("4", {}, undefined, undefined, otherBranch);
       expect(listed.content[0].text).toBe("No retained subagents.");
     } finally {
@@ -701,10 +691,8 @@ describe("pi-subagents", () => {
       const otherParentList = await secondTool.execute("3", {}, undefined, undefined, ctxB);
       expect(otherParentList.content[0].text).toBe("No retained subagents.");
       const runId = secondManager.list(parentA)[0]?.id ?? "missing";
-      const crossReadByName = await secondTool.execute("4", { action: "status", id: "keep-a" }, undefined, undefined, ctxB);
-      expect(crossReadByName.isError).toBe(true);
-      const crossReadById = await secondTool.execute("5", { action: "status", id: runId }, undefined, undefined, ctxB);
-      expect(crossReadById.isError).toBe(true);
+      await expect(secondTool.execute("4", { action: "status", id: "keep-a" }, undefined, undefined, ctxB)).rejects.toThrow(/Subagent not found/);
+      await expect(secondTool.execute("5", { action: "status", id: runId }, undefined, undefined, ctxB)).rejects.toThrow(/Subagent not found/);
 
       await emitEvent(secondPi, "session_start", {}, ctxA);
       const continued = await secondTool.execute("6", { id: "keep-a", prompt: "again" }, undefined, undefined, ctxA);
@@ -781,9 +769,7 @@ describe("pi-subagents", () => {
     const { tool } = setup(runner);
     const ctx = createMockCtx();
     await tool.execute("1", { agent: "explore", prompt: "look", keep: true, name: "bad-continue" }, undefined, undefined, ctx);
-    const failed = await tool.execute("2", { id: "bad-continue", prompt: "again" }, undefined, undefined, ctx);
-    expect(failed.isError).toBe(true);
-    expect(failed.content[0].text).toContain("continue failed");
+    await expect(tool.execute("2", { id: "bad-continue", prompt: "again" }, undefined, undefined, ctx)).rejects.toThrow(/continue failed/);
     const status = await tool.execute("3", { action: "status", id: "bad-continue" }, undefined, undefined, ctx);
     expect(status.content[0].text).toContain("state: error");
   });
@@ -1144,9 +1130,7 @@ describe("pi-subagents", () => {
     const runner: Runner = { launch: async () => { throw new Error("boom"); } };
     const { tool } = setup(runner);
     const ctx = createMockCtx();
-    const result = await tool.execute("1", { agent: "explore", prompt: "fail" }, undefined, undefined, ctx);
-    expect(result.content[0].text).toContain("state: error");
-    expect(result.content[0].text).toContain("boom");
+    await expect(tool.execute("1", { agent: "explore", prompt: "fail" }, undefined, undefined, ctx)).rejects.toThrow(/boom/);
     const list = await tool.execute("2", {}, undefined, undefined, ctx);
     expect(list.content[0].text).toContain("[error");
   });
@@ -1184,8 +1168,7 @@ describe("pi-subagents", () => {
     controller.abort();
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(run.status).toBe("cancelled");
-    const result = await promise;
-    expect(result.content[0].text).toContain("state: cancelled");
+    await expect(promise).rejects.toThrow(/was cancelled/);
   });
 
   it("parent abort before runner wires cancel still marks run cancelled", async () => {
@@ -1205,8 +1188,7 @@ describe("pi-subagents", () => {
     const ctx = createMockCtx();
     const promise = tool.execute("1", { agent: "explore", prompt: "slow" }, controller.signal, undefined, ctx);
     controller.abort();
-    const result = await promise;
-    expect(result.content[0].text).toContain("state: cancelled");
+    await expect(promise).rejects.toThrow(/was cancelled/);
   });
 
   it("already-aborted parent signal prevents launch from completing", async () => {
@@ -1220,8 +1202,7 @@ describe("pi-subagents", () => {
     const { tool } = setup(runner);
     const controller = new AbortController();
     controller.abort();
-    const result = await tool.execute("1", { agent: "explore", prompt: "slow" }, controller.signal, undefined, createMockCtx());
-    expect(result.content[0].text).toContain("state: cancelled");
+    await expect(tool.execute("1", { agent: "explore", prompt: "slow" }, controller.signal, undefined, createMockCtx())).rejects.toThrow(/was cancelled/);
   });
 
   it("shutdown aborts runs before runner wires cancel", async () => {

@@ -51,8 +51,8 @@ function launchModelOverride(params: SubagentParamsType): string | undefined {
   return parseModelRef(params.model).value;
 }
 
-function textResult(text: string, details?: any, isError = false) {
-  return { content: [{ type: "text" as const, text }], details, isError };
+function textResult(text: string, details?: any) {
+  return { content: [{ type: "text" as const, text }], details };
 }
 
 function projectTrusted(ctx: any): boolean {
@@ -232,7 +232,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
         renderCall: renderSubagentCall,
         renderResult: (result: any, renderOptions: any, theme: any) => renderSubagentResult(result, renderOptions, theme, settings),
         async execute(_toolCallId: string, params: SubagentParamsType, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-          if (!settings.get("enabled", true)) return textResult("Subagents are disabled in /pip-settings.", undefined, true);
+          if (!settings.get("enabled", true)) throw new Error("Subagents are disabled in /pip-settings.");
           const cwd = ctx?.cwd ?? process.cwd();
           const trusted = projectTrusted(ctx);
           const key = parentKey(ctx);
@@ -255,7 +255,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               if (!run) throw new Error(`Subagent not found: ${params.id ?? "<missing id>"}`);
               if (params.wait && run.status === "running") await waitRun(run, params.timeoutMs ?? 60_000);
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
+              return textResult(formatRunStatus(snapshot, settings), { run: snapshot });
             }
             if (action === "background") {
               const runs = params.id ? [manager.resolve(params.id, key)].filter((run): run is SubagentRun => Boolean(run)) : manager.detachAll(key);
@@ -294,7 +294,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent, trusted), signal);
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
+              return textResult(formatRunStatus(snapshot, settings), { run: snapshot });
             }
             if (!params.agent || !params.prompt) throw new Error("Launch requires agent and prompt, or use an action.");
             const agent = findAgent(cwd, params.agent, trusted);
@@ -308,9 +308,11 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             const outcome = await waitRun(run);
             if (outcome === "detached") return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nMoved to background. ${backgroundHint}`, { run: manager.snapshot(run) });
             const snapshot = manager.snapshot(run);
-            return textResult(formatRunStatus(snapshot, settings), { run: snapshot }, run.status === "error");
+            if (run.status === "error") throw new Error(run.errorText ?? `Subagent ${run.id} failed.`);
+            if (run.status === "cancelled") throw new Error(`Subagent ${run.id} was cancelled.`);
+            return textResult(formatRunStatus(snapshot, settings), { run: snapshot });
           } catch (error) {
-            return textResult(error instanceof Error ? error.message : String(error), undefined, true);
+            throw error instanceof Error ? error : new Error(String(error));
           }
         },
       },
