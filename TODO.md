@@ -121,12 +121,12 @@
 
 ### Tree Edit
 
-- [ ] Move Tree Edit onto `pip-common`'s atomic session-file writer.
-- [ ] Reuse managed collision-safe backups and retention.
-- [ ] Persist the selected target leaf using Pi's effective-final-record invariant.
-- [ ] Replace `as any` scratch properties with typed operation results/state.
-- [ ] Test save, process restart/reopen, and restored current leaf.
-- [ ] Test interrupted/failed saves without corrupting the active session.
+- [x] Move Tree Edit onto `pip-common`'s atomic session-file writer.
+- [x] Reuse managed collision-safe backups and retention.
+- [x] Persist the selected target leaf using Pi's effective-final-record invariant.
+- [x] Replace `as any` scratch properties with typed operation results/state.
+- [x] Test save, process restart/reopen, and restored current leaf.
+- [x] Test interrupted/failed saves without corrupting the active session.
 
 ### Context
 

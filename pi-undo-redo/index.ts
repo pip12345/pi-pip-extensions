@@ -8,9 +8,12 @@ import {
   hasExternalChildren,
   hashSessionRecords,
   isSessionEntry,
+  makeEffectiveLeafLast,
   parseSessionFile,
   parentIdOf,
   registerSettingsSection,
+  sessionHeaderLeafValues,
+  setSessionHeaderLeaf,
   settingsFor,
   type ScopedSettings,
   setting,
@@ -158,16 +161,6 @@ function leafFromCtx(ctx: Ctx, branch: any[]): string | undefined {
   return ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id;
 }
 
-function updateHeaderLeaf(header: any, leafId: string | null): void {
-  for (const key of ["leafId", "currentLeafId", "activeLeafId"]) {
-    if (key in header) header[key] = leafId;
-  }
-}
-
-function headerLeafValues(header: any): Array<string | null> {
-  return ["leafId", "currentLeafId", "activeLeafId"].filter((key) => key in header).map((key) => header[key] ?? null);
-}
-
 function backupOptions(settings: ScopedSettings) {
   const keep = Number.parseInt(String(settings.get<string>("keepBackups", "25")), 10) || 25;
   const maxAge = settings.get<string>("backupMaxAgeDays", "7");
@@ -227,20 +220,10 @@ async function replaceCurrentSession(ctx: Ctx, sessionFile: string, withSession?
   await withSession?.(ctx);
 }
 
-function makeEffectiveLeafLast(records: SessionRecord[], leafId: string | null): SessionRecord[] {
-  if (!leafId) return records;
-  const leafIndex = records.findIndex((record) => isSessionEntry(record) && record.id === leafId);
-  if (leafIndex < 0 || leafIndex === records.length - 1) return records;
-  const next = [...records];
-  const [leaf] = next.splice(leafIndex, 1);
-  next.push(leaf);
-  return next;
-}
-
 function removeTail(file: ParsedSessionFile, tail: SessionEntry[], previousLeafId: string | null): SessionRecord[] {
   const tailIds = new Set(tail.map((entry) => entry.id));
   const header = clone(file.header);
-  updateHeaderLeaf(header, previousLeafId);
+  setSessionHeaderLeaf(header, previousLeafId);
   const records = file.raw
     .map((record) => (record.type === "session" ? header : record))
     .filter((record) => !(isSessionEntry(record) && tailIds.has(record.id)));
@@ -261,7 +244,7 @@ async function undo(ctx: Ctx, settings: ScopedSettings) {
   const branch = ctx.sessionManager.getBranch?.() ?? [];
   const currentLeafId = leafFromCtx(ctx, branch);
   const file = parseSessionFile(sessionFile);
-  const fileLeafValues = headerLeafValues(file.header);
+  const fileLeafValues = sessionHeaderLeafValues(file.header);
   if (fileLeafValues.some((fileLeaf) => fileLeaf !== currentLeafId)) throw new Error("Cannot undo: session file is out of sync.");
   const plan = planUndo(branch, file.entries, currentLeafId, sessionFile);
   const nextRecords = removeTail(file, plan.tail, plan.previousLeafId);

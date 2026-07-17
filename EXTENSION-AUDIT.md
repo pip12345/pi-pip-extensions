@@ -228,22 +228,9 @@ Prefer session-local persisted metadata if possible. Otherwise use per-session f
 
 ---
 
-### 18. Tree Edit has untyped operation state and uses a non-atomic destructive save — **partially resolved**
+### 18. Tree Edit has untyped operation state and uses a non-atomic destructive save — **resolved**
 
-The empty highlight timer scaffold was removed during cleanup.
-
-**Remaining evidence**
-
-- `pi-tree-edit/index.ts` passes operation state through ad-hoc `as any` properties named `__lastFoldedIds` and `__lastVisibleRangeEntries`.
-- Tree Edit makes a backup and then overwrites the live session directly with `writeFileSync` instead of the existing atomic session writer in `pip-common`.
-
-**Impact**
-
-Internal state bypasses its type model, and a crash/interruption during save can corrupt the active session file despite the backup.
-
-**Recommended direction**
-
-Put summarize-range data in a typed result/state field and use the shared atomic session-file abstraction for save.
+Tree Edit now carries summarize-range data in its typed UI result and has no production `as any` scratch properties. Save validates the draft, creates a collision-safe managed backup with retention, and replaces the session through the shared atomic writer. That writer now preserves file mode, uses random temporary names, and removes temporary files after both success and failure. Regression coverage verifies failed replacement leaves the original target intact.
 
 ---
 
@@ -295,24 +282,9 @@ Session Stats now tracks cumulative Subagent usage by stable run ID, applies onl
 
 ---
 
-### 25. Tree Edit does not persist the selected current leaf
+### 25. Tree Edit does not persist the selected current leaf — **resolved**
 
-**Evidence**
-
-- Pi’s `SessionManager` restores the active leaf as the last entry in the JSONL file (`dist/core/session-manager.js:586-595`).
-- Tree Edit tracks the desired leaf separately as `draft.targetLeafId`.
-- `saveDraft()` writes `[draft.header, ...draft.entries]` in existing array order at `pi-tree-edit/index.ts:423-430`; it does not make `targetLeafId` the final effective record.
-- It then calls `navigateTree(targetLeafId)` only in the newly loaded in-memory session at `pi-tree-edit/index.ts:431-437`.
-
-**Impact**
-
-“Set current location” appears to work immediately after save, but after the next process restart/reload the session opens at whatever record happened to be last in the file, not the selected target. This is especially visible when selecting another branch without creating a new final entry.
-
-**Recommended direction**
-
-Before the atomic save, reorder the target leaf record to be the effective final record using the same session-file invariant already handled by Undo/Redo’s `makeEffectiveLeafLast()`. Add an integration test that saves, reopens with `SessionManager.open()`, and asserts `getLeafId()`.
-
-Tree Edit also creates unmanaged second-resolution `.bak-*` files beside sessions forever (`pi-tree-edit/index.ts:427-430`). Reuse `pip-common`’s collision-safe managed backup retention and atomic session writer.
+The effective-final-record invariant now belongs to `pip-common` and is shared by Tree Edit and Undo/Redo. Tree Edit updates known header leaf fields, moves the selected target record to the effective final position before atomic save, and keeps immediate in-memory navigation. An integration test saves a non-final branch target, reopens the file with Pi's real `SessionManager.open()`, and verifies `getLeafId()`. Backups live under the managed Tree Edit backup root rather than accumulating beside session files.
 
 ---
 

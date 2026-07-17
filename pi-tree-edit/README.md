@@ -8,7 +8,7 @@ Transactional conversation tree editor for Pi sessions.
 /tree-edit
 ```
 
-The editor loads the current session into an in-memory draft. Edits are not written until you quit and choose **Save and quit**.
+The editor loads the current session into an in-memory draft. Edits are not written until you quit and choose **Save and quit**. Saving creates a retained backup under `~/.pi/agent/pip/backup/tree-edit`, atomically replaces the session, and persists the selected current location across reopen/restart.
 
 By default, the view uses the `no-tools` filter: the normal tree view without tool results. Press `f` to cycle the same filters as Pi's `/tree`.
 

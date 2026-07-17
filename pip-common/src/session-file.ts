@@ -1,6 +1,6 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { ensurePipSubdir } from "./paths.ts";
 
 export type SessionHeader = { type: "session"; [key: string]: any };
@@ -42,9 +42,14 @@ export function serializeSessionFile(file: Pick<ParsedSessionFile, "header" | "e
 }
 
 export function writeSessionRecordsAtomic(path: string, records: SessionRecord[]): void {
-  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
-  writeFileSync(tmp, serializeSessionRecords(records));
-  renameSync(tmp, path);
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  const mode = existsSync(path) ? statSync(path).mode & 0o777 : 0o600;
+  try {
+    writeFileSync(tmp, serializeSessionRecords(records), { mode });
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export function writeSessionFileAtomic(path: string, file: Pick<ParsedSessionFile, "header" | "entries">): void {
@@ -108,6 +113,26 @@ export function cleanupBackups(dir: string, options: BackupCleanupOptions = {}):
     })
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const file of remaining.slice(Math.max(0, keepBackups))) unlinkSync(file.path);
+}
+
+export function makeEffectiveLeafLast(records: SessionRecord[], leafId: string | null): SessionRecord[] {
+  if (!leafId) return records;
+  const leafIndex = records.findIndex((record) => isSessionEntry(record) && record.id === leafId);
+  if (leafIndex < 0 || leafIndex === records.length - 1) return records;
+  const next = [...records];
+  const [leaf] = next.splice(leafIndex, 1);
+  next.push(leaf);
+  return next;
+}
+
+export function setSessionHeaderLeaf(header: SessionHeader, leafId: string | null): void {
+  for (const key of ["leafId", "currentLeafId", "activeLeafId"]) {
+    if (key in header) header[key] = leafId;
+  }
+}
+
+export function sessionHeaderLeafValues(header: SessionHeader): Array<string | null> {
+  return ["leafId", "currentLeafId", "activeLeafId"].filter((key) => key in header).map((key) => header[key] ?? null);
 }
 
 export function parentIdOf(entry: SessionEntry): string | null {

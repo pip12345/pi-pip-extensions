@@ -8,10 +8,15 @@ export type FileEntry = Header | Entry;
 export type SnapshotToolResults = "off" | "truncated" | "full";
 export type SummarySnapshotPolicy = { summarySnapshots: boolean; snapshotToolResults: SnapshotToolResults; toolResultTruncation: number };
 export type Clipboard =
-  | { kind: "entries"; entries: Entry[]; label: string; structure?: "linear" | "preserve" }
+  | { kind: "entries"; entries: Entry[]; label: string; structure?: "linear" | "preserve"; sourceEntryIds: string[] }
   | { kind: "summary"; summary: string; sourceEntryIds: string[]; sourceEntries?: Entry[]; label: string; snapshotPolicy: SummarySnapshotPolicy };
 
-export type ExitResult = { action: "quit" } | { action: "edit"; id: string } | { action: "summarize"; id: string } | { action: "compact"; id: string } | { action: "label"; id: string };
+export type ExitResult =
+  | { action: "quit" }
+  | { action: "edit"; id: string }
+  | { action: "summarize"; id: string; foldedIds: Set<string>; visibleRangeEntries: Entry[] }
+  | { action: "compact"; id: string }
+  | { action: "label"; id: string };
 export type FilterMode = "default" | "show-tools" | "user-only" | "labeled-only" | "all";
 export type TreeGutter = { position: number; show: boolean };
 export type SummarySourceVirtualRow = { kind: "summary-source"; summaryEntryId: string; sourceEntryId: string; fromSnapshot: boolean; missing?: boolean };

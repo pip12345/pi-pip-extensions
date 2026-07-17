@@ -4,10 +4,10 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
   return { ...actual, generateSummary: vi.fn(async () => "generated compaction summary") };
 });
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { generateSummary } from "@earendil-works/pi-coding-agent";
+import { generateSummary, SessionManager } from "@earendil-works/pi-coding-agent";
 import treeEdit from "./index.ts";
 import { getPipSettingsRegistry } from "../pip-common/index.ts";
 import { createMockPi, runCommand } from "../pip-common/testing.ts";
@@ -27,6 +27,54 @@ describe("pi-tree-edit", () => {
     expect(settings.definition("tree-edit")?.summarySnapshots.default).toBe(true);
     expect(settings.definition("tree-edit")?.snapshotToolResults.default).toBe("truncated");
     expect(settings.definition("tree-edit")?.toolResultTruncation.default).toBe(20000);
+  });
+
+  it("atomically persists the selected current leaf as the effective final record", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-leaf-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "session", version: 3, id: "session-test", timestamp: "2026-01-01T00:00:00.000Z", cwd: dir, leafId: "tail" }),
+        JSON.stringify({ type: "message", id: "root", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "root" }] } }),
+        JSON.stringify({ type: "message", id: "main", parentId: "root", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "main" }] } }),
+        JSON.stringify({ type: "message", id: "branch", parentId: "root", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "branch" }] } }),
+        JSON.stringify({ type: "message", id: "tail", parentId: "main", timestamp: "2026-01-01T00:00:03.000Z", message: { role: "user", content: [{ type: "text", text: "tail" }] } }),
+      ].join("\n") + "\n",
+    );
+
+    try {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      const ctx: any = {
+        waitForIdle: async () => undefined,
+        switchSession: async (_file: string, opts: any) => opts.withSession({ navigateTree: async () => undefined, ui: { notify: () => undefined } }),
+        sessionManager: { getSessionFile: () => sessionFile, getLeafId: () => "tail" },
+        ui: {
+          custom: async (factory: any) => {
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {} }, theme, undefined, (value: any) => { result = value; }) as any;
+            component.handleInput("j");
+            component.handleInput("return");
+            component.handleInput("q");
+            return result;
+          },
+          select: async () => "Save and quit",
+          notify: () => undefined,
+        },
+      };
+
+      await runCommand(pi, "tree-edit", "", ctx);
+
+      const records = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(records.at(-1)?.id).toBe("branch");
+      expect(records[0].leafId).toBe("branch");
+      expect(SessionManager.open(sessionFile).getLeafId()).toBe("branch");
+      expect(readdirSync(dir)).toEqual(["session.jsonl"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("compacts messages before the selected normal message", async () => {

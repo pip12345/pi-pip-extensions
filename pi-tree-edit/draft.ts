@@ -230,9 +230,8 @@ export class DraftSession {
       this.message = "Nothing to copy";
       return [];
     }
-    this.clipboard = { kind: "entries", entries: copied, label: `${copied.length} entr${copied.length === 1 ? "y" : "ies"}`, structure };
     const sourceIds = entries.map((e) => e.id);
-    (this.clipboard as any).sourceEntryIds = sourceIds;
+    this.clipboard = { kind: "entries", entries: copied, label: `${copied.length} entr${copied.length === 1 ? "y" : "ies"}`, structure, sourceEntryIds: sourceIds };
     this.markId = null;
     this.flashEntryIds = sourceIds;
     this.flashKind = "copy";
@@ -339,7 +338,7 @@ export class DraftSession {
     this.flashEntryIds = addedIds;
     this.flashKind = "paste";
     this.flashNonce += 1;
-    if (this.clipboard?.kind === "entries") (this.clipboard as any).sourceEntryIds = [];
+    if (this.clipboard?.kind === "entries") this.clipboard.sourceEntryIds = [];
     this.dirty = true;
     this.lastOperation = `pasted ${built.added.length} entr${built.added.length === 1 ? "y" : "ies"}`;
     this.message = `Pasted ${built.added.length} entr${built.added.length === 1 ? "y" : "ies"}${branch ? " as new branch" : ""}`;
@@ -476,7 +475,7 @@ export class DraftSession {
     this.flashEntryIds = addedIds;
     this.flashKind = "paste";
     this.flashNonce += 1;
-    if (this.clipboard?.kind === "entries") (this.clipboard as any).sourceEntryIds = [];
+    if (this.clipboard?.kind === "entries") this.clipboard.sourceEntryIds = [];
     this.cleanupLabels();
     this.lastOperation = `replaced ${range.length} with ${built.added.length}`;
     this.dirty = true;

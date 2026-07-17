@@ -14,13 +14,6 @@ export function parseSessionFile(path: string): { header: Header; entries: Entry
   return { header: clone(header), entries: raw.filter(isEntry).map(clone), raw };
 }
 
-export function timestampForFile(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-}
-
-
 export function validateDraft(header: Header, entries: Entry[]): string[] {
   const errors: string[] = [];
   if (!header || header.type !== "session") errors.push("Missing session header");
