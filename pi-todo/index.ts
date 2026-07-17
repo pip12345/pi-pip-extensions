@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { boxLines, branchEntries, firstResultText, hasTuiCustom, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
+import { boxLines, branchEntries, firstResultText, hasTuiCustom, moveSelection, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, selectionWindow, setting, settingsFor, themeFg, truncateToWidth, wrapAnsi } from "../pip-common/index.ts";
 
 export type TodoStatus = "pending" | "active" | "done";
 
@@ -227,6 +227,8 @@ function applyUpdates(state: TodoState, updates: Array<{ id?: number; match?: st
 
 class TodoInspector extends PipCustomComponent<void> {
   private selected = 0;
+  private offset = 0;
+  private pageSize = 1;
 
   constructor(tui: any, theme: any, done: () => void, private getState: () => TodoState, private mutate: (state: TodoState) => void) {
     super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d", "q", "Q"] });
@@ -234,8 +236,12 @@ class TodoInspector extends PipCustomComponent<void> {
 
   protected handleKey(key: string): void {
     const state = this.getState();
-    if (key === "up" || key === "k") this.selected = Math.max(0, this.selected - 1);
-    else if (key === "down" || key === "j") this.selected = Math.min(Math.max(0, state.todos.length - 1), this.selected + 1);
+    if (key === "up" || key === "k") this.selected = moveSelection(this.selected, -1, state.todos.length);
+    else if (key === "down" || key === "j") this.selected = moveSelection(this.selected, 1, state.todos.length);
+    else if (key === "pageup") this.selected = moveSelection(this.selected, -this.pageSize, state.todos.length);
+    else if (key === "pagedown") this.selected = moveSelection(this.selected, this.pageSize, state.todos.length);
+    else if (key === "home") this.selected = 0;
+    else if (key === "end") this.selected = Math.max(0, state.todos.length - 1);
     else if (key === "space") {
       const next = cloneState(state);
       const todo = next.todos[this.selected];
@@ -262,12 +268,23 @@ class TodoInspector extends PipCustomComponent<void> {
     const state = this.getState();
     const th = this.theme;
     const bodyWidth = Math.max(1, width);
-    const innerWidth = bodyWidth - 4;
-    const lines: string[] = [themeFg(th, "dim", "j/k move · space cycle · d delete · c clear done · q close"), ""];
+    const innerWidth = Math.max(1, bodyWidth - 4);
+    const bodyRows = this.overlayRowBudget({ maxRows: 24, minRows: 4, reservedRows: 2, maxHeightRatio: 0.8 });
+    const lines = [...wrapAnsi(themeFg(th, "dim", "j/k move · page up/down · space cycle · d delete · c clear done · q close"), innerWidth), ""];
     if (!state.todos.length) lines.push(themeFg(th, "dim", "No todos."));
-    for (const [index, todo] of state.todos.entries()) {
-      const marker = index === this.selected ? themeFg(th, "accent", "›") : " ";
-      lines.push(truncateToWidth(`${marker} ${renderIcon(todo, th)} ${themeFg(th, "accent", `#${todo.id}`)} ${renderTodoText(todo, th, "strike+dim")}`, innerWidth));
+    else {
+      this.selected = moveSelection(this.selected, 0, state.todos.length);
+      const available = Math.max(1, bodyRows - lines.length);
+      const showPosition = state.todos.length > available && available > 1;
+      this.pageSize = Math.max(1, available - (showPosition ? 1 : 0));
+      const view = selectionWindow(state.todos, this.selected, this.offset, this.pageSize);
+      this.selected = view.selected;
+      this.offset = view.offset;
+      for (const [relativeIndex, todo] of view.items.entries()) {
+        const marker = view.offset + relativeIndex === this.selected ? themeFg(th, "accent", "›") : " ";
+        lines.push(truncateToWidth(`${marker} ${renderIcon(todo, th)} ${themeFg(th, "accent", `#${todo.id}`)} ${renderTodoText(todo, th, "strike+dim")}`, innerWidth));
+      }
+      if (showPosition) lines.push(themeFg(th, "dim", `${view.offset + 1}–${view.end} of ${state.todos.length}`));
     }
     return boxLines(lines, bodyWidth, th, { title: "Todos" });
   }

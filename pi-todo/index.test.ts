@@ -258,4 +258,32 @@ describe("pi-todo", () => {
     expect(rendered).toContain("╰");
     expect(rendered).toContain("● #1 Visible");
   });
+
+  it("/todo inspector follows selection through a terminal-bounded viewport", async () => {
+    const pi = createMockPi();
+    const ctx = createMockCtx();
+    todoExtension(pi as any);
+    flushPipTools(pi as any);
+    await getRegisteredTool(pi, "todo_write").execute(
+      "call",
+      { todos: Array.from({ length: 20 }, (_, index) => ({ text: `Task ${index + 1}` })) },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    let component: any;
+    ctx.ui.custom = async (factory: any) => {
+      component = factory({ terminal: { rows: 15 }, requestRender() {} }, theme, {}, () => undefined);
+    };
+    await runCommand(pi, "todo", "", ctx);
+    for (let index = 1; index < 20; index++) component.handleInput("j");
+
+    const rendered = component.render(80).map(stripAnsi);
+    const text = rendered.join("\n");
+    expect(text).toContain("› □ #20 Task 20");
+    expect(text).toContain("of 20");
+    expect(text).not.toContain("#1 Task 1");
+    expect(rendered.length).toBeLessThanOrEqual(12);
+  });
 });

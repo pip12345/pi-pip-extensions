@@ -26,7 +26,7 @@ When `pi-tool-ui` is installed and enabled, todo tool rows render compactly whil
 /todo clear
 ```
 
-Plain `/todo` opens a small inspector. Use `j/k`, arrows, `space` to cycle status, `d` to delete, `c` to clear done, and `q`/Esc to close.
+Plain `/todo` opens a terminal-height-aware scrolling inspector. Use `j/k` or arrows to move, Page Up/Down and Home/End for larger jumps, `space` to cycle status, `d` to delete, `c` to clear done, and `q`/Esc to close.
 
 ## Storage
 

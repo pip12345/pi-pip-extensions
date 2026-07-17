@@ -140,8 +140,8 @@
 - [x] Preserve built-in prompt metadata when Tool UI overrides built-in tools, or avoid execution overrides if Pi supports renderer-only registration.
 - [x] Use renderer `context.isError` as the authoritative Tool UI error signal.
 - [x] Show a bounded first line for every collapsed failed execution.
-- [ ] Add scrolling viewports and hidden-count indicators to Question and Todo inspectors.
-- [ ] Add defensible Question schema count and text limits.
+- [x] Add scrolling viewports and hidden-count indicators to Question and Todo inspectors.
+- [x] Add defensible Question schema count and text limits.
 - [ ] Fix Footer quota identity, account/base-URL cache keys, stale state, and request races.
 - [ ] Skip Footer quota work entirely when disabled or headless.
 - [x] Stream and cap Webfetch response bodies before buffering.

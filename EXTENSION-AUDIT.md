@@ -7,7 +7,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 ## Cleanup progress — 2026-07-14
 
 - Findings 1–2 were resolved by removing `pi-plan-mode` and its shared read-only machinery.
-- Finding 27 was resolved by rendering Todo overflow counts in both directions and adding a regression test.
+- Findings 27–28 were resolved with correct Todo overflow counts plus terminal-bounded, selection-following Question and Todo viewports and bounded Question schemas.
 - Finding 35 was resolved by deleting the unused capability, prompt, and status registries; the consumed footer registry remains supported.
 - Findings 6, 20, and 36 were resolved by producing self-contained standalone packages with bundled `pip-common`, explicit runtime allowlists, and isolated Pi-loader tests.
 - Removable feature boundaries are now enforced: production sibling imports and reverse `pip-common` dependencies fail tests, while each standalone feature loads with only Pi and its bundled common runtime.
@@ -291,21 +291,11 @@ When the active/pending window starts in the middle or near the end of a long to
 
 ---
 
-### 28. Question and Todo inspectors lack a real scrolling viewport for model-sized lists
+### 28. Question and Todo inspectors lack a real scrolling viewport for model-sized lists — **resolved**
 
-**Evidence**
+Question and Todo now derive bounded body heights from the shared terminal-aware overlay row budget and use shared selection/scroll windows. Their viewports follow selection, show position and hidden-row/item counts, and wrap explanatory hints. Question additionally keeps the active late tab visible, aligns wrapped option windows to label boundaries, and supports review scrolling; Todo supports line, page, Home, and End navigation.
 
-- Question schemas impose no maximum question/option count at `pi-question/src/schema.ts:3-21`.
-- `QuestionComponent.render()` renders every option and only truncates the tab strip at `pi-question/src/ui.ts:105-145`; selection can move to options/tabs that are no longer visible.
-- `TodoInspector.render()` emits every todo at `pi-todo/index.ts:276-287` despite using an overlay capped at 80% terminal height.
-
-**Impact**
-
-A large but schema-valid model tool call or todo list creates an unusable dialog: the selected row can move below the visible overlay, later question tabs disappear from the truncated strip, and there is no scroll indicator or offset tracking.
-
-**Recommended direction**
-
-Use the shared overlay row-budget/selection-offset abstraction, render a bounded slice around selection, and show position/hidden counts. Add defensible schema count/text limits as a resource bound, not as the only UI fix. Wrap explanatory hints instead of relying on `boxLines()`’s safety truncation.
+Question input is independently resource-bounded to 8 questions, 12 options per question, 500-character question/description prose, and 120-character labels. Runtime validation mirrors the TypeBox schema. Regression tests exercise late tabs, long wrapped option lists, terminal-height bounds, Todo selection near the end, and each schema count/text ceiling.
 
 ---
 
