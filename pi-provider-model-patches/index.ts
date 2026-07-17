@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getPipSettingsRegistry, registerSettingsSection, setting, type SettingsRegistry } from "pip-common";
+import { getPipSettingsRegistry, registerProviderOverrideContributor, registerSettingsSection, setting, type SettingsRegistry } from "../pip-common/index.ts";
 import { loadUserModelPatches, mergeModelPatches, USER_PATCHES_PATH } from "./config.ts";
 import { BUILTIN_MODEL_PATCHES, getBuiltinPatchProviderCatalog } from "./presets.ts";
 import type { ModelPatchMetadata, PatchBuildResult, PatchModelDefinition, ProviderModelPatch } from "./types.ts";
@@ -225,6 +225,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
   const settings = options.settings ?? defaultSettings(getPipSettingsRegistry(pi));
   const appliedIds = new Map<string, Set<string>>();
   const baseModels = new Map<string, Model<Api>[]>();
+  const providerOverrides = registerProviderOverrideContributor(pi, { id: "pi-provider-model-patches", role: "catalog" });
 
   // Pi resolves the initial/session model after extension loading but before session_start.
   // Pre-register enabled package-owned catalogs here so saved patched models can be restored.
@@ -239,7 +240,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     const firstTemplate = result.templates[0];
     if (!firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
     baseModels.set(provider, catalog.models.filter((model) => model.provider === provider));
-    pi.registerProvider(provider, {
+    providerOverrides.set(provider, {
       baseUrl: firstTemplate.baseUrl,
       api: firstTemplate.api,
       oauth: catalog.oauth,
@@ -269,7 +270,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
 
     if (!enabled.length) {
       if (appliedIds.has(provider)) {
-        pi.unregisterProvider(provider);
+        providerOverrides.remove(provider);
         appliedIds.delete(provider);
         await switchFromRemovedModel(ctx, provider, previouslyAdded);
       }
@@ -293,7 +294,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     if (result.addedIds.length && !firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
 
     if (appliedIds.has(provider)) {
-      pi.unregisterProvider(provider);
+      providerOverrides.remove(provider);
       appliedIds.delete(provider);
     }
     if (!result.addedIds.length) {
@@ -301,7 +302,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
       return { provider, addedIds: [], unavailableIds: [] };
     }
 
-    pi.registerProvider(provider, {
+    providerOverrides.set(provider, {
       baseUrl: firstTemplate!.baseUrl,
       api: firstTemplate!.api,
       ...auth,
@@ -311,7 +312,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     const availableAdded = result.addedIds.filter((id) => Boolean(ctx.modelRegistry.find(provider, id)));
     const unavailableIds = result.addedIds.filter((id) => !availableAdded.includes(id));
     if (!availableAdded.length) {
-      pi.unregisterProvider(provider);
+      providerOverrides.remove(provider);
       await switchFromRemovedModel(ctx, provider, previouslyAdded);
       return { provider, addedIds: [], unavailableIds };
     }
@@ -388,6 +389,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
   });
 
   pi.on("session_shutdown", async () => {
+    providerOverrides.dispose();
     appliedIds.clear();
   });
 }

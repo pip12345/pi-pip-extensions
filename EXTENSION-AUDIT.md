@@ -261,21 +261,9 @@ Put summarize-range data in a typed result/state field and use the shared atomic
 
 ---
 
-### 19. Provider OAuth code has avoidable secret/error and cancellation hazards
+### 19. Provider OAuth code has avoidable secret/error and cancellation hazards — **resolved**
 
-**Evidence**
-
-- Token-response validators in `pi-provider-proxy/index.ts` stringify the entire response when required fields are missing; a partial response can therefore place an access or refresh token in an error message.
-- The OAuth callback wait is not directly raced against the callback abort signal, so cancellation/error callback paths can leave a listener/server waiting longer than necessary.
-- The polling `sleep()` installs an abort listener per iteration without removing it when the timer resolves.
-
-**Impact**
-
-Malformed token responses can leak credentials into logs/UI, cancellation can be sluggish, and long device-code polling can accumulate listeners and trigger warnings.
-
-**Recommended direction**
-
-Redact token-shaped fields in every error, make callback waits abort-aware, and always remove abort listeners on both timer resolution and rejection.
+OAuth HTTP and validation errors now omit response bodies and values rather than serializing token responses, and displayed endpoints exclude credentials and query strings. Browser callback waits cancel directly from the login signal and remove their abort listeners when settled. Device polling sleep removes its listener on both timer completion and abort. Regression tests cover malformed/HTTP response redaction and callback cancellation.
 
 ---
 
@@ -419,40 +407,15 @@ Stream and cap response bytes before parsing, treat JSON-RPC errors/invalid payl
 
 ---
 
-### 30. Provider Proxy does not fully reconcile or tear down dynamic provider overrides
+### 30. Provider Proxy does not fully reconcile or tear down dynamic provider overrides — **resolved**
 
-**Evidence**
-
-- The extension tracks applied providers in `pi-provider-proxy/index.ts:858-889` and already has `unapply()`.
-- `session_shutdown` merely clears `appliedProviders` at `pi-provider-proxy/index.ts:1057-1059`; it does not call `pi.unregisterProvider()`.
-- `/proxy` reloads the config file at the start of each command (`:912-925`), but status/on do not unregister providers removed by an external edit before applying the new set.
-- Config writes at `pi-provider-proxy/index.ts:203-208` are direct/non-atomic.
-
-**Impact**
-
-On reload/removal/load failure, stale dynamic provider overrides can survive in Pi’s model registry, especially if the new extension version no longer registers the same provider. A manually edited config can report one state while the runtime continues using old routes. This is particularly risky for auth/API relay URLs.
-
-**Recommended direction**
-
-Reconcile desired versus applied provider IDs on every load and call `unapply()` during shutdown. Make config writes atomic. Add a lifecycle test for register → shutdown/reload with the provider removed.
+Provider Proxy now derives the complete desired provider set from each changed config load, removes no-longer-desired contributions, and reapplies changed routes. Shutdown disposes all of its coordinator contributions, restoring either the remaining catalog contribution or Pi's built-in provider. Config writes use a same-directory private temporary file and atomic rename.
 
 ---
 
-### 31. Live Copilot pricing fallback has no timeout and permanently caches transient failure
+### 31. Live Copilot pricing fallback has no timeout and permanently caches transient failure — **resolved pending upstream removal**
 
-**Evidence**
-
-- `pip-common/src/temporary-live-models-dev-pricing.ts:35-42` performs a global `fetch("https://models.dev/api.json")` with no timeout.
-- The resulting promise, including `undefined` after any error/non-OK response, is cached for the process lifetime.
-- Both Stats and Footer await this helper in `message_end` handlers.
-
-**Impact**
-
-A hanging network request can stall message-end handling, while one transient outage disables the fallback for the rest of the process. Every subagent child also loads the stats/footer extensions, increasing the number of event paths depending on this shared promise.
-
-**Recommended direction**
-
-Use a short timeout, cache successful data with an expiry, and allow bounded retry after failure. Prefer removing this workaround once Pi’s bundled model data is updated, as the file comment already requests.
+The temporary fetch now aborts after five seconds, deduplicates only the active request, caches successful data for one hour, and retries failures after a 30-second expiry. Tests cover stalled-request abort, failure retry, successful pricing, and timeout cleanup. The workaround should still be deleted once Pi's bundled models.dev data includes the required pricing.
 
 ---
 
@@ -485,24 +448,9 @@ Remaining documentation gaps:
 
 After removing `pi-plan-mode`, the repository contains 15 `pi-*` extensions plus `pip-common`, with 117 production TypeScript files and 15,418 production lines. The largest concentration is `pip-common` (2,198 lines), `pi-subagents` (2,197), `pi-tree-edit` (1,673), `pi-tiny-mcp` (1,472), `pi-webfetch-websearch` (1,162), `pi-stats` (1,121), `pi-provider-proxy` (1,062), and `pi-pip-footer` (1,043). Those eight areas account for about 77% of production TypeScript, so cleanup should focus on their ownership boundaries rather than merging small folders merely to reduce the plugin count.
 
-### 33. Provider Model Patches and Provider Proxy cannot safely compose ownership of one provider
+### 33. Provider Model Patches and Provider Proxy cannot safely compose ownership of one provider — **resolved**
 
-**Evidence**
-
-- The top-level manifest loads `pi-provider-model-patches` immediately before `pi-provider-proxy` at `package.json:17-18`.
-- Model Patches registers complete provider catalogs at `pi-provider-model-patches/index.ts:230-247` and unregisters providers while reconciling at `:269-315`.
-- Provider Proxy independently registers the same provider IDs at `pi-provider-proxy/index.ts:878-892` and unregisters them during reapplication at `:869-887`.
-- Pi's provider API restores the built-in provider when `unregisterProvider()` is called; it does not expose a composable stack of independent extension overrides.
-- Model Patches repeats Provider Proxy's teardown bug from finding 30: its `session_shutdown` handler only clears `appliedIds` at `pi-provider-model-patches/index.ts:389-391` and does not unregister providers it owns.
-- `pi-provider-model-patches/README.md` already acknowledges that another extension overriding the same provider may conflict, but both extensions are enabled in the aggregate manifest with no coordination or exclusion.
-
-**Impact**
-
-Load order becomes part of the runtime contract. A proxy reapply can replace a patched catalog, while toggling a model patch can unregister the proxy override and restore the built-in endpoint. Status from either extension can say it is active while the other extension owns the effective provider registration. Reload/shutdown can also leave a model-patch registration live after its owning bookkeeping has been discarded.
-
-**Recommended direction**
-
-Give provider registration one owner. The clean aggregate design is a provider-override coordinator that composes endpoint/auth changes and catalog changes into one registration per provider. If that is not implemented, enforce mutual exclusion per provider and report the conflict instead of silently applying both.
+`pip-common` now owns one runtime-scoped provider coordinator. Model Patches contributes the `catalog` slot and Provider Proxy contributes the `transport` slot; the coordinator emits one composed Pi registration and applies proxy endpoints to every patched model. Duplicate owners for either slot fail explicitly instead of silently replacing each other. Removing either contribution reconciles the remaining registration, while last-owner shutdown unregisters the override and drops the stale registrar before reload. Tests cover composition, duplicate ownership, parent/child isolation, and registrar replacement across reload.
 
 ---
 

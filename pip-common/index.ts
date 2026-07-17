@@ -25,6 +25,7 @@ export * from "./src/footer-registry.ts";
 export * from "./src/lifecycle.ts";
 export * from "./src/paths.ts";
 export * from "./src/pip-tools.ts";
+export * from "./src/provider-overrides.ts";
 export * from "./src/quota/index.ts";
 export * from "./src/runtime.ts";
 export * from "./src/settings.ts";

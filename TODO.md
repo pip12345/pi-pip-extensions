@@ -105,16 +105,16 @@
 
 ## 8. Repair provider ownership and networking
 
-- [ ] Give provider registration one owner per provider.
-- [ ] Compose model-catalog patches and proxy endpoint/auth changes before registration.
-- [ ] Otherwise enforce explicit per-provider mutual exclusion and report conflicts.
-- [ ] Reconcile desired and applied provider IDs on every config load.
-- [ ] Unregister owned provider overrides during shutdown.
-- [ ] Make Provider Proxy and Model Patch config writes atomic.
-- [ ] Redact token-shaped fields from every OAuth error.
-- [ ] Make OAuth callback waits directly abort-aware.
-- [ ] Remove polling abort listeners after both timer resolution and rejection.
-- [ ] Add timeouts and retry expiry to temporary live pricing fetches.
+- [x] Give provider registration one owner per provider.
+- [x] Compose model-catalog patches and proxy endpoint/auth changes before registration.
+- [x] Otherwise enforce explicit per-provider mutual exclusion and report conflicts.
+- [x] Reconcile desired and applied provider IDs on every config load.
+- [x] Unregister owned provider overrides during shutdown.
+- [x] Make Provider Proxy config writes atomic; keep Model Patch toggles on shared atomic settings (its user patch config is read-only).
+- [x] Redact token-shaped fields from every OAuth error.
+- [x] Make OAuth callback waits directly abort-aware.
+- [x] Remove polling abort listeners after both timer resolution and rejection.
+- [x] Add timeouts and retry expiry to temporary live pricing fetches.
 - [ ] Remove the live-pricing workaround when upstream Pi data makes it obsolete.
 
 ## 9. Repair high-use Tree Edit and Context features

@@ -20,9 +20,13 @@ type ModelsDevProvider = {
 type ModelsDevData = Record<string, ModelsDevProvider>;
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
+const MODELS_DEV_TIMEOUT_MS = 5_000;
+const MODELS_DEV_SUCCESS_TTL_MS = 60 * 60_000;
+const MODELS_DEV_FAILURE_TTL_MS = 30_000;
 const COPILOT_PROVIDER_ID = "github-copilot";
 
 let liveDataPromise: Promise<ModelsDevData | undefined> | undefined;
+let liveDataCache: { data: ModelsDevData | undefined; expiresAt: number } | undefined;
 
 function isCopilotProvider(provider: unknown): boolean {
   return typeof provider === "string" && provider.toLowerCase().includes("copilot");
@@ -35,12 +39,30 @@ function modelCandidates(model: string): string[] {
   return Array.from(new Set([trimmed, slashTail, colonTail].filter((v): v is string => !!v)));
 }
 
-async function getLiveModelsDevData(): Promise<ModelsDevData | undefined> {
-  if (!liveDataPromise) {
-    liveDataPromise = fetch(MODELS_DEV_URL)
-      .then(async (response) => (response.ok ? ((await response.json()) as ModelsDevData) : undefined))
-      .catch(() => undefined);
+async function fetchLiveModelsDevData(): Promise<ModelsDevData | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MODELS_DEV_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    const response = await fetch(MODELS_DEV_URL, { signal: controller.signal });
+    return response.ok ? ((await response.json()) as ModelsDevData) : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
   }
+}
+
+async function getLiveModelsDevData(): Promise<ModelsDevData | undefined> {
+  if (liveDataCache && liveDataCache.expiresAt > Date.now()) return liveDataCache.data;
+  liveDataPromise ??= fetchLiveModelsDevData()
+    .then((data) => {
+      liveDataCache = { data, expiresAt: Date.now() + (data ? MODELS_DEV_SUCCESS_TTL_MS : MODELS_DEV_FAILURE_TTL_MS) };
+      return data;
+    })
+    .finally(() => {
+      liveDataPromise = undefined;
+    });
   return liveDataPromise;
 }
 

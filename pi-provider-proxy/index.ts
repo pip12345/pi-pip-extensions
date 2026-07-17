@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "@earendil-works/pi-ai/oauth";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
-import { pipPath } from "pip-common";
+import { basename, dirname, join } from "node:path";
+import { pipPath, registerProviderOverrideContributor } from "../pip-common/index.ts";
 
 export interface ProviderProxyConfig {
   enabled: boolean;
@@ -23,10 +23,16 @@ export interface ProviderRouteHint {
   note?: string;
 }
 
+interface CallbackResult {
+  code?: string;
+  state?: string;
+  error?: true;
+}
+
 interface CallbackServerHandle {
   close: () => void;
   cancelWait: () => void;
-  waitForCode: () => Promise<{ code: string; state?: string } | null>;
+  waitForCode: () => Promise<CallbackResult | null>;
 }
 
 type ProviderProxyOAuthLoginCallbacks = Omit<OAuthLoginCallbacks, "onDeviceCode"> & {
@@ -203,8 +209,15 @@ export function loadProviderProxyConfig(path = CONFIG_PATH): ProviderProxyConfig
 
 export function saveProviderProxyConfig(config: ProviderProxyConfig, path = CONFIG_PATH): void {
   const normalized = normalizeProviderProxyConfig(config);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const temporaryPath = join(dir, `.${basename(path)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(normalized, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporaryPath, path);
+  } finally {
+    rmSync(temporaryPath, { force: true });
+  }
 }
 
 export function providerProxyStatus(config: ProviderProxyConfig, configPath = CONFIG_PATH): string {
@@ -358,9 +371,14 @@ function getCallbackHost(): string {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(new Error("Login cancelled"));
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(resolve, ms);
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
     const onAbort = () => {
       clearTimeout(timeout);
+      cleanup();
       reject(new Error("Login cancelled"));
     };
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -394,8 +412,8 @@ function startCallbackServer(options: {
   successMessage: string;
 }): Promise<CallbackServerHandle> {
   let server: Server | undefined;
-  let settleWait: ((value: { code: string; state?: string } | null) => void) | undefined;
-  const waitForCodePromise = new Promise<{ code: string; state?: string } | null>((resolve) => {
+  let settleWait: ((value: CallbackResult | null) => void) | undefined;
+  const waitForCodePromise = new Promise<CallbackResult | null>((resolve) => {
     let settled = false;
     settleWait = (value) => {
       if (settled) return;
@@ -419,17 +437,20 @@ function startCallbackServer(options: {
         }
         if (error) {
           res.statusCode = 400;
-          res.end(`Authentication did not complete: ${error}`);
+          res.end("Authentication did not complete.");
+          settleWait?.({ error: true });
           return;
         }
         if (!code) {
           res.statusCode = 400;
           res.end("Missing authorization code.");
+          settleWait?.({ error: true });
           return;
         }
         if (options.requireState !== false && state !== options.expectedState) {
           res.statusCode = 400;
           res.end("State mismatch.");
+          settleWait?.({ error: true });
           return;
         }
         res.statusCode = 200;
@@ -463,12 +484,46 @@ function startCallbackServer(options: {
   });
 }
 
+async function waitForCallback(server: CallbackServerHandle, signal?: AbortSignal): Promise<CallbackResult | null> {
+  if (signal?.aborted) {
+    server.cancelWait();
+    throw new Error("Login cancelled");
+  }
+  const onAbort = () => server.cancelWait();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const result = await server.waitForCode();
+    if (signal?.aborted) throw new Error("Login cancelled");
+    return result;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+function oauthEndpoint(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "configured auth relay";
+  }
+}
+
 async function fetchWithLoginCancellation(input: string, init: RequestInit = {}): Promise<Response> {
   try {
     return await fetch(input, init);
-  } catch (error) {
+  } catch {
     if (init.signal?.aborted) throw new Error("Login cancelled");
-    throw error;
+    throw new Error(`OAuth request failed at ${oauthEndpoint(input)}; transport details omitted`);
+  }
+}
+
+function parseOAuthJson(responseText: string): any {
+  if (!responseText) return {};
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    throw new Error("OAuth endpoint returned invalid JSON; response body omitted");
   }
 }
 
@@ -480,8 +535,8 @@ async function postJson(url: string, body: unknown, signal?: AbortSignal): Promi
     signal,
   });
   const responseText = await response.text();
-  if (!response.ok) throw new Error(`HTTP request failed. status=${response.status}; url=${url}; body=${responseText || response.statusText}`);
-  return responseText ? JSON.parse(responseText) : {};
+  if (!response.ok) throw new Error(`OAuth HTTP request failed with status ${response.status} at ${oauthEndpoint(url)}; response body omitted`);
+  return parseOAuthJson(responseText);
 }
 
 async function postForm(url: string, body: URLSearchParams, signal?: AbortSignal): Promise<unknown> {
@@ -492,8 +547,8 @@ async function postForm(url: string, body: URLSearchParams, signal?: AbortSignal
     signal,
   });
   const responseText = await response.text();
-  if (!response.ok) throw new Error(`HTTP request failed. status=${response.status}; url=${url}; body=${responseText || response.statusText}`);
-  return responseText ? JSON.parse(responseText) : {};
+  if (!response.ok) throw new Error(`OAuth HTTP request failed with status ${response.status} at ${oauthEndpoint(url)}; response body omitted`);
+  return parseOAuthJson(responseText);
 }
 
 function decodeJwt(token: string): any | null {
@@ -509,7 +564,7 @@ function decodeJwt(token: string): any | null {
 function readOpenAITokenResponse(raw: unknown): OAuthCredentials {
   const json = raw as any;
   if (!json?.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
-    throw new Error(`OpenAI Codex token response missing fields: ${JSON.stringify(json)}`);
+    throw new Error("OpenAI Codex token response is missing required access_token, refresh_token, or expires_in fields; response values omitted");
   }
   const payload = decodeJwt(json.access_token);
   const accountId = payload?.[OPENAI_CODEX_JWT_CLAIM_PATH]?.chatgpt_account_id;
@@ -525,7 +580,7 @@ function readOpenAITokenResponse(raw: unknown): OAuthCredentials {
 function readAnthropicTokenResponse(raw: unknown): OAuthCredentials {
   const json = raw as any;
   if (!json?.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
-    throw new Error(`Anthropic token response missing fields: ${JSON.stringify(json)}`);
+    throw new Error("Anthropic token response is missing required access_token, refresh_token, or expires_in fields; response values omitted");
   }
   return {
     access: json.access_token,
@@ -567,7 +622,7 @@ async function startOpenAIDeviceAuth(authBaseUrl: string, signal?: AbortSignal):
   const json = (await postJson(joinUrlPath(authBaseUrl, "/api/accounts/deviceauth/usercode"), { client_id: OPENAI_CODEX_CLIENT_ID }, signal)) as any;
   const intervalSeconds = typeof json?.interval === "string" ? Number(json.interval.trim()) : json?.interval;
   if (!json?.device_auth_id || !json.user_code || (intervalSeconds !== undefined && typeof intervalSeconds !== "number")) {
-    throw new Error(`Invalid OpenAI Codex device code response: ${JSON.stringify(json)}`);
+    throw new Error("Invalid OpenAI Codex device code response; response values omitted");
   }
   return { deviceAuthId: json.device_auth_id, userCode: json.user_code, intervalSeconds };
 }
@@ -590,9 +645,14 @@ async function pollOpenAIDeviceAuth(
       });
       const responseText = await response.text();
       if (response.ok) {
-        const json = responseText ? JSON.parse(responseText) : {};
+        let json: any;
+        try {
+          json = parseOAuthJson(responseText);
+        } catch {
+          return { status: "failed", message: "Invalid OpenAI Codex device auth token response; response values omitted" };
+        }
         if (!json?.authorization_code || !json.code_verifier) {
-          return { status: "failed", message: `Invalid OpenAI Codex device auth token response: ${JSON.stringify(json)}` };
+          return { status: "failed", message: "Invalid OpenAI Codex device auth token response; response values omitted" };
         }
         return { status: "complete", value: { authorizationCode: json.authorization_code, codeVerifier: json.code_verifier } };
       }
@@ -606,7 +666,7 @@ async function pollOpenAIDeviceAuth(
       }
       if (response.status === 403 || response.status === 404 || errorCode === "deviceauth_authorization_pending") return { status: "pending" };
       if (errorCode === "slow_down") return { status: "slow_down" };
-      return { status: "failed", message: `OpenAI Codex device auth failed with status ${response.status}${responseText ? `: ${responseText}` : ""}` };
+      return { status: "failed", message: `OpenAI Codex device auth failed with status ${response.status}; response body omitted` };
     },
   });
 }
@@ -675,8 +735,9 @@ async function loginOpenAICodexWithAuthRelay(authBaseUrl: string, callbacks: Pro
           manualError = error instanceof Error ? error : new Error(String(error));
           server.cancelWait();
         });
-      const result = await server.waitForCode();
+      const result = await waitForCallback(server, callbacks.signal);
       if (manualError) throw manualError;
+      if (result?.error) throw new Error("OAuth callback reported an error");
       if (result?.code) code = result.code;
       else if (manualInput) {
         const parsed = parseAuthorizationInput(manualInput);
@@ -693,7 +754,8 @@ async function loginOpenAICodexWithAuthRelay(authBaseUrl: string, callbacks: Pro
         }
       }
     } else {
-      const result = await server.waitForCode();
+      const result = await waitForCallback(server, callbacks.signal);
+      if (result?.error) throw new Error("OAuth callback reported an error");
       if (result?.code) code = result.code;
     }
     if (!code) {
@@ -777,8 +839,9 @@ async function loginAnthropicWithAuthRelay(authBaseUrl: string, callbacks: Provi
           manualError = error instanceof Error ? error : new Error(String(error));
           server.cancelWait();
         });
-      const result = await server.waitForCode();
+      const result = await waitForCallback(server, callbacks.signal);
       if (manualError) throw manualError;
+      if (result?.error) throw new Error("OAuth callback reported an error");
       if (result?.code) {
         code = result.code;
         state = result.state;
@@ -800,7 +863,8 @@ async function loginAnthropicWithAuthRelay(authBaseUrl: string, callbacks: Provi
         }
       }
     } else {
-      const result = await server.waitForCode();
+      const result = await waitForCallback(server, callbacks.signal);
+      if (result?.error) throw new Error("OAuth callback reported an error");
       if (result?.code) {
         code = result.code;
         state = result.state;
@@ -858,38 +922,59 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
   let config: ProviderProxyConfig = { ...DEFAULT_CONFIG, providers: {}, auth: {} };
   let loadError: string | undefined;
   const appliedProviders = new Set<string>();
-
-  const load = () => {
-    config = loadProviderProxyConfig(configPath);
-    return config;
-  };
-
-  const save = () => saveProviderProxyConfig(config, configPath);
+  const providerOverrides = registerProviderOverrideContributor(pi, { id: "pi-provider-proxy", role: "transport" });
 
   const unapply = (providers = [...appliedProviders]) => {
-    const unregister = (pi as any).unregisterProvider;
-    if (typeof unregister !== "function") return;
     for (const provider of providers) {
-      unregister(provider);
+      providerOverrides.remove(provider);
       appliedProviders.delete(provider);
     }
   };
 
   const applyOne = (provider: string) => {
     const registration = providerRegistrationConfig(provider, config);
-    if (!registration || !config.enabled) return;
-    pi.registerProvider(provider, registration as any);
+    if (!registration || !config.enabled) {
+      unapply([provider]);
+      return;
+    }
+    providerOverrides.set(provider, registration);
     appliedProviders.add(provider);
   };
 
-  const reapplyOne = (provider: string) => {
-    unapply([provider]);
-    applyOne(provider);
+  const apply = () => {
+    const desiredRegistrations = new Map<string, NonNullable<ReturnType<typeof providerRegistrationConfig>>>();
+    if (config.enabled) {
+      for (const provider of new Set([...Object.keys(config.providers), ...Object.keys(config.auth)])) {
+        const registration = providerRegistrationConfig(provider, config);
+        if (registration) desiredRegistrations.set(provider, registration);
+      }
+    }
+    for (const provider of [...appliedProviders]) {
+      if (!desiredRegistrations.has(provider)) unapply([provider]);
+    }
+    for (const [provider, registration] of desiredRegistrations) {
+      providerOverrides.set(provider, registration);
+      appliedProviders.add(provider);
+    }
   };
 
-  const apply = () => {
-    for (const provider of applyProviderProxyConfig(pi, config)) appliedProviders.add(provider);
+  const load = () => {
+    const loaded = loadProviderProxyConfig(configPath);
+    const changed = JSON.stringify(loaded) !== JSON.stringify(config);
+    if (!changed) return config;
+    const previous = config;
+    config = loaded;
+    try {
+      apply();
+      return config;
+    } catch (error) {
+      config = previous;
+      throw error;
+    }
   };
+
+  const save = () => saveProviderProxyConfig(config, configPath);
+  const reapplyOne = (provider: string) => applyOne(provider);
 
   const updateStatus = (ctx: any) => {
     ctx.ui?.setStatus?.("provider-proxy", config.enabled ? "proxy: on" : undefined);
@@ -897,7 +982,6 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
 
   try {
     load();
-    apply();
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
   }
@@ -1055,6 +1139,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
   });
 
   pi.on("session_shutdown", async () => {
+    providerOverrides.dispose();
     appliedProviders.clear();
   });
 }
