@@ -6,7 +6,6 @@ import {
   normalizeUsage,
   promptTokensFromUsage,
   cacheHitRateFromUsage,
-  applyTemporaryLiveModelsDevCostFallback,
   hasTuiCustom,
   padAnsi,
   padLeftAnsi,
@@ -444,10 +443,9 @@ export default function (pi: ExtensionAPI) {
   initializeUsageStorage();
   const seen = new Set<string>();
 
-  pi.on("message_end", async (event: any, ctx: any) => {
+  pi.on("message_end", (event: any, ctx: any) => {
     const msg = event.message;
     if (msg?.role !== "assistant") return;
-    await applyTemporaryLiveModelsDevCostFallback(msg);
     const tokens = normalizeUsage(msg.usage);
     if (!tokens) return;
     const id = hashId([ctx.sessionManager.getSessionFile?.(), msg.timestamp, msg.provider, msg.model, tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, tokens.total]);

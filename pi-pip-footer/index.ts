@@ -14,7 +14,6 @@ import {
   quotaCacheIdentity,
   quotaProviderForModelProvider,
   installWidgetRestacker,
-  applyTemporaryLiveModelsDevCostFallback,
   settingsFor,
   truncateToWidth,
   visibleWidth,
@@ -244,9 +243,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("message_end", async (event: any, ctx: any) => {
-    if (!sessionActive) return;
-    await applyTemporaryLiveModelsDevCostFallback(event.message);
-    tokenController.onMessageEnd(event, ctx);
+    if (sessionActive) tokenController.onMessageEnd(event, ctx);
   });
 
   pi.on("turn_end", async (_event: any, ctx: any) => {
