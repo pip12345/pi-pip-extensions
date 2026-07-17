@@ -46,8 +46,37 @@ describe("pi-context", () => {
     const snapshot = __test.buildContextSnapshot(makeCtx());
     expect(snapshot.contextUsage?.tokens).toBe(12_000);
     expect(snapshot.latestUsage).toMatchObject({ input: 100, output: 20, cacheRead: 10, cacheWrite: 5, cache: 15, total: 135 });
-    expect(snapshot.reservedTokens).toBe(8_000);
+    expect(snapshot.maxOutputTokens).toBe(8_000);
     expect(snapshot.sections.map((s: any) => s.key)).toEqual(["effective", "tools", "files", "skills", "append", "conversation"]);
+  });
+
+  it("measures the effective compaction-aware conversation entries", () => {
+    const branch = [
+      { type: "message", id: "old", parentId: null, message: { role: "user", content: "discarded ".repeat(5000) } },
+      { type: "compaction", id: "compact", parentId: "old", summary: "effective summary", tokensBefore: 50_000, timestamp: "2026-01-01T00:00:00.000Z" },
+      { type: "message", id: "new", parentId: "compact", message: { role: "user", content: "new message" } },
+    ];
+    const snapshot = __test.buildContextSnapshot(
+      makeCtx({
+        sessionManager: {
+          getBranch: () => branch,
+          getEntries: () => branch,
+          getLeafId: () => "new",
+        },
+      }),
+    );
+    const conversation = snapshot.sections.find((section: any) => section.key === "conversation");
+    expect(conversation?.detail).toBe("2 effective messages");
+    expect(conversation?.estimatedTokens).toBeLessThan(1000);
+  });
+
+  it("uses the full active branch when no compaction has changed the effective entries", () => {
+    const branch = [
+      { type: "message", id: "u1", parentId: null, message: { role: "user", content: "hello" } },
+      { type: "message", id: "a1", parentId: "u1", message: { role: "assistant", content: "hi" } },
+    ];
+    const snapshot = __test.buildContextSnapshot(makeCtx({ sessionManager: { getBranch: () => branch, getEntries: () => branch, getLeafId: () => "a1" } }));
+    expect(snapshot.sections.find((section: any) => section.key === "conversation")?.detail).toBe("2 effective messages");
   });
 
   it("renders without structured prompt options", () => {
@@ -67,6 +96,8 @@ describe("pi-context", () => {
     expect(main).toContain("System prompt");
     expect(main).toContain("System tools");
     expect(main).toContain("Free space");
+    expect(main).toContain("Max output cap");
+    expect(main).toContain("compaction reserve is separate");
     expect(main).not.toContain("Observed turns");
     component.handleInput("p");
     expect(component.render(100).join("\n")).toContain("[System]");

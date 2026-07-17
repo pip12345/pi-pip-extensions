@@ -168,21 +168,9 @@ Use `context.isError` as the source of truth and show the first bounded line for
 
 ## Important correctness and cleanup findings
 
-### 13. `/context` measures the whole branch instead of the effective compacted context
+### 13. `/context` measures the whole branch instead of the effective compacted context — **resolved**
 
-**Evidence**
-
-- `pi-context/index.ts:101-102` uses `getBranch()` (or all entries) rather than `sessionManager.buildContextEntries()`.
-- `pi-context/index.ts:115-123` builds the conversation estimate from that full branch.
-- `pi-context/index.ts:135,185-195` labels `model.maxTokens` simply as “Reserved.” This may intentionally represent maximum output-token capacity, but it is not Pi’s compaction reserve and the UI does not say which meaning is intended.
-
-**Impact**
-
-After compaction, the inspector counts old messages that are no longer sent to the model, so its conversation allocation and breakdown are misleading. The “Reserved” value can also differ from Pi’s actual compaction reserve.
-
-**Recommended direction**
-
-Base the conversation section on `buildContextEntries()` / the same session-context path Pi uses. Label `model.maxTokens` explicitly as maximum output capacity if that is the intended reservation; do not imply that it is Pi’s compaction reserve.
+The conversation estimate now uses Pi's `buildSessionContext()` path (preferring the runtime manager method and using the public pure function as fallback), so discarded pre-compaction history is replaced by the effective compaction summary and retained messages. The allocation labels `model.maxTokens` as “Max output cap” and explicitly says Pi's separate compaction reserve is not exposed to extensions. Tests cover compacted and uncompacted session paths.
 
 ---
 
@@ -384,7 +372,7 @@ Resolved during cleanup:
 
 Remaining documentation gaps:
 
-- `pi-context`, `pi-secrets-guard`, and `pi-stats` have no package README, while the other feature packages do.
+- `pi-secrets-guard` and `pi-stats` have no package README, while the other feature packages do.
 
 ---
 

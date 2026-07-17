@@ -16,6 +16,7 @@
     "node": ">=18.0.0"
   },
   "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "pi": {
@@ -25,7 +26,8 @@
     ]
   },
   "files": [
-    "index.ts"
+    "index.ts",
+    "README.md"
   ],
   "dependencies": {
     "pip-common": "0.1.0"

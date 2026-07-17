@@ -130,10 +130,10 @@
 
 ### Context
 
-- [ ] Measure effective compacted context through Pi's session-context path rather than the whole branch.
-- [ ] Distinguish maximum model output capacity from Pi's compaction reserve.
-- [ ] Update labels so the inspector does not imply the wrong reservation semantics.
-- [ ] Add tests covering compacted and uncompacted sessions.
+- [x] Measure effective compacted context through Pi's session-context path rather than the whole branch.
+- [x] Distinguish maximum model output capacity from Pi's compaction reserve.
+- [x] Update labels so the inspector does not imply the wrong reservation semantics.
+- [x] Add tests covering compacted and uncompacted sessions.
 
 ## 10. Repair remaining correctness, UI, and resource bounds
 
