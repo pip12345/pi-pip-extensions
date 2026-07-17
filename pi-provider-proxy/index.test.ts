@@ -46,6 +46,7 @@ function fakeOpenAIToken(accountId = "acct_test"): string {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -177,6 +178,21 @@ describe("provider proxy registration", () => {
     expect(parseError.message).not.toContain("secret-access");
   });
 
+  it("bounds OAuth relay response bodies and refresh deadlines", async () => {
+    const oauth = createRelayedOAuthProvider("anthropic", "http://127.0.0.1:9000/anthropic-auth");
+    vi.stubGlobal("fetch", async () => new Response("ignored", { status: 200, headers: { "content-length": String(300 * 1024) } }));
+    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 })).rejects.toThrow(/response exceeded .* byte limit/);
+
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", async (_input: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const refresh = oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 });
+    const assertion = expect(refresh).rejects.toThrow(/request timed out/);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await assertion;
+  });
+
   it("settles a browser callback that reports an OAuth error", async () => {
     const oauth = createRelayedOAuthProvider("openai-codex", "http://127.0.0.1:9000/openai-auth");
     await expect(
@@ -290,6 +306,30 @@ describe("provider proxy extension", () => {
     expect(pi.providerOverrides.get("openai")).toEqual({ baseUrl: "http://127.0.0.1:9000/openai/v1" });
     expect(pi.unregisteredProviders).toEqual([]);
     expect(ctx.ui.notifications.at(-1).message).toContain("No auth relay support for unsupported");
+  });
+
+  it("keeps runtime and disk config unchanged when a command cannot register its replacement", async () => {
+    const path = tempConfigPath();
+    const oldUrl = "http://127.0.0.1:9000/openai/v1";
+    saveProviderProxyConfig({ enabled: true, providers: { openai: oldUrl }, auth: {} }, path);
+    const pi = createProviderPi();
+    registerProviderProxyExtension(pi, { configPath: path });
+    const register = pi.registerProvider;
+    let rejectNext = true;
+    pi.registerProvider = (provider: string, config: any) => {
+      if (rejectNext && config.baseUrl === "http://127.0.0.1:9001/openai/v1") {
+        rejectNext = false;
+        throw new Error("replacement rejected");
+      }
+      return register(provider, config);
+    };
+    const ctx = createMockCtx();
+
+    await runCommand(pi, "proxy", "add openai http://127.0.0.1:9001/openai/v1", ctx);
+
+    expect(ctx.ui.notifications.at(-1).message).toContain("replacement rejected");
+    expect(pi.providerOverrides.get("openai")).toEqual({ baseUrl: oldUrl });
+    expect(loadProviderProxyConfig(path)).toEqual({ enabled: true, providers: { openai: oldUrl }, auth: {} });
   });
 
   it("unregisters owned providers during shutdown", async () => {

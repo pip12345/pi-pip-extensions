@@ -50,6 +50,8 @@ const OPENAI_CODEX_DEVICE_VERIFICATION_URI = `${OPENAI_CODEX_DIRECT_AUTH_BASE_UR
 const OPENAI_CODEX_SCOPE = "openid profile email offline_access";
 const OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth";
 const OPENAI_CODEX_DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60;
+const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_OAUTH_RESPONSE_BYTES = 256 * 1024;
 const OPENAI_CODEX_BROWSER_LOGIN_METHOD = "browser";
 const OPENAI_CODEX_DEVICE_CODE_LOGIN_METHOD = "device_code";
 
@@ -509,12 +511,58 @@ function oauthEndpoint(url: string): string {
   }
 }
 
-async function fetchWithLoginCancellation(input: string, init: RequestInit = {}): Promise<Response> {
+async function readOAuthResponseText(response: Response): Promise<string> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_OAUTH_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`OAuth response exceeded ${MAX_OAUTH_RESPONSE_BYTES} byte limit; response body omitted`);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
   try {
-    return await fetch(input, init);
-  } catch {
-    if (init.signal?.aborted) throw new Error("Login cancelled");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      total += value.byteLength;
+      if (total > MAX_OAUTH_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`OAuth response exceeded ${MAX_OAUTH_RESPONSE_BYTES} byte limit; response body omitted`);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function oauthRequest(input: string, init: RequestInit = {}): Promise<{ response: Response; responseText: string }> {
+  const parentSignal = init.signal ?? undefined;
+  const controller = new AbortController();
+  let timedOut = false;
+  const onAbort = () => controller.abort(parentSignal?.reason);
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("OAuth request timed out"));
+  }, OAUTH_REQUEST_TIMEOUT_MS);
+  timeout.unref?.();
+  if (parentSignal?.aborted) onAbort();
+  else parentSignal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    return { response, responseText: await readOAuthResponseText(response) };
+  } catch (error) {
+    if (parentSignal?.aborted) throw new Error("Login cancelled");
+    if (timedOut) throw new Error(`OAuth request timed out at ${oauthEndpoint(input)}`);
+    if (error instanceof Error && error.message.startsWith("OAuth response exceeded")) throw error;
     throw new Error(`OAuth request failed at ${oauthEndpoint(input)}; transport details omitted`);
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -528,25 +576,23 @@ function parseOAuthJson(responseText: string): any {
 }
 
 async function postJson(url: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
-  const response = await fetchWithLoginCancellation(url, {
+  const { response, responseText } = await oauthRequest(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
     signal,
   });
-  const responseText = await response.text();
   if (!response.ok) throw new Error(`OAuth HTTP request failed with status ${response.status} at ${oauthEndpoint(url)}; response body omitted`);
   return parseOAuthJson(responseText);
 }
 
 async function postForm(url: string, body: URLSearchParams, signal?: AbortSignal): Promise<unknown> {
-  const response = await fetchWithLoginCancellation(url, {
+  const { response, responseText } = await oauthRequest(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body,
     signal,
   });
-  const responseText = await response.text();
   if (!response.ok) throw new Error(`OAuth HTTP request failed with status ${response.status} at ${oauthEndpoint(url)}; response body omitted`);
   return parseOAuthJson(responseText);
 }
@@ -637,13 +683,12 @@ async function pollOpenAIDeviceAuth(
     expiresInSeconds: OPENAI_CODEX_DEVICE_CODE_TIMEOUT_SECONDS,
     signal,
     poll: async () => {
-      const response = await fetchWithLoginCancellation(joinUrlPath(authBaseUrl, "/api/accounts/deviceauth/token"), {
+      const { response, responseText } = await oauthRequest(joinUrlPath(authBaseUrl, "/api/accounts/deviceauth/token"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ device_auth_id: device.deviceAuthId, user_code: device.userCode }),
         signal,
       });
-      const responseText = await response.text();
       if (response.ok) {
         let json: any;
         try {
@@ -921,60 +966,67 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
 
   let config: ProviderProxyConfig = { ...DEFAULT_CONFIG, providers: {}, auth: {} };
   let loadError: string | undefined;
-  const appliedProviders = new Set<string>();
+  const appliedRegistrations = new Map<string, Record<string, unknown>>();
   const providerOverrides = registerProviderOverrideContributor(pi, { id: "pi-provider-proxy", role: "transport" });
 
-  const unapply = (providers = [...appliedProviders]) => {
-    for (const provider of providers) {
-      providerOverrides.remove(provider);
-      appliedProviders.delete(provider);
+  const cloneConfig = (value: ProviderProxyConfig): ProviderProxyConfig => ({ enabled: value.enabled, providers: { ...value.providers }, auth: { ...value.auth } });
+
+  const desiredRegistrations = (value: ProviderProxyConfig) => {
+    const desired = new Map<string, Record<string, unknown>>();
+    if (!value.enabled) return desired;
+    for (const provider of configuredProviderIds(value)) {
+      const registration = providerRegistrationConfig(provider, value);
+      if (registration) desired.set(provider, registration);
     }
+    return desired;
   };
 
-  const applyOne = (provider: string) => {
-    const registration = providerRegistrationConfig(provider, config);
-    if (!registration || !config.enabled) {
-      unapply([provider]);
-      return;
-    }
-    providerOverrides.set(provider, registration);
-    appliedProviders.add(provider);
-  };
-
-  const apply = () => {
-    const desiredRegistrations = new Map<string, NonNullable<ReturnType<typeof providerRegistrationConfig>>>();
-    if (config.enabled) {
-      for (const provider of new Set([...Object.keys(config.providers), ...Object.keys(config.auth)])) {
-        const registration = providerRegistrationConfig(provider, config);
-        if (registration) desiredRegistrations.set(provider, registration);
+  const reconcile = (value: ProviderProxyConfig) => {
+    const desired = desiredRegistrations(value);
+    const previous = new Map(appliedRegistrations);
+    try {
+      // Replacements are applied before removals so each provider retains the
+      // coordinator's per-provider rollback until its new registration works.
+      for (const [provider, registration] of desired) providerOverrides.set(provider, registration);
+      for (const provider of previous.keys()) if (!desired.has(provider)) providerOverrides.remove(provider);
+    } catch (error) {
+      const rollbackErrors: unknown[] = [];
+      for (const provider of new Set([...desired.keys(), ...previous.keys()])) {
+        try {
+          const registration = previous.get(provider);
+          if (registration) providerOverrides.set(provider, registration);
+          else providerOverrides.remove(provider);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
       }
+      if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], "Provider proxy reconciliation and rollback failed");
+      throw error;
     }
-    for (const provider of [...appliedProviders]) {
-      if (!desiredRegistrations.has(provider)) unapply([provider]);
-    }
-    for (const [provider, registration] of desiredRegistrations) {
-      providerOverrides.set(provider, registration);
-      appliedProviders.add(provider);
+    appliedRegistrations.clear();
+    for (const [provider, registration] of desired) appliedRegistrations.set(provider, registration);
+  };
+
+  const commit = (next: ProviderProxyConfig) => {
+    const normalized = normalizeProviderProxyConfig(next);
+    const previous = cloneConfig(config);
+    reconcile(normalized);
+    try {
+      saveProviderProxyConfig(normalized, configPath);
+      config = normalized;
+    } catch (error) {
+      reconcile(previous);
+      throw error;
     }
   };
 
   const load = () => {
     const loaded = loadProviderProxyConfig(configPath);
-    const changed = JSON.stringify(loaded) !== JSON.stringify(config);
-    if (!changed) return config;
-    const previous = config;
+    if (JSON.stringify(loaded) === JSON.stringify(config)) return config;
+    reconcile(loaded);
     config = loaded;
-    try {
-      apply();
-      return config;
-    } catch (error) {
-      config = previous;
-      throw error;
-    }
+    return config;
   };
-
-  const save = () => saveProviderProxyConfig(config, configPath);
-  const reapplyOne = (provider: string) => applyOne(provider);
 
   const updateStatus = (ctx: any) => {
     ctx.ui?.setStatus?.("provider-proxy", config.enabled ? "proxy: on" : undefined);
@@ -1013,18 +1065,14 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
         }
 
         if (subcommand === "on" || subcommand === "enable") {
-          config.enabled = true;
-          save();
-          apply();
+          commit({ ...cloneConfig(config), enabled: true });
           updateStatus(ctx);
           showOutput(ctx, `Provider proxy enabled.\n\n${providerProxyStatus(config, configPath)}`);
           return;
         }
 
         if (subcommand === "off" || subcommand === "disable") {
-          config.enabled = false;
-          save();
-          unapply();
+          commit({ ...cloneConfig(config), enabled: false });
           updateStatus(ctx);
           showOutput(ctx, `Provider proxy disabled.\n\n${providerProxyStatus(config, configPath)}`);
           return;
@@ -1035,10 +1083,10 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
           if (!provider) return;
           const baseUrl = rest[1] ? normalizeBaseUrl(rest[1]) : await promptBaseUrl(ctx, provider, config.providers[provider]);
           if (!baseUrl) return;
-          config.enabled = true;
-          config.providers[provider] = baseUrl;
-          save();
-          reapplyOne(provider);
+          const next = cloneConfig(config);
+          next.enabled = true;
+          next.providers[provider] = baseUrl;
+          commit(next);
           updateStatus(ctx);
           showOutput(ctx, `Provider API baseUrl set: ${provider} -> ${baseUrl}`);
           return;
@@ -1057,10 +1105,10 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
             assertSupportedAuthRelayProvider(provider);
             const authBaseUrl = authRest[1] ? normalizeBaseUrl(authRest[1]) : await promptAuthBaseUrl(ctx, provider, config.auth[provider]);
             if (!authBaseUrl) return;
-            config.enabled = true;
-            config.auth[provider] = authBaseUrl;
-            save();
-            reapplyOne(provider);
+            const next = cloneConfig(config);
+            next.enabled = true;
+            next.auth[provider] = authBaseUrl;
+            commit(next);
             updateStatus(ctx);
             showOutput(ctx, `Provider auth relay set: ${provider} -> ${authBaseUrl}`);
             return;
@@ -1078,9 +1126,9 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
             }
             if (!provider) return;
             if (!Object.hasOwn(config.auth, provider)) throw new Error(`No provider auth relay configured for ${provider}`);
-            delete config.auth[provider];
-            save();
-            reapplyOne(provider);
+            const next = cloneConfig(config);
+            delete next.auth[provider];
+            commit(next);
             showOutput(ctx, `Provider auth relay removed: ${provider}`);
             return;
           }
@@ -1088,17 +1136,17 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
         }
 
         if (subcommand === "setup") {
+          const next = cloneConfig(config);
           do {
             const provider = await promptProvider(ctx);
             if (!provider) break;
-            const baseUrl = await promptBaseUrl(ctx, provider, config.providers[provider]);
+            const baseUrl = await promptBaseUrl(ctx, provider, next.providers[provider]);
             if (!baseUrl) break;
-            config.enabled = true;
-            config.providers[provider] = baseUrl;
-            reapplyOne(provider);
-            updateStatus(ctx);
+            next.enabled = true;
+            next.providers[provider] = baseUrl;
           } while (await ctx.ui.confirm("Provider proxy", "Add another provider API baseUrl?"));
-          save();
+          commit(next);
+          updateStatus(ctx);
           showOutput(ctx, providerProxyStatus(config, configPath));
           return;
         }
@@ -1116,9 +1164,9 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
           }
           if (!provider) return;
           if (!Object.hasOwn(config.providers, provider)) throw new Error(`No provider API baseUrl configured for ${provider}`);
-          delete config.providers[provider];
-          save();
-          reapplyOne(provider);
+          const next = cloneConfig(config);
+          delete next.providers[provider];
+          commit(next);
           showOutput(ctx, `Provider API baseUrl removed: ${provider}`);
           return;
         }
@@ -1140,7 +1188,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
 
   pi.on("session_shutdown", async () => {
     providerOverrides.dispose();
-    appliedProviders.clear();
+    appliedRegistrations.clear();
   });
 }
 

@@ -224,6 +224,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
   registerPatchSettings(pi, patches);
   const settings = options.settings ?? defaultSettings(getPipSettingsRegistry(pi));
   const appliedIds = new Map<string, Set<string>>();
+  const appliedConfigs = new Map<string, Record<string, any>>();
   const baseModels = new Map<string, Model<Api>[]>();
   const providerOverrides = registerProviderOverrideContributor(pi, { id: "pi-provider-model-patches", role: "catalog" });
 
@@ -240,12 +241,14 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     const firstTemplate = result.templates[0];
     if (!firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
     baseModels.set(provider, catalog.models.filter((model) => model.provider === provider));
-    providerOverrides.set(provider, {
+    const providerConfig = {
       baseUrl: firstTemplate.baseUrl,
       api: firstTemplate.api,
       oauth: catalog.oauth,
       models: result.models.map(providerModelConfig) as any,
-    });
+    };
+    providerOverrides.set(provider, providerConfig);
+    appliedConfigs.set(provider, providerConfig);
     appliedIds.set(provider, new Set(result.addedIds));
   }
 
@@ -266,12 +269,14 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
 
   const reconcileProvider = async (ctx: any, provider: string): Promise<ReconcileResult> => {
     const previouslyAdded = appliedIds.get(provider) ?? new Set<string>();
+    const previouslyAvailable = new Set([...previouslyAdded].filter((id) => Boolean(ctx.modelRegistry.find(provider, id))));
     const enabled = enabledForProvider(provider);
 
     if (!enabled.length) {
       if (appliedIds.has(provider)) {
         providerOverrides.remove(provider);
         appliedIds.delete(provider);
+        appliedConfigs.delete(provider);
         await switchFromRemovedModel(ctx, provider, previouslyAdded);
       }
       return { provider, addedIds: [], unavailableIds: [] };
@@ -293,29 +298,39 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     const firstTemplate = result.templates[0];
     if (result.addedIds.length && !firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
 
-    if (appliedIds.has(provider)) {
-      providerOverrides.remove(provider);
-      appliedIds.delete(provider);
-    }
     if (!result.addedIds.length) {
+      if (appliedIds.has(provider)) providerOverrides.remove(provider);
+      appliedIds.delete(provider);
+      appliedConfigs.delete(provider);
       await switchFromRemovedModel(ctx, provider, previouslyAdded);
       return { provider, addedIds: [], unavailableIds: [] };
     }
 
-    providerOverrides.set(provider, {
+    const previousConfig = appliedConfigs.get(provider);
+    const nextConfig = {
       baseUrl: firstTemplate!.baseUrl,
       api: firstTemplate!.api,
       ...auth,
       models: result.models.map(providerModelConfig) as any,
-    });
+    };
+    // Replacing the same contribution lets the coordinator restore its prior
+    // registration if Pi rejects the new catalog.
+    providerOverrides.set(provider, nextConfig);
 
     const availableAdded = result.addedIds.filter((id) => Boolean(ctx.modelRegistry.find(provider, id)));
     const unavailableIds = result.addedIds.filter((id) => !availableAdded.includes(id));
     if (!availableAdded.length) {
-      providerOverrides.remove(provider);
-      await switchFromRemovedModel(ctx, provider, previouslyAdded);
-      return { provider, addedIds: [], unavailableIds };
+      if (previousConfig && previouslyAvailable.size) {
+        providerOverrides.set(provider, previousConfig);
+        appliedIds.set(provider, previouslyAvailable);
+      } else {
+        providerOverrides.remove(provider);
+        appliedIds.delete(provider);
+        appliedConfigs.delete(provider);
+      }
+      return { provider, addedIds: [...previouslyAvailable], unavailableIds };
     }
+    appliedConfigs.set(provider, nextConfig);
     appliedIds.set(provider, new Set(availableAdded));
     const removedIds = new Set([...previouslyAdded].filter((id) => !availableAdded.includes(id)));
     await switchFromRemovedModel(ctx, provider, removedIds);
@@ -391,6 +406,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
   pi.on("session_shutdown", async () => {
     providerOverrides.dispose();
     appliedIds.clear();
+    appliedConfigs.clear();
   });
 }
 

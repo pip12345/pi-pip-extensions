@@ -272,6 +272,27 @@ describe("provider model patch extension", () => {
     expect(ctx.ui.statuses.get("provider-model-patches")).toBe("patches: default");
   });
 
+  it("keeps the last working catalog when Pi rejects a replacement", async () => {
+    const { pi, ctx, getModels } = extensionHarness({ enabled: { "target-next": true } });
+    await emitEvent(pi, "session_start", {}, ctx);
+    expect(getModels().some((entry) => entry.provider === "target" && entry.id === "next")).toBe(true);
+
+    const register = pi.registerProvider;
+    let rejectNext = true;
+    pi.registerProvider = (provider: string, config: any) => {
+      if (rejectNext) {
+        rejectNext = false;
+        throw new Error("replacement rejected");
+      }
+      return register(provider, config);
+    };
+
+    await runCommand(pi, "model-patch", "on target", ctx);
+
+    expect(ctx.ui.notifications.at(-1).message).toContain("replacement rejected");
+    expect(getModels().some((entry) => entry.provider === "target" && entry.id === "next")).toBe(true);
+  });
+
   it("toggles persistently and switches away before leaving a removed model", async () => {
     const { pi, settings, ctx } = extensionHarness();
     await runCommand(pi, "model-patch", "on target", ctx);

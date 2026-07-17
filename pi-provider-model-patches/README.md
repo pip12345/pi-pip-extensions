@@ -72,4 +72,4 @@ No API keys or OAuth configuration belong in this file. The target provider must
 
 ## Limits
 
-Pi's extension API replaces a provider catalog as a whole. Another extension dynamically overriding the same provider may conflict when either extension unregisters it. Also, adding a catalog entry does not make an unavailable upstream model usable; provider-side model filtering still wins.
+Pi's extension API replaces a provider catalog as a whole. `pip-common` coordinates this extension's catalog contribution with Provider Proxy's transport/auth contribution, and rejected catalog replacements retain the last working registration. Adding a catalog entry still cannot make an unavailable upstream model usable; provider-side model filtering wins.
