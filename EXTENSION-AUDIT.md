@@ -15,6 +15,7 @@ This is a read-only audit checkpoint of the current Pi extensions in `/workspace
 - Finding 5 was resolved with canonical path checks, nearest-existing-parent resolution for writes, and preflight blocking for search/list roots containing guarded descendants.
 - Finding 23 was resolved by removing derived context paths from persistence, validating restored records, quarantining malformed indexes, and deriving recursive deletion targets from managed roots.
 - Finding 9's corruption/data-loss paths and finding 32 were resolved with strict loads, unknown-section preservation, transactional atomic commits, batched UI saves, and central bound/default validation.
+- Finding 17 was resolved by replacing the global raw-prompt cache with bounded, session-owned metadata that follows undo/redo and session retention.
 - Finding 14 was resolved with batched settings notifications, live consumers, and declarative reload warnings.
 - The runtime-ownership half of findings 21 and 34 was resolved by keying common services to Pi's shared event bus and giving Tiny MCP/Subagents runtime-local managers.
 - The stale Tool UI/Tiny MCP/Tree Edit/Footer scaffolding listed below was removed.
@@ -174,21 +175,11 @@ The child session file remains the authoritative full transcript. Truncated tool
 
 ---
 
-### 17. Undo/redo stores every raw prompt indefinitely in one non-atomic JSON file
+### 17. Undo/redo stores every raw prompt indefinitely in one non-atomic JSON file — **resolved**
 
-**Evidence**
+Undo/Redo no longer uses a process-shared raw-prompt JSON map. Unchanged prompts use the authoritative session message directly; only transformed raw input is persisted as a Pi custom entry in the owning session, capped at 64 KiB. The metadata is part of the same branch tail, so undo/redo removes and restores it atomically with the associated prompt and session deletion removes it naturally. Oversized/untrusted metadata is ignored, and the obsolete global cache is removed on session startup.
 
-- `pi-undo-redo/index.ts:94-121` stores raw prompts in `~/.pi/agent/pip/undo-redo/raw-prompts.json` keyed by session file and entry id.
-- `pi-undo-redo/index.ts:384` adds entries after turns.
-- There is no pruning when sessions are deleted, no size/age limit, and writes are direct read-modify-write.
-
-**Impact**
-
-The file grows forever, retains prompts after session deletion, duplicates potentially sensitive user text, and is susceptible to lost updates/corruption across multiple Pi processes.
-
-**Recommended direction**
-
-Prefer session-local persisted metadata if possible. Otherwise use per-session files, atomic writes/locking, and cleanup tied to session existence and retention limits.
+Regression tests cover session-owned recall, selective/bounded persistence, tail undo/redo, and legacy-cache cleanup.
 
 ---
 

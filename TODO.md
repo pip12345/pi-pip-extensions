@@ -149,7 +149,7 @@
 - [x] Stream and cap Websearch provider responses before parsing.
 - [x] Treat malformed and JSON-RPC error search responses as fallback-eligible failures.
 - [x] Dispose combined-signal listeners when requests settle.
-- [ ] Bound and clean up Undo/Redo raw-prompt persistence.
+- [x] Bound and clean up Undo/Redo raw-prompt persistence.
 
 ## Completion criteria
 
