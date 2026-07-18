@@ -151,10 +151,8 @@ function leafFromCtx(ctx: Ctx, branch: any[]): string | undefined {
   return ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id;
 }
 
-function backupOptions(settings: ScopedSettings) {
-  const keep = Number.parseInt(String(settings.get<string>("keepBackups", "25")), 10) || 25;
-  const maxAge = settings.get<string>("backupMaxAgeDays", "7");
-  return { keepBackups: keep, maxAgeDays: maxAge === "never" ? "never" as const : Number.parseInt(String(maxAge), 10) || 7 };
+function backupOptions() {
+  return { keepBackups: 25, maxAgeDays: 7 };
 }
 
 function settingsEnabled(settings: ScopedSettings): boolean {
@@ -195,10 +193,10 @@ export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], lea
   return { target, tail, previousLeafId, restoredLeafId: currentLeafId, promptText: promptText(target, allEntries) };
 }
 
-function backupAndCleanup(sessionFile: string, reason: string, settings: ScopedSettings): void {
+function backupAndCleanup(sessionFile: string, reason: string): void {
   const dir = ensurePipSubdir("backup", "undo-redo");
   backupSessionFile(sessionFile, reason, { backupDir: dir });
-  cleanupBackups(dir, backupOptions(settings));
+  cleanupBackups(dir, backupOptions());
 }
 
 async function replaceCurrentSession(ctx: Ctx, sessionFile: string, withSession?: (ctx: Ctx) => Promise<void> | void): Promise<void> {
@@ -239,7 +237,7 @@ async function undo(ctx: Ctx, settings: ScopedSettings) {
   const plan = planUndo(branch, file.entries, currentLeafId);
   const nextRecords = removeTail(file, plan.tail, plan.previousLeafId);
 
-  backupAndCleanup(sessionFile, "undo", settings);
+  backupAndCleanup(sessionFile, "undo");
   writeSessionRecordsAtomic(sessionFile, nextRecords);
   pushRedoSlot({
     sessionFile,
@@ -277,7 +275,7 @@ async function redo(ctx: Ctx, settings: ScopedSettings) {
   const poppedSlot = popRedoSlot();
   if (!poppedSlot) return ctx.ui.notify("Nothing to redo.", "info");
   const nextRecords = restoreTail(file, poppedSlot);
-  backupAndCleanup(sessionFile, "redo", settings);
+  backupAndCleanup(sessionFile, "redo");
   writeSessionRecordsAtomic(sessionFile, nextRecords);
   await replaceCurrentSession(ctx, sessionFile, async (newCtx) => {
     newCtx.ui.notify("Redid latest undone prompt.", "info");
@@ -292,8 +290,6 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
     order: 60,
     settings: {
       enabled: setting.boolean({ default: true, label: "Enabled", order: 1, description: "Enable /undo and /redo for the current branch tip." }),
-      keepBackups: setting.enum({ default: "25", choices: ["10", "25", "50", "100"], label: "Keep backups", order: 2, description: "Maximum number of undo/redo backup files to keep." }),
-      backupMaxAgeDays: setting.enum({ default: "7", choices: ["1", "7", "30", "never"], label: "Backup max age", order: 3, description: "Delete older backup files after this many days, or never by age." }),
     },
   });
 

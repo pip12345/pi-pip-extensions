@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { StderrMode } from "./settings.ts";
+import type { StderrMode } from "./types.ts";
 import { MAX_MCP_MESSAGE_BYTES, MAX_MCP_STDERR_LINE_CHARS } from "./transport-limits.ts";
 
 export interface StdioTransportOptions {

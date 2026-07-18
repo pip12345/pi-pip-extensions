@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { pipPath, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
+import { pipPath, truncateToWidth } from "../../pip-common/index.ts";
 import { formatChars } from "./limits.ts";
 
 export const ARTIFACT_CUSTOM_TYPE = "pip.webfetchWebsearch.artifact";
@@ -187,10 +187,10 @@ export function formatOutline(outline: OutlineItem[], maxItems = 12): string {
   return ["Outline:", ...rows, ...suffix].join("\n");
 }
 
-export function cleanupArtifacts(ctx: any, settings: ScopedSettings): void {
+export function cleanupArtifacts(ctx: any): void {
   cleanupOrphanedSessions();
   const { key, sessionFile } = sessionKey(ctx);
-  cleanupSession(key, settings, sessionFile);
+  cleanupSession(key, sessionFile);
 }
 
 function cleanupOrphanedSessions(): void {
@@ -207,12 +207,11 @@ function cleanupOrphanedSessions(): void {
   }
 }
 
-function cleanupSession(parentSessionKey: string, settings: ScopedSettings, parentSessionFile?: string, protectId?: string): void {
+function cleanupSession(parentSessionKey: string, parentSessionFile?: string, protectId?: string): void {
   const index = readIndex(parentSessionKey, parentSessionFile);
-  const ttlHours = Number(settings.get("artifactTtlHours", "24"));
-  const maxPerSession = Number(settings.get("artifactMaxPerSession", "50"));
   const now = Date.now();
-  const ttlMs = Math.max(1, ttlHours) * 60 * 60 * 1000;
+  const ttlMs = 24 * 60 * 60 * 1000;
+  const maxPerSession = 50;
   let artifacts = index.artifacts.filter((artifact) => {
     const keep = artifact.kept || now - artifact.createdAt <= ttlMs;
     const exists = existsSync(artifact.path);
@@ -230,8 +229,8 @@ function cleanupSession(parentSessionKey: string, settings: ScopedSettings, pare
   if (artifacts.length !== index.artifacts.length) writeIndex({ ...index, parentSessionFile: parentSessionFile ?? index.parentSessionFile, artifacts });
 }
 
-export function writeArtifact(input: { kind: ArtifactKind; text: string; ctx: any; settings: ScopedSettings; pi?: any; url?: string; query?: string; title?: string; format?: string }): { record: ArtifactRecord; outline: OutlineItem[] } {
-  cleanupArtifacts(input.ctx, input.settings);
+export function writeArtifact(input: { kind: ArtifactKind; text: string; ctx: any; pi?: any; url?: string; query?: string; title?: string; format?: string }): { record: ArtifactRecord; outline: OutlineItem[] } {
+  cleanupArtifacts(input.ctx);
   const { key, sessionFile } = sessionKey(input.ctx);
   const dir = filesDir(key);
   mkdirSync(dir, { recursive: true });
@@ -256,7 +255,7 @@ export function writeArtifact(input: { kind: ArtifactKind; text: string; ctx: an
   statSync(path);
   const index = readIndex(key, sessionFile);
   writeIndex({ ...index, parentSessionFile: sessionFile ?? index.parentSessionFile, artifacts: [...index.artifacts, record] });
-  cleanupSession(key, input.settings, sessionFile, record.id);
+  cleanupSession(key, sessionFile, record.id);
   input.pi?.appendEntry?.(ARTIFACT_CUSTOM_TYPE, record);
   return { record, outline: buildOutline(input.text, input.kind) };
 }

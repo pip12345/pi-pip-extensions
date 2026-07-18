@@ -60,7 +60,7 @@ Read order, later overrides earlier by server name:
 
 Project files (`.mcp.json` and `.pi/tiny-mcp.json`) are ignored unless Pi reports the project as trusted. Untrusted project commands are never loaded or auto-connected.
 
-`/tiny-mcp config` opens the target selected in `/pip-settings`.
+`/tiny-mcp config` opens the PiP-owned config by default. Pass `pip`, `global`, or `project` explicitly to choose another target.
 
 Useful commands:
 
@@ -96,16 +96,12 @@ tiny-mcp({ action: "add", server: "scratch", config: "{\"type\":\"http\",\"url\"
 
 The `config` value is a JSON string containing one MCP server object. Runtime servers live only in the current pi process and disappear on restart/reset.
 
-The tool metadata tells the model to search/describe before calling unfamiliar tools, to connect servers when no tools are cached, and to edit explicit config files directly when asked to configure MCP. Oversized output is saved under the managed PiP artifact directory and returned with its path; MCP failures are reported as tool errors. HTTP JSON/SSE messages and stdio JSON lines are capped at 5 MB before parsing, while retained stderr lines are independently bounded.
+The tool metadata tells the model to search/describe before calling unfamiliar tools, to connect servers before discovery when needed, and to edit explicit config files directly when asked to configure MCP. Oversized output is saved under the managed PiP artifact directory and returned with its path; MCP failures are reported as tool errors. HTTP JSON/SSE messages and stdio JSON lines are capped at 5 MB before parsing, while retained stderr lines are independently bounded.
 
 ## Settings
 
 Configured through `/pip-settings` under **Tiny MCP**:
 
 - enabled
-- config target
-- metadata cache
-- tool timeout
-- server stderr
-- tool prefix
-- result limit
+
+Operational policy is fixed: 30-second default requests, tailed server stderr, server-prefixed tool names, no metadata cache, and 20,000 characters of inline result text. Per-server `timeoutMs` still overrides the default.

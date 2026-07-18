@@ -22,6 +22,9 @@ describe("secrets guard", () => {
     expect(settings.section("gitignore-guard")?.title).toBe("Secrets Guard");
     expect(settings.definition("gitignore-guard")?.protectGitignore.default).toBe(false);
     expect(settings.definition("gitignore-guard")?.protectCommonSecrets.description).toContain(".env");
+    for (const removed of ["protectReads", "protectWrites", "protectSearchTargets", "promptReminder"]) {
+      expect(settings.definition("gitignore-guard")?.[removed]).toBeUndefined();
+    }
   });
 
   it("extracts bash argument tokens for best-effort path checks", () => {

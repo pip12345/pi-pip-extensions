@@ -13,7 +13,7 @@ describe("pi-prompt-profiles", () => {
     expect(pi.handlers.has("before_agent_start")).toBe(true);
     const settings = getPipSettingsRegistry(pi);
     expect(settings.section(__test.SETTINGS_ID)?.title).toBe("Prompt Profiles");
-    expect(settings.definition(__test.SETTINGS_ID)?.enabled.default).toBe(true);
+    expect(settings.definition(__test.SETTINGS_ID)?.enabled).toBeUndefined();
     expect(settings.definition(__test.SETTINGS_ID)?.profile.default).toBe("default.md");
     expect(settings.definition(__test.SETTINGS_ID)?.mode.default).toBe("append");
   });

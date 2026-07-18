@@ -28,8 +28,8 @@ The tools decide whether to return content inline or save it to a session artifa
 - Larger cleaned pages are saved to an artifact file under `~/.pi/agent/pip/webfetch-websearch`.
 - If `maxChars` is explicitly small, `webfetch` treats that as a request for a small inline excerpt and truncates to that limit.
 - Artifact responses include the saved path and an outline when headings are available.
-- Bodies are streamed and cancelled at the configured 1–5 MB byte limit.
-- With private-host blocking enabled, every redirect is validated and DNS-approved public addresses are pinned to the connection; cancellation and request deadlines also cover DNS resolution.
+- Bodies are streamed and cancelled at the fixed 5 MB byte limit.
+- Private hosts are always blocked: every redirect is validated and DNS-approved public addresses are pinned to the connection; cancellation and request deadlines also cover DNS resolution.
 
 Current inline threshold: about 8k characters.
 
@@ -70,6 +70,6 @@ Optional env vars:
 
 ## Settings
 
-Configure in `/pip-settings` under **Web Fetch/Search**.
+Configure Webfetch enabled, Websearch enabled, and the persistent search-provider preference in `/pip-settings` under **Web Fetch/Search**. Fetch format, timeout, output size, result count, and search context remain per-call tool arguments. Fixed defaults are markdown, 30-second fetch timeout, eight search results, 10,000 search-context characters, and a 25-second search timeout. Artifacts are retained for 24 hours with at most 50 per session.
 
 There are no external parser dependencies. HTML cleaning/conversion lives in `src/html.ts`; site-specific handlers live under `src/sites/`; MCP JSON-RPC/SSE parsing lives in `src/mcp.ts`.

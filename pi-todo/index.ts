@@ -378,11 +378,9 @@ export default function todoExtension(pi: ExtensionAPI) {
     order: 40,
     settings: {
       enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Enable todo tools, the /todo command, and the compact todo widget." }),
-      compactRows: setting.enum({ label: "Compact rows", default: "4", choices: ["2", "3", "4", "6"] as const, order: 2, description: "Fixed height for the always-on todo widget while todos exist." }),
-      showCompleted: setting.enum({ label: "Show completed", default: "smart", choices: ["smart", "always", "never"] as const, order: 3, description: "Controls whether completed todos appear in the compact widget." }),
-      hideWhenAllDone: setting.boolean({ label: "Hide when all done", default: false, order: 4, description: "Hide the compact widget once every todo is marked done." }),
-      doneStyle: setting.enum({ label: "Done style", default: "strike+dim", choices: ["strike+dim", "dim", "plain"] as const, order: 5, description: "Visual style for completed todo text in the compact widget and /todo view." }),
-      placement: setting.enum({ label: "Placement", default: "above", choices: ["above", "below"] as const, order: 6, description: "Place the compact todo widget above or below the editor." }),
+      showCompleted: setting.enum({ label: "Show completed", default: "smart", choices: ["smart", "always", "never"] as const, order: 2, description: "Controls whether completed todos appear in the compact widget." }),
+      hideWhenAllDone: setting.boolean({ label: "Hide when all done", default: false, order: 3, description: "Hide the compact widget once every todo is marked done." }),
+      placement: setting.enum({ label: "Placement", default: "above", choices: ["above", "below"] as const, order: 4, description: "Place the compact todo widget above or below the editor." }),
     },
   });
   const scopedSettings = settingsFor(pi, SETTINGS_ID);
@@ -397,9 +395,9 @@ export default function todoExtension(pi: ExtensionAPI) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
       return;
     }
-    const rows = Number(settingValue<string>("compactRows", "4"));
+    const rows = 4;
     const showCompleted = settingValue<ShowCompleted>("showCompleted", "smart");
-    const doneStyle = settingValue<DoneStyle>("doneStyle", "strike+dim");
+    const doneStyle: DoneStyle = "strike+dim";
     const hideWhenAllDone = settingValue<boolean>("hideWhenAllDone", false);
     const linesFactory = (_tui: any, theme: any) => ({
       invalidate() {},

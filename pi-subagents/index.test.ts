@@ -206,6 +206,8 @@ describe("pi-subagents", () => {
     expect(tool.promptGuidelines.join("\n")).toContain("Do not repeatedly poll");
     expect(pi.commands.has("subagent")).toBe(true);
     expect(getRegisteredShortcut(pi, "ctrl+shift+b")).toBeTruthy();
+    const definitions = getPipSettingsRegistry(pi).definition("subagents");
+    expect(Object.keys(definitions ?? {})).toEqual(["enabled", "ephemeralTtlMinutes", "maxRunning", "injectBackgroundResults"]);
   });
 
   it("injects available agent names into the prompt", async () => {
@@ -384,15 +386,6 @@ describe("pi-subagents", () => {
     const rendered = tool.renderResult(result, { expanded: false }, { fg: (_key: string, text: string) => text }).render(120).join("\n");
     expect(rendered).toContain("openai-codex/gpt-5.4");
     expect(rendered).toContain("↓:172k ↑:6k ↻:848k · $0.42");
-  });
-
-  it("can hide subagent usage cost", async () => {
-    const runner = new FakeRunner();
-    runner.usage = { input: 172_000, output: 6_000, cacheRead: 848_000, cacheWrite: 0, cache: 848_000, total: 1_026_000, cost: 0.42 };
-    const { tool } = setup(runner, { showUsageCost: false });
-    const result = await tool.execute("1", { agent: "explore", prompt: "usage no cost" }, undefined, undefined, createMockCtx());
-    expect(result.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k");
-    expect(result.content[0].text).not.toContain("$0.42");
   });
 
   it("bounds parent snapshots, persistence, status, and completion while retaining the child transcript path", async () => {
@@ -939,20 +932,16 @@ describe("pi-subagents", () => {
     expect(manager.resolve(run.id, "parent")).toBeUndefined();
   });
 
-  it("alwaysKeep makes new subagents reusable unless keep false", async () => {
-    const { tool } = setup(new FakeRunner(), { alwaysKeep: true });
+  it("keeps launches ephemeral by default and honors explicit keep", async () => {
+    const { tool } = setup(new FakeRunner());
     const ctx = createMockCtx();
-    const result = await tool.execute("1", { agent: "explore", prompt: "look", name: "auto" }, undefined, undefined, ctx);
-    expect(result.content[0].text).toContain("keep: true");
-    const continued = await tool.execute("2", { id: "auto", prompt: "again" }, undefined, undefined, ctx);
-    expect(continued.isError).toBeFalsy();
+    const ephemeral = await tool.execute("1", { agent: "explore", prompt: "one" }, undefined, undefined, ctx);
+    expect(ephemeral.content[0].text).toContain("keep: false");
 
-    const forced = await tool.execute("3", { agent: "explore", prompt: "one", keep: false }, undefined, undefined, ctx);
-    expect(forced.content[0].text).toContain("keep: false");
-    const id = forced.content[0].text.match(/subagent_id: (\S+)/)?.[1];
-    const forcedContinued = await tool.execute("4", { id, prompt: "again" }, undefined, undefined, ctx);
-    expect(forcedContinued.isError).toBeFalsy();
-    expect(forcedContinued.content[0].text).toContain("continued: again");
+    const kept = await tool.execute("2", { agent: "explore", prompt: "look", name: "auto", keep: true }, undefined, undefined, ctx);
+    expect(kept.content[0].text).toContain("keep: true");
+    const continued = await tool.execute("3", { id: "auto", prompt: "again" }, undefined, undefined, ctx);
+    expect(continued.isError).toBeFalsy();
   });
 
   it("enforces generation limits and shutdown for continue and restart-via-steer", async () => {

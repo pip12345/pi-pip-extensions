@@ -31,8 +31,8 @@ describe("pi-tool-ui", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     expect([...pi.tools.keys()]).toEqual(["read", "grep", "find", "ls", "edit"]);
-    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.read.description).toContain("compact rendering");
-    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.editDiff.description).toContain("split diffs");
+    expect(Object.keys(getPipSettingsRegistry(pi).definition("tool-ui") ?? {})).toEqual(["enabled", "diffLayout", "editDiff"]);
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.editDiff.description).toContain("diffs");
   });
 
   it("renders compact read calls", () => {
@@ -324,7 +324,7 @@ describe("pi-tool-ui", () => {
     expect(write.renderShell).toBe("self");
     expect(write.renderCall({ todos: [{ text: "x" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_write: 1 todos");
     expect(write.renderResult({ content: [{ type: "text", text: "Set 1 todo" }], details: { todos: [{ id: 1, text: "x", status: "pending" }] } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_write.description).toContain("compact Tool UI rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_write).toBeUndefined();
   });
 
   it("display metadata rendering is load-order safe before flush", () => {
@@ -336,7 +336,7 @@ describe("pi-tool-ui", () => {
 
     expect(update.renderShell).toBe("self");
     expect(update.renderCall({ updates: [{ match: "x", status: "done" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_update: 1 updates");
-    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_update.description).toContain("compact Tool UI rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_update).toBeUndefined();
   });
 
   it("display metadata rendering is re-applied when Tool UI loads after pip tools registered", () => {

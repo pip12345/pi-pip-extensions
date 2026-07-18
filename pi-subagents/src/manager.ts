@@ -458,7 +458,7 @@ export class SubagentManager {
       }
       if (run.status !== "running" && now - run.updatedAt > ttlMs) this.pruneEphemeral(run);
     }
-    const max = this.settings.get("maxRecentPerParent", 20);
+    const max = 20;
     const groups = new Map<string, SubagentRun[]>();
     for (const run of this.runs.values()) {
       if (parentSessionKey && run.parentSessionKey !== parentSessionKey) continue;

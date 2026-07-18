@@ -1,7 +1,6 @@
 import { Type } from "typebox";
 import { firstResultText, registerPipTool, type ScopedSettings } from "../../pip-common/index.ts";
 import { parseTinyMcpServerConfig } from "./config.ts";
-import type { ResultLimitSetting } from "./settings.ts";
 import { TinyMcpManager } from "./manager.ts";
 import { writeTinyMcpArtifact } from "./artifacts.ts";
 import type { TinyMcpServerConfig, VisibleToolInfo } from "./types.ts";
@@ -20,7 +19,7 @@ export class TinyMcpRuntime {
     const key = `${projectTrusted ? "trusted" : "untrusted"}\0${cwd}`;
     let manager = this.managers.get(key);
     if (!manager) {
-      manager = new TinyMcpManager(cwd, this.settings, { projectTrusted });
+      manager = new TinyMcpManager(cwd, { projectTrusted });
       this.managers.set(key, manager);
     }
     return manager;
@@ -87,7 +86,7 @@ export function registerTinyMcpTool(pi: any, runtime: TinyMcpRuntime): void {
 export async function executeTinyMcp(runtime: TinyMcpRuntime, input: any, cwd = process.cwd(), options: TinyMcpExecutionOptions = {}, signal?: AbortSignal, ctx?: any) {
   if (!runtime.settings.get("enabled", true)) throw new Error("Tiny MCP is disabled in /pip-settings.");
   const m = runtime.getManager(cwd, options);
-  const result = (text: string, details: Record<string, unknown> = {}) => boundedResult(runtime, text, cwd, ctx, details);
+  const result = (text: string, details: Record<string, unknown> = {}) => boundedResult(text, cwd, ctx, details);
   if (input.action === "add") {
     const serverName = parseServerName(input.server);
     const config = parseRuntimeServerConfig(input.config, serverName, cwd);
@@ -117,7 +116,7 @@ export async function executeTinyMcp(runtime: TinyMcpRuntime, input: any, cwd = 
   if (input.tool) {
     const args = parseArgs(input.args);
     const result = await m.callVisibleTool(String(input.tool), args, signal);
-    return mcpResultToPi(runtime, result, cwd, ctx);
+    return mcpResultToPi(result, cwd, ctx);
   }
   return result(m.status(), { action: "status" });
 }
@@ -181,18 +180,18 @@ function formatSchemaSummary(schema: unknown): string {
   return names.length ? `\n  args: ${names.join(", ")}` : "";
 }
 
-function mcpResultToPi(runtime: TinyMcpRuntime, callResult: any, cwd: string, ctx?: any) {
+function mcpResultToPi(callResult: any, cwd: string, ctx?: any) {
   const text = blocksToText(callResult?.content ?? []) || JSON.stringify(callResult);
   if (callResult?.isError) throw new Error(text || "MCP tool call failed");
-  return boundedResult(runtime, text, cwd, ctx, { action: "call" });
+  return boundedResult(text, cwd, ctx, { action: "call" });
 }
 
 function blocksToText(blocks: any[]): string {
   return blocks.map((block) => block?.type === "text" ? String(block.text ?? "") : `[${block?.type ?? "content"}]`).join("\n");
 }
 
-function boundedResult(runtime: TinyMcpRuntime, text: string, cwd: string, ctx: any, details: Record<string, unknown>) {
-  const limit = Math.max(1000, Number(runtime.settings.get<ResultLimitSetting>("resultLimit", "20000")) || 20000);
+function boundedResult(text: string, cwd: string, ctx: any, details: Record<string, unknown>) {
+  const limit = 20_000;
   let shown = text;
   let artifactPath: string | undefined;
   if (text.length > limit) {

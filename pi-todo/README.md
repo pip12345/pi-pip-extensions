@@ -37,8 +37,8 @@ State is saved as custom entries in the pi session tree (`pip.todo.state`), so b
 Configure in `/pip-settings` under **Todo**:
 
 - Enabled
-- Compact rows: `2`, `3`, `4`, or `6`
 - Show completed: `smart`, `always`, or `never`
 - Hide when all done
-- Done style: `strike+dim`, `dim`, or `plain`
 - Placement: above or below editor
+
+The compact widget uses four rows and `strike+dim` completed-item styling.

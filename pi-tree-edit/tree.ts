@@ -1,5 +1,5 @@
-import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent, type ScopedSettings } from "../pip-common/index.ts";
-import { EXT, SUMMARY_CUSTOM_TYPE, type Clipboard, type Entry, type FilterMode, type SnapshotToolResults, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
+import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent } from "../pip-common/index.ts";
+import { EXT, SUMMARY_CUSTOM_TYPE, type Clipboard, type Entry, type FilterMode, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
 
 export function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -50,14 +50,6 @@ export function isVisibleEntry(entry: Entry, mode: FilterMode, labels: Map<strin
 
 export function compactLine(value: string): string {
   return stripAnsi(value).replace(/\s+/g, " ").trim();
-}
-
-export function getSummarySettings(settings: ScopedSettings): SummarySnapshotPolicy {
-  return {
-    summarySnapshots: settings.get("summarySnapshots", true),
-    snapshotToolResults: settings.get<SnapshotToolResults>("snapshotToolResults", "truncated"),
-    toolResultTruncation: settings.get("toolResultTruncation", 20000),
-  };
 }
 
 export function isSummaryEntry(entry: Entry): boolean {

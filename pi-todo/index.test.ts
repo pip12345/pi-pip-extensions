@@ -22,8 +22,7 @@ describe("pi-todo", () => {
     const settings = getPipSettingsRegistry(pi);
     expect(settings.section(__test.SETTINGS_ID)?.title).toBe("Todo");
     expect(settings.get("todo.enabled")).toBe(true);
-    expect(settings.get("todo.compactRows")).toBe("4");
-    expect(settings.definition("todo")?.compactRows.description).toContain("Fixed height");
+    expect(Object.keys(settings.definition("todo") ?? {})).toEqual(["enabled", "showCompleted", "hideWhenAllDone", "placement"]);
   });
 
   it("applies enabled changes to the widget, tools, and command", async () => {

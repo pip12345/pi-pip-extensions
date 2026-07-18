@@ -1,9 +1,9 @@
 import { basename } from "node:path";
-import { backupSessionFile, boxLines, clampSelectedIndex, cleanupBackups, ensurePipSubdir, hasTuiCustom, makeEffectiveLeafLast, PipCustomComponent, registerSettingsSection, selectionOffset, setSessionHeaderLeaf, setting, settingsFor, stripAnsi, truncateToWidth, visibleWidth, writeSessionRecordsAtomic } from "../pip-common/index.ts";
-import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
+import { backupSessionFile, boxLines, clampSelectedIndex, cleanupBackups, ensurePipSubdir, hasTuiCustom, makeEffectiveLeafLast, PipCustomComponent, selectionOffset, setSessionHeaderLeaf, stripAnsi, truncateToWidth, visibleWidth, writeSessionRecordsAtomic } from "../pip-common/index.ts";
+import { HELP_ITEMS, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
 import { parseSessionFile, validateDraft } from "./session.ts";
-import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, getSummarySettings, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
+import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
 
 function wrapHelp(items: string[], width: number, theme: Theme): string[] {
   const sep = theme.fg("dim", " · ");
@@ -443,37 +443,6 @@ async function saveDraft(sessionFile: string, draft: DraftSession, ctx: Ctx): Pr
 }
 
 export default function (pi: ExtensionAPI) {
-  registerSettingsSection(pi, {
-    id: TREE_EDIT_SETTINGS_ID,
-    title: "Tree Edit",
-    order: 40,
-    settings: {
-      summarySnapshots: setting.boolean({
-        label: "Summary snapshots",
-        default: true,
-        order: 1,
-        description: "Store original summarized entries inside summary details so expanded summary insets can still recover them after replacement/deletion.",
-      }),
-      snapshotToolResults: setting.enum({
-        label: "Snapshot tool results",
-        default: "truncated",
-        choices: ["off", "truncated", "full"] as const,
-        order: 2,
-        description: "Controls whether tool/bash results are preserved in summary snapshots: off skips them, truncated keeps shortened output, full stores exact outputs.",
-      }),
-      toolResultTruncation: setting.number({
-        label: "Tool result truncation",
-        default: 20000,
-        min: 1000,
-        step: 1000,
-        order: 3,
-        description: "Maximum characters kept per large tool-output text field when Snapshot tool results is set to truncated.",
-      }),
-    },
-  });
-
-  const settings = settingsFor(pi, TREE_EDIT_SETTINGS_ID);
-
   pi.registerCommand("tree-edit", {
     description: "Open transactional session tree editor",
     handler: async (_args: string, ctx: Ctx) => {
@@ -490,7 +459,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const parsed = parseSessionFile(sessionFile);
-      const draft = new DraftSession(parsed.header, parsed.entries, ctx.sessionManager.getLeafId?.() ?? null, () => getSummarySettings(settings));
+      const draft = new DraftSession(parsed.header, parsed.entries, ctx.sessionManager.getLeafId?.() ?? null);
 
       while (true) {
         const result = await (ctx.ui.custom as any)((tui: any, theme: Theme, _kb: any, done: (result?: ExitResult) => void) => new TreeEditComponent(draft, ctx, tui, theme, done), {

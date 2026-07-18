@@ -80,9 +80,6 @@ const SECRETS_SETTINGS_SECTION = {
       order: 4,
       description: "Also block paths matched by .gitignore. Off by default because .gitignore often contains caches and build output.",
     }),
-    protectReads: setting.boolean({ label: "Protect reads", default: true, order: 5, description: "Block read tool calls for guarded paths." }),
-    protectWrites: setting.boolean({ label: "Protect writes", default: true, order: 6, description: "Block write and edit tool calls for guarded paths." }),
-    protectSearchTargets: setting.boolean({ label: "Protect search/list", default: true, order: 7, description: "Block ls, grep, and find when their target or reachable descendants are guarded." }),
     bashGuard: setting.enum({
       label: "Bash guard",
       default: "best-effort",
@@ -91,10 +88,9 @@ const SECRETS_SETTINGS_SECTION = {
         { value: "best-effort", label: "best-effort" },
         { value: "block", label: "block" },
       ] as const,
-      order: 8,
+      order: 5,
       description: "Best-effort scans shell tokens for guarded paths, or block bash entirely.",
     }),
-    promptReminder: setting.boolean({ label: "Prompt reminder", default: true, order: 9, description: "Tell the model not to access guarded secret paths or bypass this guard with bash." }),
   },
 };
 
@@ -338,11 +334,8 @@ function explicitPathInput(event: any): unknown {
   return undefined;
 }
 
-function protectionEnabled(toolName: string, settings: ScopedSettings): boolean {
-  if (toolName === "read") return settings.get("protectReads", true);
-  if (toolName === "write" || toolName === "edit") return settings.get("protectWrites", true);
-  if (toolName === "ls" || toolName === "grep" || toolName === "find") return settings.get("protectSearchTargets", true);
-  return false;
+function protectionEnabled(toolName: string): boolean {
+  return toolName === "read" || toolName === "write" || toolName === "edit" || toolName === "ls" || toolName === "grep" || toolName === "find";
 }
 
 function unquoteToken(token: string): string {
@@ -462,7 +455,7 @@ function blockReason(match: GuardMatch): string {
 }
 
 export function shouldInjectReminder(settings: ScopedSettings): boolean {
-  return settings.get("enabled", true) && settings.get("promptReminder", true);
+  return settings.get("enabled", true);
 }
 
 export default function secretsGuard(pi: ExtensionAPI) {
@@ -488,7 +481,7 @@ export default function secretsGuard(pi: ExtensionAPI) {
       return;
     }
 
-    if (!protectionEnabled(event.toolName, settings)) return;
+    if (!protectionEnabled(event.toolName)) return;
     const matcher = await createGuardMatcher(ctx, settings);
     const searchTool = event.toolName === "ls" || event.toolName === "grep" || event.toolName === "find";
     const rawPath = explicitPathInput(event) ?? (searchTool ? "." : undefined);

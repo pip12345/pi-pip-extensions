@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import tinyMcp, { executeTinyMcp as executeWithRuntime, loadTinyMcpConfig, TinyMcpRuntime } from "./index.ts";
 import { readState, writeState } from "./src/state.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
-import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type SettingsRegistry } from "../pip-common/index.ts";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests } from "../pip-common/index.ts";
 import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
 import { MAX_MCP_MESSAGE_BYTES, readBoundedResponseText } from "./src/transport-limits.ts";
 
@@ -51,7 +51,6 @@ function rpcResponse(id: string | number, result: unknown) {
 }
 
 let directRuntime: TinyMcpRuntime;
-let directSettings: SettingsRegistry;
 
 function executeTinyMcp(input: any, cwd?: string, options?: any, signal?: AbortSignal, ctx?: any) {
   return executeWithRuntime(directRuntime, input, cwd, options, signal, ctx);
@@ -65,11 +64,6 @@ beforeEach(() => {
   resetPipToolsForTests();
   const pi = createMockPi();
   registerTinyMcpSettings(pi as any);
-  const settings = getPipSettingsRegistry(pi);
-  directSettings = settings;
-  settings.set("tiny-mcp.toolPrefix", "server");
-  settings.set("tiny-mcp.metadataCache", false);
-  settings.set("tiny-mcp.defaultTimeout", "30");
   directRuntime = new TinyMcpRuntime(tinyMcpSettings(pi as any));
   writeState({ explicitlyDisconnected: [] });
 });
@@ -85,6 +79,7 @@ describe("pi-tiny-mcp", () => {
     tinyMcp(pi as any);
     flushPipTools(pi as any);
     expect(getPipSettingsRegistry(pi).section("tiny-mcp")?.title).toBe("Tiny MCP");
+    expect(Object.keys(getPipSettingsRegistry(pi).definition("tiny-mcp") ?? {})).toEqual(["enabled"]);
     expect(pi.commands.has("tiny-mcp")).toBe(true);
     const tool = getRegisteredTool(pi, "tiny-mcp");
     expect(tool).toBeTruthy();
@@ -257,10 +252,9 @@ describe("pi-tiny-mcp", () => {
 
     await expect(executeTinyMcp({ tool: "basic_echo", args: '{"fail":true}' }, dir)).rejects.toThrow("requested failure");
 
-    directSettings.set("tiny-mcp.resultLimit", "10000");
     const full = "x".repeat(30_000);
     const result = await executeTinyMcp({ tool: "basic_echo", args: JSON.stringify({ text: full }) }, dir, {}, undefined, createMockCtx());
-    expect(result.content[0].text.length).toBeLessThanOrEqual(10_000);
+    expect(result.content[0].text.length).toBeLessThanOrEqual(20_000);
     expect(result.details).toMatchObject({ action: "call", chars: 30_000, truncated: true });
     expect(Object.keys(result.details).sort()).toEqual(["action", "artifactPath", "chars", "truncated"]);
     expect(readFileSync(result.details.artifactPath!, "utf8")).toBe(full);

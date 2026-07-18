@@ -18,7 +18,7 @@ subagent({ action: "background", id? })
 subagent({ action: "cancel"|"keep"|"forget", id })
 ```
 
-Ephemeral subagents can be continued or steered while they are retained. Their TTL is refreshed whenever they run, receive a message/steer, or emit activity. Use `keep:true` or `action:"keep"` only to disable TTL expiry, or enable **Always keep** in `/pip-settings`. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor. Failed or parent-cancelled foreground launches and continuations reject the tool call; status/read remains the successful inspection path for retained failed runs.
+Ephemeral subagents can be continued or steered while they are retained. Their TTL is refreshed whenever they run, receive a message/steer, or emit activity. Use `keep:true` or `action:"keep"` to disable TTL expiry. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor. Failed or parent-cancelled foreground launches and continuations reject the tool call; status/read remains the successful inspection path for retained failed runs.
 
 ## Commands
 
@@ -80,7 +80,5 @@ Configure in `/pip-settings` under **Subagents**:
 
 - Enabled
 - Ephemeral TTL
-- Max recent
 - Max running
 - Inject background results
-- Always keep

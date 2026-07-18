@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { HttpTransport } from "./http.ts";
 import { JsonRpcPeer } from "./jsonrpc.ts";
-import type { StderrMode } from "./settings.ts";
+import type { StderrMode } from "./types.ts";
 import { StdioTransport } from "./stdio.ts";
 import type { McpTransport } from "./transport.ts";
 import type { McpCallResult, McpToolInfo, TinyMcpServerConfig } from "./types.ts";

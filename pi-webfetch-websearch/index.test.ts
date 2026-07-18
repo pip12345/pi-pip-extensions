@@ -8,9 +8,9 @@ import extension, { parseMcpResponse } from "./index.ts";
 import { isPrivateAddress, resolvePublicAddress } from "./src/http.ts";
 import { formatChars, signalWithTimeout } from "./src/limits.ts";
 import { formatWebSearchArtifact } from "./src/websearch-format.ts";
-import { cleanupArtifacts, sessionArtifactDir } from "./src/artifacts.ts";
+import { cleanupArtifacts, sessionArtifactDir, writeArtifact } from "./src/artifacts.ts";
 import { rewriteGitHubUrl } from "./src/sites/github.ts";
-import { createSettingsRegistry, setPipSettingsRegistryForTests } from "../pip-common/index.ts";
+import { createSettingsRegistry, getPipSettingsRegistry, setPipSettingsRegistryForTests } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void, test: (url: string) => Promise<void>) {
@@ -38,10 +38,10 @@ function exec(tool: any, params: any, ctx: any = {}) {
   });
 }
 
-function createWebPi(overrides: Record<string, unknown> = {}) {
+function createWebPi(overrides: Record<string, unknown> = {}, blockPrivateHosts = false) {
   const pi = createMockPi();
-  setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "webfetch-websearch": { blockPrivateHosts: false, ...overrides } }, { persistPath: false }));
-  extension(pi as any);
+  setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "webfetch-websearch": overrides }, { persistPath: false }));
+  extension(pi as any, { webfetchPolicy: { blockPrivateHosts } });
   return pi;
 }
 
@@ -89,6 +89,7 @@ describe("pi-webfetch-websearch", () => {
     const tool = getRegisteredTool(pi, "webfetch");
     expect(tool).toBeTruthy();
     expect((tool.parameters as any).properties.mode).toBeUndefined();
+    expect(Object.keys(getPipSettingsRegistry(pi).definition("webfetch-websearch") ?? {})).toEqual(["webfetchEnabled", "websearchEnabled", "searchProvider"]);
   });
 
   it("rejects invalid protocols", async () => {
@@ -97,8 +98,8 @@ describe("pi-webfetch-websearch", () => {
     await expect(exec(tool, { url: "file:///tmp/test" })).rejects.toThrow(/http/);
   });
 
-  it("respects the enabled setting", async () => {
-    const pi = createWebPi({ enabled: false });
+  it("respects the webfetch enabled setting", async () => {
+    const pi = createWebPi({ webfetchEnabled: false });
     const result = await exec(getRegisteredTool(pi, "webfetch"), { url: "https://example.com" });
     expect(result.content[0].text).toContain("disabled");
     expect(result.details.disabled).toBe(true);
@@ -224,10 +225,7 @@ describe("pi-webfetch-websearch", () => {
     }));
 
     try {
-      cleanupArtifacts(
-        { sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined } },
-        { get: (_key: string, fallback: unknown) => fallback } as any,
-      );
+      cleanupArtifacts({ sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined } });
       expect(existsSync(victim)).toBe(true);
       expect(readdirSync(artifactDir).some((name) => name.startsWith("artifacts.json.invalid."))).toBe(true);
     } finally {
@@ -253,21 +251,14 @@ describe("pi-webfetch-websearch", () => {
     });
   });
 
-  it("prunes oldest saved artifacts above the per-session limit", async () => {
-    await withServer((req, res) => {
-      res.setHeader("content-type", "text/plain");
-      res.end(req.url === "/old" ? "old artifact ".repeat(800) : "new artifact ".repeat(800));
-    }, async (base) => {
-      const pi = createWebPi({ artifactMaxPerSession: "1" });
-      const tool = getRegisteredTool(pi, "webfetch");
-      const old = await exec(tool, { url: `${base}/old`, format: "text" });
-      const latest = await exec(tool, { url: `${base}/new`, format: "text" });
-      const third = await exec(tool, { url: `${base}/newer`, format: "text" });
-      expect(existsSync(old.details.artifact.path)).toBe(false);
-      expect(existsSync(latest.details.artifact.path)).toBe(false);
-      expect(existsSync(third.details.artifact.path)).toBe(true);
-      rmSync(dirname(dirname(third.details.artifact.path)), { recursive: true, force: true });
-    });
+  it("prunes oldest saved artifacts above the fixed per-session limit", () => {
+    const sessionId = `artifact-limit-${Date.now()}-${Math.random()}`;
+    const ctx = { sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined } };
+    const records = Array.from({ length: 52 }, (_, index) => writeArtifact({ kind: "webfetch", text: `artifact ${index}`, ctx, format: "text" }).record);
+    expect(existsSync(records[0].path)).toBe(false);
+    expect(existsSync(records.at(-1)!.path)).toBe(true);
+    expect(readdirSync(join(sessionArtifactDir(sessionId), "files"))).toHaveLength(50);
+    rmSync(sessionArtifactDir(sessionId), { recursive: true, force: true });
   });
 
   it("extracts article content over navigation in auto mode", async () => {
@@ -321,10 +312,10 @@ describe("pi-webfetch-websearch", () => {
   it("rejects responses larger than the configured byte limit by content-length", async () => {
     await withServer((_req, res) => {
       res.setHeader("content-type", "text/plain");
-      res.setHeader("content-length", String(2 * 1024 * 1024));
+      res.setHeader("content-length", String(6 * 1024 * 1024));
       res.end("too big");
     }, async (base) => {
-      const pi = createWebPi({ maxBytes: "1MB" });
+      const pi = createWebPi();
       await expect(exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/big` })).rejects.toThrow(/too large/i);
     });
   });
@@ -343,7 +334,7 @@ describe("pi-webfetch-websearch", () => {
       }, 1);
       res.on("close", () => clearInterval(interval));
     }, async (base) => {
-      const pi = createWebPi({ maxBytes: "1MB" });
+      const pi = createWebPi();
       await expect(exec(getRegisteredTool(pi, "webfetch"), { url: `${base}/chunked` })).rejects.toThrow(/too large/i);
       expect(sentChunks).toBeLessThan(100);
     });
@@ -361,8 +352,8 @@ describe("pi-webfetch-websearch", () => {
     });
   });
 
-  it("blocks private hosts when configured", async () => {
-    const pi = createWebPi({ blockPrivateHosts: true });
+  it("blocks private hosts by default", async () => {
+    const pi = createWebPi({}, true);
     await expect(exec(getRegisteredTool(pi, "webfetch"), { url: "http://127.0.0.1:1" })).rejects.toThrow(/private|local/i);
   });
 

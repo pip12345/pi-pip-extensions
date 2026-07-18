@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { configPathForTarget } from "./src/config.ts";
+import { configPathForTarget, type ConfigTarget } from "./src/config.ts";
 import { openInEditor } from "./src/editor.ts";
 import { registerTinyMcpTool, TinyMcpRuntime } from "./src/proxy-tool.ts";
-import { registerTinyMcpSettings, tinyMcpSettings, type ConfigTarget } from "./src/settings.ts";
+import { registerTinyMcpSettings, tinyMcpSettings } from "./src/settings.ts";
 
 const HELP_TEXT = `Tiny MCP commands:
   /tiny-mcp                         Show all MCP servers and status
@@ -54,7 +54,7 @@ export default function tinyMcpExtension(pi: ExtensionAPI) {
           return;
         }
         if (subcommand === "config" || subcommand === "edit") {
-          const selected = (target as ConfigTarget | undefined) ?? settings.get<ConfigTarget>("configTarget", "pip");
+          const selected = (target as ConfigTarget | undefined) ?? "pip";
           if (!["pip", "global", "project"].includes(selected)) throw new Error("Usage: /tiny-mcp config [pip|global|project]");
           const path = configPathForTarget(selected, cwd);
           await openInEditor(path);

@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pipPath } from "../../pip-common/index.ts";
-import type { ConfigTarget } from "./settings.ts";
 import type { TinyMcpConfig, TinyMcpServerConfig, TinyMcpTransportType } from "./types.ts";
+
+export type ConfigTarget = "pip" | "global" | "project";
 
 export interface ConfigSource {
   path: string;

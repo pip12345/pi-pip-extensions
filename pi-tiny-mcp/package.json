@@ -29,7 +29,6 @@
   "files": [
     "index.ts",
     "src/artifacts.ts",
-    "src/cache.ts",
     "src/config.ts",
     "src/editor.ts",
     "src/http.ts",

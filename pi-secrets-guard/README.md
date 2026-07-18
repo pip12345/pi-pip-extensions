@@ -32,4 +32,4 @@ Configure under **Secrets Guard** in:
 /pip-settings
 ```
 
-Settings control common-secret, `.secretignore`, optional `.gitignore`, read, write, search/list, bash, and prompt-reminder behavior.
+Settings control whether the guard is enabled, which rule sources apply, and Bash handling. When enabled, guarded reads, writes, searches, and the model reminder are always active.

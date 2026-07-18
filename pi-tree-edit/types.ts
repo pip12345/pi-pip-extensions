@@ -25,7 +25,6 @@ export type DraftSnapshot = { entries: Entry[]; targetLeafId: string | null; cli
 
 export const EXT = "pi-tree-edit";
 export const SUMMARY_CUSTOM_TYPE = "pi-tree-edit.summary";
-export const TREE_EDIT_SETTINGS_ID = "tree-edit";
 export const HELP_ITEMS = [
   "j/k move", "Ctrl+←/→ fold",
   "/ search", "f filter",

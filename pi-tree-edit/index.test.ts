@@ -19,14 +19,10 @@ describe("pi-tree-edit", () => {
     expect(pi.commands.has("tree-edit")).toBe(true);
   });
 
-  it("registers tree-edit settings", () => {
+  it("does not expose fixed snapshot policy as settings", () => {
     const pi = createMockPi();
     treeEdit(pi as any);
-    const settings = getPipSettingsRegistry(pi);
-    expect(settings.section("tree-edit")?.title).toBe("Tree Edit");
-    expect(settings.definition("tree-edit")?.summarySnapshots.default).toBe(true);
-    expect(settings.definition("tree-edit")?.snapshotToolResults.default).toBe("truncated");
-    expect(settings.definition("tree-edit")?.toolResultTruncation.default).toBe(20000);
+    expect(getPipSettingsRegistry(pi).section("tree-edit")).toBeUndefined();
   });
 
   it("atomically persists the selected current leaf as the effective final record", async () => {
