@@ -11,8 +11,7 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 5. Give a short plan before non-trivial edits, then ask for confirmation when the user has not already approved implementation.
 
 ### Subagent usage
-- Do not use subagents without user consent.
-- Ask the user before launching subagents
+- Do not launch subagents without first obtaining user consent.
 
 ### Permission and scope
 - Do not edit, write, delete, migrate, or reformat files unless the user explicitly asks to apply/implement/make the change.
@@ -34,25 +33,22 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 - Before changing shared code or fixing a bug, find the existing abstraction/pattern that owns the behavior.
 - Check adjacent implementations and tests when the change is non-trivial or the owner is unclear.
 - Prefer fitting the fix into the existing abstraction.
-- Avoid one-off special cases unless clearly justified.
-- Prefer declarative config/metadata and shared mechanisms over hardcoded conditionals or duplicated logic.
 - If the existing architecture is causing the bug or forcing ugly code, call that out directly.
-- Offer the smallest clean architectural adjustment before proposing a patch.
+- Identify a clean architectural adjustment scoped to the requested problem before proposing a patch.
 - Fix the bug, not the feature: preserve existing contracts, capabilities, workflows, and user-visible intent unless explicitly asked to change them.
 - Do not make failures disappear by removing, bypassing, weakening, or narrowing behavior. Fix the broken interaction at the owning abstraction.
 
-### Simplification and net complexity
-- Before adding a new abstraction, helper, option, setting, fallback, cache, wrapper, branch, or special case, first look for what can be removed, reused, moved, generalized, or simplified.
-- Prefer patches that reduce or preserve net complexity.
-- Additive-only patches are suspicious for non-trivial changes. If a change only adds code, branches, wrappers, flags, caches, or tests without removing/simplifying related code, briefly justify why that is the cleanest option.
-- For non-trivial additions, use these as a design pressure test; do not mechanically answer them in the user-facing response unless they materially affect the decision:
-  1. What existing code/abstraction already owns this?
-  2. Can the bug be fixed by deleting code?
-  3. Can this be fixed by moving logic into an existing abstraction?
-  4. Can an existing helper be extended instead of creating a new one?
-  5. What code becomes obsolete after this change?
-  6. What will I remove in the same patch?
-- Use this rigor internally for all changes; only surface the checklist when the tradeoff materially affects the decision or the change is non-trivial.
+### Simplicity and behavioral design
+- Treat simple as easy to model correctly, not short. Fewer lines, declarations, functions, files, or syntax are not inherently simpler; additional code can be simpler when it makes ownership, state, ordering, or contracts explicit.
+- Behavioral complexity includes hidden state, lifecycle or ordering dependencies, implicit side effects, coupling between unrelated concerns, duplicated sources of truth, unclear ownership, multiple behavior or contract modes, and exceptions users must memorize.
+- When implementing features or new logic, prefer coherent overarching rules that define behavior within a bounded system, module, or abstraction. A good design lets users and maintainers predict related behavior from a small set of rules instead of memorizing special cases.
+- Keep each rule scoped to the system or abstraction whose behavior it defines. Do not force unrelated systems into one rule merely to make them superficially uniform.
+- When the domain genuinely requires an exception, express it as an explicit part of the system's behavioral model rather than scattering special cases.
+- Judge structural changes by whether they make the system easier to model and make ownership, state, and contracts clearer while addressing the request. Adding, preserving, consolidating, or deleting code is not inherently a simplification.
+
+### Comment policy
+- Comments should explain the intent or idea behind the code—why it exists or why it works this way—when that meaning is not easily apparent from the implementation. Do not merely narrate what the code does.
+- Comments can, for example, explain the conceptual model behind the code, invariants, contracts, constraints, historical context, failure modes, or non-obvious tradeoffs.
 
 ### Assumption stop rule
 If behavior depends on framework lifecycle, external API, configuration/settings semantics, persistence, concurrency, permissions, integration contracts, or user preference, do not guess.
@@ -84,7 +80,7 @@ For bugs, follow this order:
 - If feedback shows the design direction is wrong, pause and re-evaluate before continuing.
 
 ### Post-edit checks
-After edits, inspect modified files when needed. For non-trivial changes involving shared abstractions, settings, lifecycle/state, persistence, public behavior, or tests, also check for dead code, duplicated logic, fallback behavior, and run focused tests/typecheck where relevant. State any meaningful untested assumptions.
+After non-trivial changes, inspect the diff and, where relevant, check for dead or duplicated logic and unintended fallbacks, run focused tests or typechecks, and state meaningful untested assumptions.
 
 ## Reasoning and discussion
 
