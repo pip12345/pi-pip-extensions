@@ -21,6 +21,7 @@ export interface ProviderModelPatchesOptions {
   patches?: ProviderModelPatch[];
   userConfigPath?: string;
   settings?: ModelPatchSettings;
+  builtinCatalogLoader?: typeof getBuiltinPatchProviderCatalog;
 }
 
 interface ReconcileResult {
@@ -189,19 +190,6 @@ function providerModelConfig(model: Model<Api>) {
   };
 }
 
-async function existingProviderAuth(ctx: any, provider: string): Promise<{ apiKey?: string; oauth?: any }> {
-  // Resolve once so an expired OAuth credential is refreshed before its model filter runs.
-  const apiKey = await ctx.modelRegistry.getApiKeyForProvider(provider);
-  const oauthProvider = ctx.modelRegistry.authStorage?.getOAuthProviders?.().find((candidate: any) => candidate.id === provider);
-  if (oauthProvider) {
-    const { id: _id, ...oauth } = oauthProvider;
-    return { oauth };
-  }
-  if (!apiKey) throw new Error(`No existing authentication for ${provider}. Use Pi's normal /login first.`);
-  // This is held only in the in-memory provider registration. AuthStorage remains preferred for requests.
-  return { apiKey };
-}
-
 function show(ctx: any, message: string, level: "info" | "warning" | "error" = "info"): void {
   if (ctx?.ui?.notify) ctx.ui.notify(message, level);
   else console.log(message);
@@ -211,7 +199,7 @@ function patchMatches(patch: ProviderModelPatch, selector: string): boolean {
   return patch.id === selector || patch.provider === selector;
 }
 
-export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options: ProviderModelPatchesOptions = {}): void {
+export async function registerProviderModelPatchesExtension(pi: ExtensionAPI, options: ProviderModelPatchesOptions = {}): Promise<void> {
   let configError: string | undefined;
   let patches: ProviderModelPatch[];
   try {
@@ -231,7 +219,7 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
   // Pi resolves the initial/session model after extension loading but before session_start.
   // Pre-register enabled package-owned catalogs here so saved patched models can be restored.
   for (const provider of new Set(patches.filter((patch) => patch.source === "builtin" && settings.getEnabled(patch.id)).map((patch) => patch.provider))) {
-    const catalog = getBuiltinPatchProviderCatalog(provider);
+    const catalog = await (options.builtinCatalogLoader ?? getBuiltinPatchProviderCatalog)(provider);
     if (!catalog) continue;
 
     const enabled = patches.filter((patch) => patch.source === "builtin" && patch.provider === provider && settings.getEnabled(patch.id));
@@ -241,10 +229,11 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     const firstTemplate = result.templates[0];
     if (!firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
     baseModels.set(provider, catalog.models.filter((model) => model.provider === provider));
+    // Catalog-only overrides inherit the built-in provider's auth, policy
+    // filtering, and streaming implementation from Pi's provider composer.
     const providerConfig = {
       baseUrl: firstTemplate.baseUrl,
       api: firstTemplate.api,
-      oauth: catalog.oauth,
       models: result.models.map(providerModelConfig) as any,
     };
     providerOverrides.set(provider, providerConfig);
@@ -292,9 +281,9 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
       ...ctx.modelRegistry.getAll().filter((model: Model<Api>) => model.provider !== provider),
       ...(baseModels.get(provider) ?? []),
     ];
-    // Build and resolve auth before disturbing an already-working registration.
+    // Build before disturbing an already-working registration. Pi composes
+    // this catalog with the built-in provider's existing auth and transport.
     const result = buildProviderModelPatch(cleanCatalog, provider, enabled);
-    const auth = result.addedIds.length ? await existingProviderAuth(ctx, provider) : undefined;
     const firstTemplate = result.templates[0];
     if (result.addedIds.length && !firstTemplate) throw new Error(`Patch for ${provider} produced no target transport template`);
 
@@ -310,7 +299,6 @@ export function registerProviderModelPatchesExtension(pi: ExtensionAPI, options:
     const nextConfig = {
       baseUrl: firstTemplate!.baseUrl,
       api: firstTemplate!.api,
-      ...auth,
       models: result.models.map(providerModelConfig) as any,
     };
     // Replacing the same contribution lets the coordinator restore its prior

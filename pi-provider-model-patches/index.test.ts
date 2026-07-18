@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, runCommand } from "../pip-common/testing.ts";
 import { getPipSettingsRegistry } from "../pip-common/index.ts";
@@ -69,7 +70,6 @@ function extensionHarness(options: {
   patches?: ProviderModelPatch[];
   enabled?: Record<string, boolean>;
   oauthAvailableIds?: string[];
-  withOAuth?: boolean;
 } = {}) {
   const patches = options.patches ?? [genericPatch()];
   const baseModels = [model("target", "current"), model("source", "next", { name: "Next Model" })];
@@ -81,28 +81,18 @@ function extensionHarness(options: {
   pi.selectedModels = [] as any[];
 
   const availableIds = new Set(options.oauthAvailableIds ?? ["current", "next"]);
-  const oauth = {
-    id: "target",
-    name: "Target OAuth",
-    login: async () => ({ access: "token", refresh: "refresh", expires: Date.now() + 60_000 }),
-    refreshToken: async (credentials: any) => credentials,
-    getApiKey: (credentials: any) => credentials.access,
-    modifyModels: (models: any[]) => models.filter((entry) => entry.provider !== "target" || availableIds.has(entry.id)),
-  };
+  const applyBaseProviderPolicy = (models: any[]) => models.filter((entry) => entry.provider !== "target" || availableIds.has(entry.id));
 
   const ctx = createMockCtx();
   ctx.modelRegistry = {
     getAll: () => currentModels,
     find: (provider: string, id: string) => currentModels.find((entry) => entry.provider === provider && entry.id === id),
-    getApiKeyForProvider: async () => "existing-auth-token",
-    authStorage: { getOAuthProviders: () => (options.withOAuth === false ? [] : [oauth]) },
   };
 
   pi.registerProvider = (provider: string, config: any) => {
     pi.registrations.push({ provider, config });
     const replacement = config.models.map((entry: any) => ({ ...entry, provider, baseUrl: entry.baseUrl ?? config.baseUrl }));
-    currentModels = [...currentModels.filter((entry) => entry.provider !== provider), ...replacement];
-    if (config.oauth?.modifyModels) currentModels = config.oauth.modifyModels(currentModels, {});
+    currentModels = applyBaseProviderPolicy([...currentModels.filter((entry) => entry.provider !== provider), ...replacement]);
   };
   pi.unregisterProvider = (provider: string) => {
     pi.unregistrations.push(provider);
@@ -144,14 +134,15 @@ describe("provider model patch definitions", () => {
     expect(getPipSettingsRegistry(pi).get(`${SETTINGS_ID}.github-copilot-gpt-5-6`)).toBe(false);
   });
 
-  it("pre-registers enabled bundled models before session_start so Pi can restore them", () => {
+  it("pre-registers enabled bundled models before session_start so Pi can restore them", async () => {
     const pi = createMockPi() as any;
     pi.registrations = [] as any[];
     pi.registerProvider = (provider: string, config: any) => pi.registrations.push({ provider, config });
 
-    registerProviderModelPatchesExtension(pi, {
+    await registerProviderModelPatchesExtension(pi, {
       patches: BUILTIN_MODEL_PATCHES,
       settings: memorySettings({ "github-copilot-gpt-5-6": true }),
+      builtinCatalogLoader: async () => ({ models: [model("github-copilot", "gpt-5.5")] }),
     });
 
     expect(pi.registrations).toHaveLength(1);
@@ -165,11 +156,36 @@ describe("provider model patch definitions", () => {
         ]),
       },
     });
+    expect(pi.registrations[0].config).not.toHaveProperty("oauth");
+    expect(pi.registrations[0].config).not.toHaveProperty("apiKey");
   });
 
-  it("avoids pi-ai provider subpaths that Pi's extension loader prefix-rewrites", () => {
+  it("uses only Pi's loader-safe pi-ai root import", () => {
     const source = readFileSync(join(import.meta.dirname, "presets.ts"), "utf8");
-    expect(source).not.toMatch(/@earendil-works\/pi-ai\/providers\//);
+    expect(source).not.toMatch(/@earendil-works\/pi-ai\//);
+  });
+
+  it("loads through Pi without extension-local node_modules", () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-model-patches-loader-"));
+    tempDirs.push(fixtureRoot);
+    const fixtureExtensions = join(fixtureRoot, "extensions-pip");
+    const copyWithoutDependencies = { recursive: true, filter: (source: string) => basename(source) !== "node_modules" };
+    cpSync(import.meta.dirname, join(fixtureExtensions, "pi-provider-model-patches"), copyWithoutDependencies);
+    cpSync(join(import.meta.dirname, "..", "pip-common"), join(fixtureExtensions, "pip-common"), copyWithoutDependencies);
+
+    const home = join(fixtureRoot, "home");
+    mkdirSync(home, { recursive: true });
+    const cli = join(import.meta.dirname, "..", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
+    expect(existsSync(cli)).toBe(true);
+    const result = spawnSync(process.execPath, [cli, "--list-models", "--extension", join(fixtureExtensions, "pi-provider-model-patches", "index.ts")], {
+      cwd: fixtureRoot,
+      env: { ...process.env, HOME: home },
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it("uses bundled fallback metadata when Pi does not know the source models", () => {
@@ -245,22 +261,15 @@ describe("provider model patch extension", () => {
     expect(ctx.ui.statuses.get("provider-model-patches")).toBeUndefined();
   });
 
-  it("restores an enabled patch on startup and reuses existing OAuth", async () => {
+  it("restores an enabled patch while leaving authentication to the built-in provider", async () => {
     const { pi, ctx, getModels } = extensionHarness({ enabled: { "target-next": true } });
     await emitEvent(pi, "session_start", {}, ctx);
 
     expect(pi.registrations).toHaveLength(1);
-    expect(pi.registrations[0].config.oauth).toEqual(expect.objectContaining({ name: "Target OAuth" }));
+    expect(pi.registrations[0].config).not.toHaveProperty("oauth");
     expect(pi.registrations[0].config).not.toHaveProperty("apiKey");
     expect(getModels().some((entry) => entry.provider === "target" && entry.id === "next")).toBe(true);
     expect(ctx.ui.statuses.get("provider-model-patches")).toBe("patches: target");
-  });
-
-  it("reuses an existing API key in memory when the provider has no OAuth", async () => {
-    const { pi, ctx } = extensionHarness({ enabled: { "target-next": true }, withOAuth: false });
-    await emitEvent(pi, "session_start", {}, ctx);
-
-    expect(pi.registrations[0].config.apiKey).toBe("existing-auth-token");
   });
 
   it("keeps policy-filtered models unavailable and restores the default catalog", async () => {

@@ -1,21 +1,33 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai/compat";
-import { githubCopilotOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 import type { ProviderModelPatch } from "./types.ts";
 
 export interface BuiltinPatchProviderCatalog {
   models: Model<Api>[];
-  oauth: Omit<typeof githubCopilotOAuthProvider, "id">;
 }
 
-export function getBuiltinPatchProviderCatalog(provider: string): BuiltinPatchProviderCatalog | undefined {
+const EMPTY_CREDENTIALS = {
+  async read() {
+    return undefined;
+  },
+  async list() {
+    return [];
+  },
+  async modify(_providerId: string, update: (current: undefined) => Promise<any>) {
+    return update(undefined);
+  },
+  async delete() {},
+};
+
+export async function getBuiltinPatchProviderCatalog(provider: string): Promise<BuiltinPatchProviderCatalog | undefined> {
   if (provider !== "github-copilot") return undefined;
 
-  const { id: _id, ...oauth } = githubCopilotOAuthProvider;
-  return {
-    models: getModels("github-copilot") as Model<Api>[],
-    oauth,
-  };
+  // ModelRuntime is Pi's public catalog owner. Access it through the package
+  // root so this extension never depends on loader-broken package subpaths.
+  const ModelRuntime = (PiCodingAgent as any).ModelRuntime;
+  if (!ModelRuntime?.create) throw new Error("Built-in model patches require a Pi version that exports ModelRuntime");
+  const runtime = await ModelRuntime.create({ credentials: EMPTY_CREDENTIALS, modelsPath: null, allowModelNetwork: false });
+  return { models: [...runtime.getModels(provider)] };
 }
 
 const GPT_56_COMMON = {
