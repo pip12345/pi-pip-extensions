@@ -51,16 +51,10 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 - Comments can, for example, explain the conceptual model behind the code, invariants, contracts, constraints, historical context, failure modes, or non-obvious tradeoffs.
 
 ### Assumption stop rule
-If behavior depends on framework lifecycle, external API, configuration/settings semantics, persistence, concurrency, permissions, integration contracts, or user preference, do not guess.
-
-Stop and verify by reading source/docs or ask the user.
-
-Never write code based on:
-- "probably"
-- "seems like"
-- adjacent naming only
-- previous assistant changes
-- urgency/frustration in the user message
+- If an unverified assumption could materially affect correctness, design, scope, observable behavior, or the user's intent, stop and verify it or ask the user. Do not fill the gap with a plausible inference.
+- Use evidence appropriate to the question. Inspect relevant code, documentation, tests, configuration, or runtime behavior for factual claims; ask the user for intent, preferences, and decisions only they can make.
+- Treat uncertainty, adjacent naming, and previous assistant changes as reasons to verify, not sufficient evidence by themselves.
+- Urgency or frustration does not lower the verification standard.
 
 ## Debugging and validation
 
