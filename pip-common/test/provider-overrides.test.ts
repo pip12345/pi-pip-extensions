@@ -19,7 +19,7 @@ describe("provider override coordinator", () => {
     const owner = providerPi();
     const sibling = providerPi();
     sibling.events = owner.events;
-    const catalog = registerProviderOverrideContributor(owner, { id: "model-patches", role: "catalog" });
+    const catalog = registerProviderOverrideContributor(owner, { id: "catalog-extension", role: "catalog" });
     const transport = registerProviderOverrideContributor(sibling, { id: "provider-proxy", role: "transport" });
 
     catalog.set("openai", { baseUrl: "https://native", apiKey: "token", models: [{ id: "new", api: "openai-responses", baseUrl: "https://native" }] });

@@ -34,7 +34,6 @@ export const CHILD_EXTENSION_CAPABILITIES: Readonly<Record<string, ChildExtensio
   "pi-todo": "parent-state",
   "pi-undo-redo": "parent-state",
   "pi-provider-proxy": "provider",
-  "pi-provider-model-patches": "provider",
   "pi-tiny-mcp": "external-resource",
   "pi-subagents": "nested-agent",
   "pi-stats": "parent-telemetry",

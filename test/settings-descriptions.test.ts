@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getPipSettingsRegistry } from "../pip-common/index.ts";
 import pipFooter from "../pi-pip-footer/index.ts";
-import providerModelPatches from "../pi-provider-model-patches/index.ts";
 import toolUi from "../pi-tool-ui/index.ts";
 import promptProfiles from "../pi-prompt-profiles/index.ts";
 import secretsGuard from "../pi-secrets-guard/index.ts";
@@ -13,7 +12,7 @@ import web from "../pi-webfetch-websearch/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import { createMockPi } from "../pip-common/testing.ts";
 
-const extensions = [pipFooter, providerModelPatches, toolUi, promptProfiles, secretsGuard, todo, subagents, treeEdit, undoRedo, web, tinyMcp];
+const extensions = [pipFooter, toolUi, promptProfiles, secretsGuard, todo, subagents, treeEdit, undoRedo, web, tinyMcp];
 
 describe("pip settings descriptions", () => {
   it("all registered pip settings have concise descriptions", () => {
@@ -30,6 +29,6 @@ describe("pip settings descriptions", () => {
     }
 
     expect(missing).toEqual([]);
-    expect(getPipSettingsRegistry(owner).rows()).toHaveLength(35);
+    expect(getPipSettingsRegistry(owner).rows()).toHaveLength(34);
   });
 });

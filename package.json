@@ -13,7 +13,6 @@
       "pi-context/index.ts",
       "pi-pip-footer/index.ts",
       "pi-prompt-profiles/index.ts",
-      "pi-provider-model-patches/index.ts",
       "pi-provider-proxy/index.ts",
       "pi-question/index.ts",
       "pi-secrets-guard/index.ts",

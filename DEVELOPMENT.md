@@ -7,7 +7,6 @@ This repository is one aggregate Pi package with separately filterable feature e
 - `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers
 - `pi-tool-ui` - compact rendering for built-in and Pip tools
 - `pi-stats` - interactive token/session/global usage inspector
-- `pi-provider-model-patches` - generic persistent opt-in patches for stale provider model catalogs
 - `pi-pip-footer` - footer with token counter, context gauge, model status, and quota usage
 - `pi-prompt-profiles` - selectable markdown system prompt overlays
 - `pi-tree-edit` - interactive session tree editor
