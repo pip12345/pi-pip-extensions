@@ -19,6 +19,7 @@ function captureFooter(ctx: any) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -30,6 +31,8 @@ describe("pi-pip-footer", () => {
     expect(pi.handlers.has("session_start")).toBe(true);
     expect(pi.handlers.has("agent_start")).toBe(true);
     expect(pi.handlers.has("message_end")).toBe(true);
+    expect(pi.handlers.has("session_compact")).toBe(true);
+    expect(pi.handlers.has("session_tree")).toBe(true);
     expect(pi.handlers.has("model_select")).toBe(true);
     expect(pi.handlers.has("session_shutdown")).toBe(true);
   });
@@ -83,6 +86,38 @@ describe("pi-pip-footer", () => {
     const component = factory({ requestRender() {} }, theme);
     expect(component.render(120)[0]).toContain("↓:4k ↑:2k ↻:3k/75% · $0.04");
     await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("refreshes settled totals after persisted compaction usage", async () => {
+    vi.useFakeTimers();
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const entries: any[] = [
+      { type: "message", id: "a1", message: { role: "assistant", provider: "openai", model: "gpt", usage: { input: 10, output: 2, cost: { total: 0.01 } } } },
+    ];
+    const ctx = createMockCtx({
+      sessionManager: {
+        getEntries: () => entries,
+        getBranch: () => entries,
+        getLeafId: () => entries.at(-1)?.id,
+        getSessionFile: () => "/tmp/footer-compaction.jsonl",
+      },
+      model: { contextWindow: 272_000 },
+    });
+    await emitEvent(pi, "session_start", {}, ctx);
+    const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
+    const component = factory({ requestRender() {} }, theme);
+    expect(component.render(120)[0]).toContain("↓:10 ↑:2");
+
+    const compactionEntry = { type: "compaction", id: "c1", tokensBefore: 90_000, usage: { input: 20, output: 4, cost: { total: 0.02 } } };
+    entries.push(compactionEntry);
+    await emitEvent(pi, "session_compact", { compactionEntry }, ctx);
+    component.render(120);
+    vi.advanceTimersByTime(2000);
+    expect(component.render(120)[0]).toContain("↓:30 ↑:6");
+    expect(component.render(120)[0]).toContain("$0.03");
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+    vi.useRealTimers();
   });
 
   it("can hide token counter cache hit rate", async () => {

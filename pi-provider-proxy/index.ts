@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "@earendil-works/pi-ai/oauth";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/oauth";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -15,6 +15,14 @@ export interface ProviderProxyConfig {
 
 export interface ProviderProxyOptions {
   configPath?: string;
+}
+
+interface RelayedOAuthProvider {
+  name: string;
+  usesCallbackServer: boolean;
+  login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
+  refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
+  getApiKey(credentials: OAuthCredentials): string;
 }
 
 export interface ProviderRouteHint {
@@ -933,7 +941,7 @@ async function loginAnthropicWithAuthRelay(authBaseUrl: string, callbacks: Provi
   }
 }
 
-export function createRelayedOAuthProvider(provider: string, authBaseUrl: string): Omit<OAuthProviderInterface, "id"> {
+export function createRelayedOAuthProvider(provider: string, authBaseUrl: string): RelayedOAuthProvider {
   const normalizedProvider = normalizeProviderId(provider);
   const normalizedAuthBaseUrl = normalizeBaseUrl(authBaseUrl);
   assertSupportedAuthRelayProvider(normalizedProvider);

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AuthStorage, ModelRegistry, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
 import { hasTuiCustom, registerPipTool } from "../pip-common/index.ts";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
@@ -97,7 +97,7 @@ function modelMatches(model: any, query: string): boolean {
 }
 
 async function availableSubagentModels(ctx: any, query?: string): Promise<{ text: string; models: Array<{ id: string; name?: string }> }> {
-  const registry = ctx?.modelRegistry ?? ModelRegistry.create(AuthStorage.create());
+  const registry = ctx?.modelRegistry ?? await ModelRuntime.create();
   await Promise.resolve(registry.refresh?.());
   const all = [...(await Promise.resolve(registry.getAvailable?.() ?? []))].sort((a: any, b: any) => modelRef(a).localeCompare(modelRef(b)));
   const q = query?.trim();

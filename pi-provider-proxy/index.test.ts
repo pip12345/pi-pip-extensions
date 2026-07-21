@@ -168,12 +168,12 @@ describe("provider proxy registration", () => {
     await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 })).rejects.not.toThrow(/secret-access/);
 
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ refresh_token: "secret-refresh" }), { status: 400 }));
-    const error = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught) => caught as Error);
+    const error = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught: unknown) => caught as Error);
     expect(error.message).toContain("response body omitted");
     expect(error.message).not.toMatch(/secret-refresh|password|secret=query/);
 
     vi.stubGlobal("fetch", async () => new Response("secret-access is not json", { status: 200 }));
-    const parseError = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught) => caught as Error);
+    const parseError = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught: unknown) => caught as Error);
     expect(parseError.message).toContain("response body omitted");
     expect(parseError.message).not.toContain("secret-access");
   });

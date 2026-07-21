@@ -74,7 +74,7 @@ class UsageRuntime implements ChildAgentRuntime {
       setActiveToolsByName() {},
       async setModel() {},
     };
-    return { session: session as any, modelRegistry: { find: () => ({}) } as any };
+    return { session: session as any, modelRuntime: { getModel: () => ({}) } as any };
   }
 }
 
@@ -106,8 +106,8 @@ class ModelRuntime implements ChildAgentRuntime {
     };
     return {
       session: session as any,
-      modelRegistry: {
-        find(provider: string, id: string) {
+      modelRuntime: {
+        getModel(provider: string, id: string) {
           runtime.findCalls.push([provider, id]);
           return runtime.found && provider === model.provider && id === model.id ? model : undefined;
         },

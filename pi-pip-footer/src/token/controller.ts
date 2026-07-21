@@ -21,6 +21,7 @@ export interface TokenController {
   updateBurnFromEvent(event: any): void;
   onMessageEnd(event: any, ctx: any): void;
   onAgentEnd(ctx: any): void;
+  onPersistedUsage(ctx: any): void;
 }
 
 export function createTokenController(deps: TokenControllerDeps): TokenController {
@@ -339,6 +340,12 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
     scheduleSettleTokenBreakdown(tokens, { showDeltaReceipt: true });
   }
 
+  function onPersistedUsage(ctx: any): void {
+    stopTokenAnimation();
+    pendingSettledTokens = undefined;
+    scheduleSettleTokenBreakdown(getHistoricalSessionTokens(ctx, { fresh: true }), { showDeltaReceipt: true });
+  }
+
   return {
     syncWorkingIndicator,
     enabled: tokenCounterEnabled,
@@ -352,5 +359,6 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
     updateBurnFromEvent: updateTokenBurnFromEvent,
     onMessageEnd,
     onAgentEnd,
+    onPersistedUsage,
   };
 }

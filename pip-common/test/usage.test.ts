@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addUsage, cacheHitRateFromUsage, emptyUsage, formatCompactUsage, formatTokenCount, normalizeUsage, promptTokensFromUsage } from "../src/usage.ts";
+import { addUsage, cacheHitRateFromUsage, emptyUsage, formatCompactUsage, formatTokenCount, normalizeUsage, promptTokensFromUsage, sessionUsageRecords, sumSessionUsage } from "../src/usage.ts";
 
 describe("usage helpers", () => {
   it("normalizes common provider usage shapes", () => {
@@ -23,6 +23,20 @@ describe("usage helpers", () => {
     addUsage(total, { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cache: 7, total: 10, cost: 0.2 });
     expect(total.total).toBe(10);
     expect(total.cache).toBe(7);
+  });
+
+  it("collects canonical billed usage from persisted session entries", () => {
+    const entries = [
+      { type: "message", id: "a1", timestamp: "2026-07-21T10:00:00.000Z", message: { role: "assistant", provider: "openrouter", model: "router", responseModel: "actual", usage: { input: 10, output: 2, cost: { total: 0.01 } } } },
+      { type: "message", id: "t1", message: { role: "toolResult", toolName: "paid-tool", usage: { input: 3, output: 1, cacheRead: 2, cost: { total: 0.02 } } } },
+      { type: "compaction", id: "c1", tokensBefore: 90_000, usage: { input: 20, output: 4, cost: { total: 0.03 } } },
+      { type: "branch_summary", id: "b1", usage: { input: 5, output: 1, cost: { total: 0.04 } } },
+      { type: "compaction", id: "estimate-only", tokensBefore: 1_000_000 },
+    ];
+
+    expect(sessionUsageRecords(entries).map((record) => record.kind)).toEqual(["assistant", "tool", "compaction", "branch_summary"]);
+    expect(sessionUsageRecords(entries)[0]).toMatchObject({ provider: "openrouter", model: "actual", timestamp: Date.parse("2026-07-21T10:00:00.000Z") });
+    expect(sumSessionUsage(entries)).toMatchObject({ input: 38, output: 8, cacheRead: 2, total: 48, cost: 0.1 });
   });
 
   it("formats compact token counts", () => {

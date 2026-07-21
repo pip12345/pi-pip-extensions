@@ -212,7 +212,7 @@ export class RealRunner implements Runner {
       const modelString = input.model ?? input.agent.model;
       if (modelString) {
         const { provider, id } = parseModelRef(modelString);
-        const model = created.modelRegistry.find(provider, id);
+        const model = created.modelRuntime.getModel(provider, id);
         if (!model) throw new Error(`Unknown subagent model: ${modelString}. Use subagent({ action: "models", query: ${JSON.stringify(provider)} }) to list available model IDs.`);
         await activeSession.setModel(model);
       }

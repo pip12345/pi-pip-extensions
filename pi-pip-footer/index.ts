@@ -246,6 +246,14 @@ export default function (pi: ExtensionAPI) {
     if (sessionActive) tokenController.onMessageEnd(event, ctx);
   });
 
+  pi.on("session_compact", async (_event: any, ctx: any) => {
+    if (sessionActive) tokenController.onPersistedUsage(ctx);
+  });
+
+  pi.on("session_tree", async (event: any, ctx: any) => {
+    if (sessionActive && event.summaryEntry?.usage) tokenController.onPersistedUsage(ctx);
+  });
+
   pi.on("turn_end", async (_event: any, ctx: any) => {
     if (!sessionActive) return;
     gitState = readGitState(ctx.cwd);

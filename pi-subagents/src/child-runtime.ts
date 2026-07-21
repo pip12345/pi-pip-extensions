@@ -1,23 +1,21 @@
 import { existsSync } from "node:fs";
-import { createAgentSession, SessionManager, AuthStorage, ModelRegistry, DefaultResourceLoader, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SessionManager, ModelRuntime, DefaultResourceLoader, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { AgentTools, LaunchInput } from "./types.ts";
 
 export interface ChildAgentRuntimeSession {
   session: Awaited<ReturnType<typeof createAgentSession>>["session"];
-  modelRegistry: ReturnType<typeof ModelRegistry.create>;
+  modelRuntime: ModelRuntime;
 }
 
 export interface ChildAgentRuntime {
   create(input: LaunchInput, sessionDir: string): Promise<ChildAgentRuntimeSession>;
 }
 
-let authStorage: ReturnType<typeof AuthStorage.create> | undefined;
-let modelRegistry: ReturnType<typeof ModelRegistry.create> | undefined;
+let modelRuntimePromise: Promise<ModelRuntime> | undefined;
 
-function auth() {
-  authStorage ??= AuthStorage.create();
-  modelRegistry ??= ModelRegistry.create(authStorage);
-  return { authStorage, modelRegistry };
+function models(): Promise<ModelRuntime> {
+  modelRuntimePromise ??= ModelRuntime.create();
+  return modelRuntimePromise;
 }
 
 export type ChildExtensionCapability = "guard" | "headless-tool" | "ui" | "parent-state" | "provider" | "external-resource" | "nested-agent" | "parent-telemetry" | "parent-prompt" | "infrastructure";
@@ -71,7 +69,7 @@ export function applyChildExtensionProfile(base: any, tools: AgentTools): any {
 
 export class PiChildAgentRuntime implements ChildAgentRuntime {
   async create(input: LaunchInput, sessionDir: string): Promise<ChildAgentRuntimeSession> {
-    const { authStorage, modelRegistry } = auth();
+    const modelRuntime = await models();
     if (input.resumeSessionFile && !existsSync(input.resumeSessionFile)) throw new Error(`Subagent session file not found: ${input.resumeSessionFile}`);
 
     const sessionManager = input.resumeSessionFile
@@ -87,7 +85,7 @@ export class PiChildAgentRuntime implements ChildAgentRuntime {
       extensionsOverride: (base) => applyChildExtensionProfile(base, input.agent.tools),
     });
     await resourceLoader.reload();
-    const created = await createAgentSession({ cwd: input.cwd, sessionManager, authStorage, modelRegistry, settingsManager, resourceLoader });
-    return { session: created.session, modelRegistry };
+    const created = await createAgentSession({ cwd: input.cwd, sessionManager, modelRuntime, settingsManager, resourceLoader });
+    return { session: created.session, modelRuntime };
   }
 }

@@ -8,6 +8,18 @@ export interface TokenUsage {
   cost: number;
 }
 
+export type SessionUsageKind = "assistant" | "tool" | "compaction" | "branch_summary";
+
+export interface SessionUsageRecord {
+  kind: SessionUsageKind;
+  usage: TokenUsage;
+  entryId?: string;
+  timestamp?: number;
+  provider?: string;
+  model?: string;
+  toolName?: string;
+}
+
 export function emptyUsage(): TokenUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
 }
@@ -56,6 +68,75 @@ export function addUsage(target: TokenUsage, next: TokenUsage): void {
   target.cache += next.cache;
   target.total += next.total;
   target.cost += next.cost;
+}
+
+function usageTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Project a persisted Pi session entry into its independently billable usage.
+ * Context estimates such as compaction.tokensBefore are intentionally excluded.
+ */
+export function sessionUsageRecord(entry: any): SessionUsageRecord | undefined {
+  if (!entry || typeof entry !== "object") return undefined;
+  const entryId = typeof entry.id === "string" ? entry.id : undefined;
+  const message = entry.type === "message" ? entry.message : undefined;
+
+  if (message?.role === "assistant") {
+    const usage = normalizeUsage(message.usage);
+    if (!usage) return undefined;
+    return {
+      kind: "assistant",
+      usage,
+      entryId,
+      timestamp: usageTimestamp(message.timestamp) ?? usageTimestamp(entry.timestamp),
+      provider: typeof message.provider === "string" ? message.provider : undefined,
+      model: typeof (message.responseModel ?? message.model) === "string" ? message.responseModel ?? message.model : undefined,
+    };
+  }
+
+  if (message?.role === "toolResult") {
+    const usage = normalizeUsage(message.usage);
+    if (!usage) return undefined;
+    return {
+      kind: "tool",
+      usage,
+      entryId,
+      timestamp: usageTimestamp(message.timestamp) ?? usageTimestamp(entry.timestamp),
+      toolName: typeof message.toolName === "string" ? message.toolName : undefined,
+    };
+  }
+
+  if (entry.type === "compaction" || entry.type === "branch_summary") {
+    const usage = normalizeUsage(entry.usage);
+    if (!usage) return undefined;
+    return {
+      kind: entry.type,
+      usage,
+      entryId,
+      timestamp: usageTimestamp(entry.timestamp),
+    };
+  }
+
+  return undefined;
+}
+
+export function sessionUsageRecords(entries: any[]): SessionUsageRecord[] {
+  return (entries ?? []).map(sessionUsageRecord).filter((record): record is SessionUsageRecord => Boolean(record));
+}
+
+export function sumSessionUsage(entries: any[]): TokenUsage | undefined {
+  const total = emptyUsage();
+  let found = false;
+  for (const record of sessionUsageRecords(entries)) {
+    addUsage(total, record.usage);
+    found = true;
+  }
+  return found ? total : undefined;
 }
 
 export type PromptTokenParts = Pick<TokenUsage, "input" | "cacheRead" | "cacheWrite">;

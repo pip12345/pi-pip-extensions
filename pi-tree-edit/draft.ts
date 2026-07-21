@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { generateSummary } from "@earendil-works/pi-coding-agent";
+import { generateSummary, generateSummaryWithUsage } from "@earendil-works/pi-coding-agent";
 import { setTextContent } from "../pip-common/index.ts";
 import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header, type SummarySnapshotPolicy } from "./types.ts";
 import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entryMap, estimateContextTokensForEntry, flattenEntries, isNormalMessageEntry, messagesFromEntries, nearestExistingParent, pathBetween, pathToRoot, snapshotEntries, textFromContent } from "./tree.ts";
@@ -382,7 +382,7 @@ export class DraftSession {
     }
 
     ctx.ui.notify(`Compacting ${compactedEntries.length} entries before ${selectedId}...`, "info");
-    const generated = (await generateSummary(
+    const generatedResult = await generateSummaryWithUsage(
       messages,
       ctx.model,
       4096,
@@ -392,7 +392,8 @@ export class DraftSession {
       "Summarize the session entries before the selected message as a compaction checkpoint. Preserve user goals, constraints, decisions, file changes, commands run, errors, unresolved tasks, and current state. The selected message and later entries will remain after this summary.",
       undefined,
       "off"
-    )).trim();
+    );
+    const generated = generatedResult.text.trim();
     const summary = await ctx.ui.editor("Review compaction summary", generated);
     if (!summary?.trim()) {
       this.message = "Compaction cancelled";
@@ -410,6 +411,7 @@ export class DraftSession {
       summary: summary.trim(),
       firstKeptEntryId: selectedId,
       tokensBefore: compactedEntries.reduce((sum, entry) => sum + estimateContextTokensForEntry(entry), 0),
+      usage: generatedResult.usage,
       details: { from: EXT, kind: "manual", compactedBeforeEntryId: selectedId, sourceEntryIds: compactedEntries.map((entry) => entry.id) },
     };
     if (continuationChild) continuationChild.parentId = id;

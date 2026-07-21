@@ -13,8 +13,10 @@ import {
   PipCustomComponent,
   printableInput,
   selectionOffset,
+  sessionUsageRecord,
   textFromContent,
   truncateToWidth,
+  type SessionUsageKind,
   type TokenUsage as Tokens,
 } from "../pip-common/index.ts";
 import { groupGlobal } from "./src/usage/rollups.ts";
@@ -37,8 +39,11 @@ interface SessionRow extends Tokens {
   contextWindow: number;
   assistantCount: number;
   subagentCount: number;
+  toolUsageCount: number;
+  summaryCount: number;
   parent: Tokens;
   subagents: Tokens;
+  toolsAndSummaries: Tokens;
   cumulative: Tokens;
 }
 
@@ -129,8 +134,11 @@ function emptySessionRow(modelWindow: number, prompt: string, timestamp: number)
     contextPercent: null,
     assistantCount: 0,
     subagentCount: 0,
+    toolUsageCount: 0,
+    summaryCount: 0,
     parent: emptyTokens(),
     subagents: emptyTokens(),
+    toolsAndSummaries: emptyTokens(),
     cumulative: emptyTokens(),
   };
 }
@@ -181,7 +189,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
   };
 
   const finishCurrent = () => {
-    if (current && (current.assistantCount > 0 || current.subagentCount > 0)) {
+    if (current && (current.assistantCount > 0 || current.subagentCount > 0 || current.toolUsageCount > 0 || current.summaryCount > 0)) {
       current.index = ++idx;
       addTokens(cumulative, current);
       current.cumulative = { ...cumulative };
@@ -217,6 +225,21 @@ function buildSessionRows(ctx: any): SessionRow[] {
     }
 
     if (entry?.type === "message" && msg?.role === "toolResult") {
+      const standard = sessionUsageRecord(entry);
+      if (standard?.kind === "tool") {
+        const row = ensureCurrent(entry);
+        addTokens(row, standard.usage);
+        if (msg.toolName === "subagent") {
+          addTokens(row.subagents, standard.usage);
+          row.subagentCount += 1;
+        } else {
+          addTokens(row.toolsAndSummaries, standard.usage);
+          row.toolUsageCount += 1;
+        }
+        continue;
+      }
+
+      // Pre-0.81 subagent results stored cumulative child usage in details.
       const usages = subagentUsagesFromToolResult(msg);
       if (!usages.length) continue;
       const row = ensureCurrent(entry);
@@ -233,6 +256,19 @@ function buildSessionRows(ctx: any): SessionRow[] {
         addTokens(row.subagents, usage);
         row.subagentCount += 1;
       }
+      continue;
+    }
+
+    const summary = sessionUsageRecord(entry);
+    if (summary?.kind === "compaction" || summary?.kind === "branch_summary") {
+      finishCurrent();
+      current = emptySessionRow(modelWindow, summary.kind === "compaction" ? "(compaction)" : "(branch summary)", summary.timestamp ?? Date.now());
+      addTokens(current, summary.usage);
+      addTokens(current.toolsAndSummaries, summary.usage);
+      current.provider = "pi";
+      current.model = "tools/summaries";
+      current.summaryCount = 1;
+      finishCurrent();
     }
   }
   finishCurrent();
@@ -399,12 +435,19 @@ class TokenInspector extends PipCustomComponent<void> {
     const selected = rows[this.selected];
     if (selected) {
       lines.push("");
-      lines.push(th.fg("accent", `Prompt ${selected.index} details`) + th.fg("dim", `  ${selected.provider}/${selected.model} · ${selected.assistantCount} response(s) · ${selected.subagentCount} subagent(s)`));
+      const detailCounts = [
+        `${selected.assistantCount} response(s)`,
+        selected.subagentCount ? `${selected.subagentCount} subagent(s)` : "",
+        selected.toolUsageCount ? `${selected.toolUsageCount} billed tool(s)` : "",
+        selected.summaryCount ? `${selected.summaryCount} summary call(s)` : "",
+      ].filter(Boolean).join(" · ");
+      lines.push(th.fg("accent", `Prompt ${selected.index} details`) + th.fg("dim", `  ${selected.provider}/${selected.model} · ${detailCounts}`));
       lines.push(tokenDetailRow("delta", selected, this.compact));
       if (selected.subagentCount > 0) {
         lines.push(tokenDetailRow("parent", selected.parent, this.compact));
         lines.push(tokenDetailRow("subagt", selected.subagents, this.compact));
       }
+      if (selected.toolUsageCount > 0 || selected.summaryCount > 0) lines.push(tokenDetailRow("tools", selected.toolsAndSummaries, this.compact));
       lines.push(tokenDetailRow("total", selected.cumulative, this.compact));
       lines.push(`ctx at prompt ${fmt(selected.contextTokens, this.compact)} / ${fmt(selected.contextWindow, this.compact)} (${selected.contextPercent == null ? "?" : `${Math.round(selected.contextPercent)}%`})`);
       lines.push(th.fg("dim", truncateToWidth(selected.prompt, width - 4)));
@@ -421,7 +464,7 @@ class TokenInspector extends PipCustomComponent<void> {
     lines.push("");
     const cacheWidths = cacheColumnWidths(rows, this.compact);
     const cacheW = Math.max("Cache".length, cacheWidths.text);
-    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Turns", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Prompt", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", cacheW)} ${padLeftAnsi("Cost", 8)}`));
+    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Calls", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Prompt", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", cacheW)} ${padLeftAnsi("Cost", 8)}`));
     const visible = rows.slice(this.scroll, this.scroll + 16);
     visible.forEach((r, i) => {
       const realIndex = this.scroll + i;
@@ -439,7 +482,7 @@ class TokenInspector extends PipCustomComponent<void> {
     if (selected) {
       lines.push("");
       lines.push(th.fg("accent", selected.key));
-      lines.push(`turns ${selected.turns}   prompt ${fmt(promptTokensFromUsage(selected), false)}   output ${fmt(selected.output, false)}   cache ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
+      lines.push(`calls ${selected.turns}   prompt ${fmt(promptTokensFromUsage(selected), false)}   output ${fmt(selected.output, false)}   cache ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
     }
     return lines;
   }
@@ -449,15 +492,47 @@ export default function (pi: ExtensionAPI) {
   initializeUsageStorage();
   const seen = new Set<string>();
 
-  pi.on("message_end", (event: any, ctx: any) => {
-    const msg = event.message;
-    if (msg?.role !== "assistant") return;
-    const tokens = normalizeUsage(msg.usage);
-    if (!tokens) return;
-    const id = hashId([ctx.sessionManager.getSessionFile?.(), msg.timestamp, msg.provider, msg.model, tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, tokens.total]);
+  const recordUsage = (ctx: any, record: { kind: SessionUsageKind; usage: Tokens; timestamp?: number; provider?: string; model?: string; identity: unknown[] }) => {
+    const id = hashId([ctx.sessionManager.getSessionFile?.(), record.kind, ...record.identity]);
     if (seen.has(id)) return;
     seen.add(id);
-    updateRollups({ id, ts: msg.timestamp || Date.now(), cwd: ctx.cwd, sessionFile: ctx.sessionManager.getSessionFile?.(), provider: msg.provider || "unknown", model: msg.model || "unknown", ...tokens });
+    updateRollups({
+      id,
+      kind: record.kind,
+      ts: record.timestamp ?? Date.now(),
+      cwd: ctx.cwd,
+      sessionFile: ctx.sessionManager.getSessionFile?.(),
+      provider: record.provider || "pi",
+      model: record.model || "tools/summaries",
+      ...record.usage,
+    });
+  };
+
+  pi.on("message_end", (event: any, ctx: any) => {
+    const msg = event.message;
+    if (msg?.role !== "assistant" && msg?.role !== "toolResult") return;
+    const record = sessionUsageRecord({ type: "message", message: msg });
+    if (!record) return;
+    recordUsage(ctx, {
+      kind: record.kind,
+      usage: record.usage,
+      timestamp: record.timestamp,
+      provider: record.provider,
+      model: record.model,
+      identity: [msg.timestamp, msg.role, msg.toolName, msg.provider, msg.responseModel ?? msg.model, record.usage.input, record.usage.output, record.usage.cacheRead, record.usage.cacheWrite, record.usage.total],
+    });
+  });
+
+  pi.on("session_compact", (event: any, ctx: any) => {
+    const record = sessionUsageRecord(event.compactionEntry);
+    if (!record) return;
+    recordUsage(ctx, { kind: record.kind, usage: record.usage, timestamp: record.timestamp, identity: [record.entryId ?? event.compactionEntry?.timestamp] });
+  });
+
+  pi.on("session_tree", (event: any, ctx: any) => {
+    const record = sessionUsageRecord(event.summaryEntry);
+    if (!record) return;
+    recordUsage(ctx, { kind: record.kind, usage: record.usage, timestamp: record.timestamp, identity: [record.entryId ?? event.summaryEntry?.timestamp] });
   });
 
   pi.registerCommand("stats", {

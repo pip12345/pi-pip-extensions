@@ -8,7 +8,7 @@ Interactive token, cache, context, and cost inspector for Pi sessions and aggreg
 /stats
 ```
 
-The **Session** page shows usage by turn, including prompt, output, cache, total-token, context, and cost information. The **Global** page groups persisted usage by model, provider, or day.
+The **Session** page shows usage by prompt plus explicit compaction and branch-summary overhead rows, including prompt, output, cache, total-token, context, and cost information. Standard billed tool usage is included in its owning prompt row. The **Global** page groups persisted usage calls by model, provider, or day; tool and summary calls without model attribution appear under `pi/tools/summaries`.
 
 Controls:
 
@@ -25,7 +25,7 @@ The command requires Pi's interactive TUI.
 
 ## Storage
 
-Assistant usage events are appended under:
+Assistant, billed tool, compaction, and branch-summary usage events are appended under:
 
 ```text
 ~/.pi/agent/pip/usage/
