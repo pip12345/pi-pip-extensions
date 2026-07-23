@@ -70,7 +70,7 @@ Example for Pi inside Docker with the tunnel on the host:
 /proxy on
 ```
 
-If your relay exposes different prefixes, configure the actual provider `baseUrl` visible through that relay. The extension validates URLs and canonicalizes trailing slashes before storing/registering them.
+If your relay exposes different prefixes, configure the actual provider `baseUrl` visible through that relay. The extension validates URLs and canonicalizes trailing slashes before storing/registering them. Config changes are applied and saved transactionally: a rejected provider registration restores the previous runtime routes and leaves the previous config file intact.
 
 ## Provider auth relay URLs
 
@@ -91,7 +91,7 @@ Example:
 /proxy on
 ```
 
-Important: auth relay URLs are for Pi-side token/device HTTP calls. Browser login pages may still open provider web URLs such as `auth.openai.com` or `claude.ai`. Browser-page reverse proxying is a separate problem and may hit cookie/Cloudflare/origin issues.
+Important: auth relay URLs are for Pi-side token/device HTTP calls. Browser login pages may still open provider web URLs such as `auth.openai.com` or `claude.ai`. Browser-page reverse proxying is a separate problem and may hit cookie/Cloudflare/origin issues. Pi-side OAuth relay requests have a 15-second per-request deadline and a 256 KB response-body ceiling.
 
 ## Setup flow
 

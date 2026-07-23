@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import todoExtension, { __test, renderCompactTodos, stateFromBranch } from "./index.ts";
+import todoExtension, { __test, renderCompactTodos, stateFromBranch, TODO_LIMITS } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
-import { flushPipTools, pipSettings, resetPipToolsForTests, stripAnsi } from "../pip-common/index.ts";
+import { flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, stripAnsi } from "../pip-common/index.ts";
 
 const theme = {
   fg: (_name: string, text: string) => text,
@@ -19,10 +19,28 @@ describe("pi-todo", () => {
     expect(getRegisteredTool(pi, "todo_update")).toBeTruthy();
     expect(getRegisteredTool(pi, "todo_read")).toBeTruthy();
     expect(pi.commands.has("todo")).toBe(true);
-    expect(pipSettings.section(__test.SETTINGS_ID)?.title).toBe("Todo");
-    expect(pipSettings.get("todo.enabled")).toBe(true);
-    expect(pipSettings.get("todo.compactRows")).toBe("4");
-    expect(pipSettings.definition("todo")?.compactRows.description).toContain("Fixed height");
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section(__test.SETTINGS_ID)?.title).toBe("Todo");
+    expect(settings.get("todo.enabled")).toBe(true);
+    expect(Object.keys(settings.definition("todo") ?? {})).toEqual(["enabled", "showCompleted", "hideWhenAllDone", "placement"]);
+  });
+
+  it("applies enabled changes to the widget, tools, and command", async () => {
+    const pi = createMockPi();
+    const ctx = createMockCtx({ entries: [{ type: "custom", customType: __test.CUSTOM_TYPE, data: { todos: [{ id: 1, text: "One", status: "pending" }], nextId: 2, updatedAt: 1 } }] });
+    todoExtension(pi as any);
+    flushPipTools(pi as any);
+    await emitEvent(pi, "session_start", {}, ctx);
+    expect(ctx.ui.widgets.get(__test.WIDGET_KEY)).toBeTruthy();
+
+    getPipSettingsRegistry(pi).set("todo.enabled", false);
+    expect(ctx.ui.widgets.get(__test.WIDGET_KEY)).toBeUndefined();
+    const result = await getRegisteredTool(pi, "todo_write").execute("call", { todos: [{ text: "Blocked" }] }, undefined, undefined, ctx);
+    expect(result.details.disabled).toBe(true);
+    expect(pi.entries).toHaveLength(0);
+    await runCommand(pi, "todo", "", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("disabled");
+    await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 
   it("todo_write creates multiple todos, normalizes active, and appends state", async () => {
@@ -75,6 +93,30 @@ describe("pi-todo", () => {
     expect(result.details.errors).toContain("Update requires id or match");
     expect(result.details.errors).toContain('No change specified for "Only"');
     expect(pi.entries).toHaveLength(before);
+  });
+
+  it("bounds model-supplied todo counts and text before persistence", async () => {
+    const pi = createMockPi();
+    const ctx = createMockCtx();
+    todoExtension(pi as any);
+    flushPipTools(pi as any);
+    const write = getRegisteredTool(pi, "todo_write");
+    const update = getRegisteredTool(pi, "todo_update");
+
+    await expect(write.execute("call", { todos: Array.from({ length: TODO_LIMITS.items + 1 }, (_, index) => ({ text: `Todo ${index}` })) }, undefined, undefined, ctx)).rejects.toThrow(/at most 100 todos/);
+    await expect(write.execute("call", { todos: [{ text: "x".repeat(TODO_LIMITS.textLength + 1) }] }, undefined, undefined, ctx)).rejects.toThrow(/500 characters or fewer/);
+    await expect(update.execute("call", { updates: Array.from({ length: TODO_LIMITS.updates + 1 }, () => ({ id: 1, status: "done" })) }, undefined, undefined, ctx)).rejects.toThrow(/at most 100 updates/);
+    expect(pi.entries).toHaveLength(0);
+  });
+
+  it("bounds restored legacy todo state and read output", () => {
+    const state = stateFromBranch([{ customType: __test.CUSTOM_TYPE, data: {
+      todos: Array.from({ length: TODO_LIMITS.items + 20 }, (_, index) => ({ id: index + 1, text: "x".repeat(TODO_LIMITS.textLength + 20), status: "pending" })),
+      nextId: TODO_LIMITS.items + 21,
+    } }]);
+    expect(state.todos).toHaveLength(TODO_LIMITS.items);
+    expect(state.todos.every((todo) => todo.text.length <= TODO_LIMITS.textLength)).toBe(true);
+    expect(__test.compactList(state.todos).length).toBeLessThanOrEqual(TODO_LIMITS.items * (TODO_LIMITS.textLength + 30));
   });
 
   it("todo_read returns a compact list", async () => {
@@ -140,6 +182,30 @@ describe("pi-todo", () => {
     expect(stripAnsi(lines[0])).toContain("╭ ✔ #1 Done");
     expect(stripAnsi(lines[1])).toContain("├ ● #2 Active");
     expect(stripAnsi(lines[2])).toContain("╰ … 2 below");
+  });
+
+  it("reports todos hidden above and below the active window", () => {
+    const lines = renderCompactTodos(
+      {
+        todos: [
+          { id: 1, text: "One", status: "pending" },
+          { id: 2, text: "Two", status: "pending" },
+          { id: 3, text: "Three", status: "pending" },
+          { id: 4, text: "Four", status: "pending" },
+          { id: 5, text: "Active", status: "active" },
+          { id: 6, text: "Six", status: "pending" },
+        ],
+        nextId: 7,
+        updatedAt: 0,
+      },
+      80,
+      theme,
+      { rows: 3 },
+    );
+
+    expect(stripAnsi(lines[0])).toContain("#4 Four");
+    expect(stripAnsi(lines[1])).toContain("#5 Active");
+    expect(stripAnsi(lines[2])).toContain("… 3 above · 1 below");
   });
 
   it("honors showCompleted never and hideWhenAllDone", () => {
@@ -214,5 +280,33 @@ describe("pi-todo", () => {
     expect(rendered).toContain("Todos");
     expect(rendered).toContain("╰");
     expect(rendered).toContain("● #1 Visible");
+  });
+
+  it("/todo inspector follows selection through a terminal-bounded viewport", async () => {
+    const pi = createMockPi();
+    const ctx = createMockCtx();
+    todoExtension(pi as any);
+    flushPipTools(pi as any);
+    await getRegisteredTool(pi, "todo_write").execute(
+      "call",
+      { todos: Array.from({ length: 20 }, (_, index) => ({ text: `Task ${index + 1}` })) },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    let component: any;
+    ctx.ui.custom = async (factory: any) => {
+      component = factory({ terminal: { rows: 15 }, requestRender() {} }, theme, {}, () => undefined);
+    };
+    await runCommand(pi, "todo", "", ctx);
+    for (let index = 1; index < 20; index++) component.handleInput("j");
+
+    const rendered = component.render(80).map(stripAnsi);
+    const text = rendered.join("\n");
+    expect(text).toContain("› □ #20 Task 20");
+    expect(text).toContain("of 20");
+    expect(text).not.toContain("#1 Task 1");
+    expect(rendered.length).toBeLessThanOrEqual(12);
   });
 });

@@ -3,7 +3,7 @@ import extension from "./index.ts";
 import toolUi from "../pi-tool-ui/index.ts";
 import { formatAnsweredOutput } from "./src/format.ts";
 import { createQuestionState, questionSaveCustom, questionSelect, questionSetTab, questionStoreCustom, questionSubmit } from "./src/state.ts";
-import { validateQuestions, type QuestionInfo } from "./src/schema.ts";
+import { QUESTION_LIMITS, validateQuestions, type QuestionInfo } from "./src/schema.ts";
 import { __test as uiTest } from "./src/ui.ts";
 import { resetPipToolsForTests, flushPipTools, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
@@ -41,9 +41,9 @@ function exec(tool: any, params: any, customCtx: any = {}) {
   return tool.execute("call-test", params, new AbortController().signal, undefined, ctx);
 }
 
-function makeComponent(qs: QuestionInfo[] = questions) {
+function makeComponent(qs: QuestionInfo[] = questions, terminalRows?: number) {
   let result: any;
-  const tui = { renders: 0, requestRender() { this.renders++; } };
+  const tui = { terminal: terminalRows ? { rows: terminalRows } : undefined, renders: 0, requestRender() { this.renders++; } };
   const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text };
   const component = new uiTest.QuestionComponent(tui, theme, (value: any) => { result = value; }, qs);
   return { component, tui, get result() { return result; } };
@@ -101,6 +101,15 @@ describe("pi-question", () => {
   it("validates duplicate and empty option labels", () => {
     expect(() => validateQuestions([{ ...questions[0], options: [{ label: "", description: "Nope" }] }])).toThrow(/requires a label/);
     expect(() => validateQuestions([{ ...questions[0], options: [{ label: "Same", description: "One" }, { label: "same", description: "Two" }] }])).toThrow(/duplicate/);
+  });
+
+  it("bounds model-supplied question counts and text", () => {
+    const base = { question: "Choose?", header: "Choice", options: [] };
+    expect(() => validateQuestions(Array.from({ length: QUESTION_LIMITS.questions + 1 }, () => ({ ...base })))).toThrow(/at most 8 questions/);
+    expect(() => validateQuestions([{ ...base, options: Array.from({ length: QUESTION_LIMITS.options + 1 }, (_, index) => ({ label: `Option ${index}`, description: "Description" })) }])).toThrow(/at most 12 options/);
+    expect(() => validateQuestions([{ ...base, question: "x".repeat(QUESTION_LIMITS.questionLength + 1) }])).toThrow(/500 characters or fewer/);
+    expect(() => validateQuestions([{ ...base, options: [{ label: "x".repeat(QUESTION_LIMITS.labelLength + 1), description: "Description" }] }])).toThrow(/label must be 120 characters or fewer/);
+    expect(() => validateQuestions([{ ...base, options: [{ label: "Choice", description: "x".repeat(QUESTION_LIMITS.descriptionLength + 1) }] }])).toThrow(/description must be 500 characters or fewer/);
   });
 
   it("allows questions with only a typed custom answer", async () => {
@@ -189,6 +198,31 @@ describe("pi-question", () => {
     const test = makeComponent([questions[0]]);
     test.component.handleInput("\u0003");
     expect(test.result).toEqual({ answers: [], rejected: true });
+  });
+
+  it("keeps late question tabs and selected options visible in a bounded viewport", () => {
+    const manyQuestions: QuestionInfo[] = Array.from({ length: QUESTION_LIMITS.questions }, (_, index) => ({
+      question: `Question ${index + 1}?`,
+      header: `Header ${index + 1}`,
+      options: [{ label: "Yes", description: "Choose yes" }],
+    }));
+    const tabs = makeComponent(manyQuestions, 20);
+    for (let index = 0; index < manyQuestions.length - 1; index++) tabs.component.handleInput("\t");
+    expect(tabs.component.render(36).join("\n")).toContain("[□ Header 8]");
+
+    const options: QuestionInfo[] = [{
+      question: "Choose one option",
+      header: "Choice",
+      options: Array.from({ length: QUESTION_LIMITS.options }, (_, index) => ({ label: `Option ${index + 1}`, description: `Explanation for option ${index + 1}` })),
+    }];
+    const list = makeComponent(options, 20);
+    for (let index = 0; index < QUESTION_LIMITS.options; index++) list.component.handleInput("j");
+    const rendered = list.component.render(44);
+    const text = rendered.join("\n");
+    expect(text).toContain("› 13. Type your own answer");
+    expect(text).toContain("rows above");
+    expect(text).not.toContain("  1. Option 1");
+    expect(rendered.length).toBeLessThanOrEqual(16);
   });
 
   it("wraps long question prose and descriptions within the box", () => {

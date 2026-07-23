@@ -1,8 +1,6 @@
 import { formatResetTime, getWindowLabel, type QuotaSnapshot as UsageSnapshot, type QuotaWindow as RateWindow } from "../../pip-common/index.ts";
 import { fitSegment, padEndVisible, renderBar, wrapSegments } from "./layout.ts";
 
-export const usageCache = new Map<string, UsageSnapshot>();
-
 export function renderUsageWindow(window: RateWindow, theme: any, barWidth = 10, includeReset = true): string {
   const dim = (s: string) => theme.fg("dim", s);
   const rawLabel = window.label.toLowerCase() === "week" ? "7d" : window.label.toLowerCase();

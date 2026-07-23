@@ -40,6 +40,8 @@ describe("pi-stats", () => {
     stats(pi as any);
     expect(pi.commands.has("stats")).toBe(true);
     expect(pi.handlers.has("message_end")).toBe(true);
+    expect(pi.handlers.has("session_compact")).toBe(true);
+    expect(pi.handlers.has("session_tree")).toBe(true);
   });
 
   it("attributes subagent toolResult usage to the current session row", async () => {
@@ -48,7 +50,7 @@ describe("pi-stats", () => {
       entries: [
         { type: "message", id: "u1", message: { role: "user", content: "do work", timestamp: Date.UTC(2026, 5, 1, 12) } },
         { type: "message", id: "a1", parentId: "u1", message: { role: "assistant", provider: "openai", model: "gpt", usage: { input: 10, output: 5, cacheRead: 2, cost: { total: 0.01 } } } },
-        { type: "message", id: "tr1", parentId: "a1", message: { role: "toolResult", toolName: "subagent", details: { run: { usage: { input: 20, output: 6, cacheRead: 3, cost: 0.02 } } } } },
+        { type: "message", id: "tr1", parentId: "a1", message: { role: "toolResult", toolName: "subagent", details: { run: { id: "sa_1", usage: { input: 20, output: 6, cacheRead: 3, cost: 0.02 } } } } },
       ],
       model: { contextWindow: 1000 },
     });
@@ -63,6 +65,53 @@ describe("pi-stats", () => {
     expect(__test.formatCacheHit(rows[0].subagents)).toBe("13%");
   });
 
+  it("counts standard tool usage and summary calls without using context estimates", async () => {
+    const { __test } = await loadStatsModule();
+    const ctx = createMockCtx({
+      entries: [
+        { type: "message", id: "u1", message: { role: "user", content: "work" } },
+        { type: "message", id: "a1", message: { role: "assistant", provider: "openai", model: "gpt", usage: { input: 10, output: 2 } } },
+        { type: "message", id: "t1", message: { role: "toolResult", toolName: "paid-tool", usage: { input: 3, output: 1, cost: { total: 0.01 } } } },
+        { type: "compaction", id: "c1", tokensBefore: 100_000, usage: { input: 20, output: 4, cost: { total: 0.02 } } },
+        { type: "branch_summary", id: "b1", usage: { input: 5, output: 1, cost: { total: 0.03 } } },
+      ],
+      model: { contextWindow: 1000 },
+    });
+
+    const rows = __test.buildSessionRows(ctx);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ input: 13, output: 3, toolUsageCount: 1, summaryCount: 0 });
+    expect(rows[1]).toMatchObject({ prompt: "(compaction)", input: 20, output: 4, summaryCount: 1 });
+    expect(rows[2]).toMatchObject({ prompt: "(branch summary)", input: 5, output: 1, summaryCount: 1 });
+    expect(rows[2].cumulative).toMatchObject({ input: 38, output: 8, cost: 0.06 });
+  });
+
+  it("deduplicates cumulative subagent usage by run id and applies continuation deltas", async () => {
+    const { __test } = await loadStatsModule();
+    const snapshot = (input: number, output: number, cost: number) => ({ type: "message", message: { role: "toolResult", toolName: "subagent", details: { run: { id: "sa_1", usage: { input, output, cacheRead: 0, cost } } } } });
+    const ctx = createMockCtx({
+      entries: [
+        { type: "message", message: { role: "user", content: "launch" } },
+        snapshot(20, 6, 0.02),
+        snapshot(20, 6, 0.02),
+        { type: "message", message: { role: "user", content: "continue" } },
+        snapshot(25, 8, 0.03),
+        snapshot(25, 8, 0.03),
+      ],
+      model: { contextWindow: 1000 },
+    });
+
+    const rows = __test.buildSessionRows(ctx);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].subagents).toMatchObject({ input: 20, output: 6, cost: 0.02 });
+    expect(rows[0].subagentCount).toBe(1);
+    expect(rows[1].subagents.input).toBe(5);
+    expect(rows[1].subagents.output).toBe(2);
+    expect(rows[1].subagents.cost).toBeCloseTo(0.01);
+    expect(rows[1].subagentCount).toBe(1);
+    expect(rows[1].cumulative).toMatchObject({ input: 25, output: 8, cost: 0.03 });
+  });
+
   it("formats cache hit rate from prompt-side cache reads", async () => {
     const { __test } = await loadStatsModule();
     expect(__test.cacheHitRate({ input: 1000, cacheRead: 3000, cacheWrite: 0 })).toBe(75);
@@ -71,6 +120,10 @@ describe("pi-stats", () => {
     expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, undefined, 4)).toBe("  3k/75%");
     expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 }, true, undefined, 4, 5)).toBe("  3k/75% ");
     expect(__test.formatCacheWithHit({ input: 1000, output: 10, cacheRead: 0, cacheWrite: 0, cache: 0, total: 1010, cost: 0 }, true)).toBe("0");
+    expect(__test.cacheColumnWidths([
+      { input: 1000, output: 10, cacheRead: 3000, cacheWrite: 0, cache: 3000, total: 4010, cost: 0 },
+      { input: 0, output: 10, cacheRead: 1_300_000, cacheWrite: 0, cache: 1_300_000, total: 1_300_010, cost: 0 },
+    ], true)).toEqual({ value: 4, hit: 5, text: 9 });
   });
 
   it("records assistant message usage through global usage storage", async () => {
@@ -104,6 +157,26 @@ describe("pi-stats", () => {
       cache: 5,
       total: 20,
       cost: 0.01,
+    });
+  });
+
+  it("records tool, compaction, and branch-summary usage in the overhead bucket", async () => {
+    const stats = await loadStats();
+    const pi = createMockPi();
+    stats(pi as any);
+    const ctx = createMockCtx({ cwd: "/workspace" });
+
+    await emitEvent(pi, "message_end", { message: { role: "toolResult", toolName: "paid-tool", timestamp: Date.UTC(2026, 5, 1, 12), usage: { input: 3, output: 1, cost: { total: 0.01 } } } }, ctx);
+    await emitEvent(pi, "session_compact", { compactionEntry: { type: "compaction", id: "c1", timestamp: Date.UTC(2026, 5, 1, 12, 1), tokensBefore: 90_000, usage: { input: 20, output: 4, cost: { total: 0.02 } } } }, ctx);
+    await emitEvent(pi, "session_tree", { summaryEntry: { type: "branch_summary", id: "b1", timestamp: Date.UTC(2026, 5, 1, 12, 2), usage: { input: 5, output: 1, cost: { total: 0.03 } } } }, ctx);
+
+    const { readRollups } = await loadStorage();
+    expect(readRollups().buckets["2026-06-01|pi|tools/summaries"]).toMatchObject({
+      turns: 3,
+      input: 28,
+      output: 6,
+      total: 34,
+      cost: 0.06,
     });
   });
 

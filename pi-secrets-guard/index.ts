@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSettingsSection, setting, settingsFor } from "../pip-common/index.ts";
+import { registerSettingsSection, setting, settingsFor, type ScopedSettings } from "../pip-common/index.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -55,7 +55,7 @@ const COMMON_SECRET_PATTERNS = [
 
 const COMMON_SECRET_RULES = rulesFromPatterns(COMMON_SECRET_PATTERNS);
 
-registerSettingsSection({
+const SECRETS_SETTINGS_SECTION = {
   id: SETTINGS_ID,
   title: "Secrets Guard",
   description: "Block Pi from reading or editing common secrets and paths listed in project .secretignore files.",
@@ -80,9 +80,6 @@ registerSettingsSection({
       order: 4,
       description: "Also block paths matched by .gitignore. Off by default because .gitignore often contains caches and build output.",
     }),
-    protectReads: setting.boolean({ label: "Protect reads", default: true, order: 5, description: "Block read tool calls for guarded paths." }),
-    protectWrites: setting.boolean({ label: "Protect writes", default: true, order: 6, description: "Block write and edit tool calls for guarded paths." }),
-    protectSearchTargets: setting.boolean({ label: "Protect search/list", default: true, order: 7, description: "Block ls, grep, and find when their explicit target path is guarded." }),
     bashGuard: setting.enum({
       label: "Bash guard",
       default: "best-effort",
@@ -91,15 +88,12 @@ registerSettingsSection({
         { value: "best-effort", label: "best-effort" },
         { value: "block", label: "block" },
       ] as const,
-      order: 8,
+      order: 5,
       description: "Best-effort scans shell tokens for guarded paths, or block bash entirely.",
     }),
-    promptReminder: setting.boolean({ label: "Prompt reminder", default: true, order: 9, description: "Tell the model not to access guarded secret paths or bypass this guard with bash." }),
   },
-});
+};
 
-const scopedSettings = settingsFor(SETTINGS_ID);
-const settingValue = scopedSettings.get;
 const repoRootCache = new Map<string, string | null>();
 
 function stripAtPrefix(path: string): string {
@@ -281,63 +275,57 @@ async function secretignoreRules(cwd: string): Promise<IgnoreRule[]> {
 }
 
 function projectRulesAllowed(ctx: any): boolean {
-  const trusted = ctx?.isProjectTrusted?.();
-  return trusted !== false;
+  return ctx?.isProjectTrusted?.() === true;
 }
 
-async function commonSecretMatch(cwd: string, absolutePath: string): Promise<GuardMatch | undefined> {
-  const root = await projectRootFor(cwd);
-  const relativePath = pathForRoot(root, absolutePath);
-  const absoluteCandidate = stripLeadingSlash(normalizePath(resolve(absolutePath)));
-  const candidates = [relativePath, absoluteCandidate].filter((candidate): candidate is string => Boolean(candidate));
+type GuardMatcher = (absolutePath: string) => Promise<GuardMatch | undefined>;
 
-  for (const candidate of candidates) {
-    const match = matchIgnoreRules(candidate, COMMON_SECRET_RULES);
-    if (match) return { absolutePath, source: "common-secrets", pattern: match.pattern };
-  }
-  return undefined;
-}
-
-async function secretignoreMatch(ctx: any, absolutePath: string): Promise<GuardMatch | undefined> {
-  if (!projectRulesAllowed(ctx)) return undefined;
+async function createGuardMatcher(ctx: any, settings: ScopedSettings): Promise<GuardMatcher> {
   const cwd = ctx?.cwd ?? process.cwd();
   const root = await projectRootFor(cwd);
-  const relativePath = pathForRoot(root, absolutePath);
-  if (!relativePath) return undefined;
-  const match = matchIgnoreRules(relativePath, await secretignoreRules(cwd));
-  return match ? { absolutePath, source: ".secretignore", pattern: match.pattern } : undefined;
+  const protectCommon = settings.get("protectCommonSecrets", true);
+  const protectSecretignore = settings.get("protectSecretignore", true) && projectRulesAllowed(ctx);
+  const protectGitignore = settings.get("protectGitignore", false);
+  const projectRules = protectSecretignore ? await secretignoreRules(cwd) : [];
+
+  return async (absolutePath: string) => {
+    if (protectCommon) {
+      const relativePath = pathForRoot(root, absolutePath);
+      const absoluteCandidate = stripLeadingSlash(normalizePath(resolve(absolutePath)));
+      const candidates = [relativePath, absoluteCandidate].filter((candidate): candidate is string => Boolean(candidate));
+      for (const candidate of candidates) {
+        const match = matchIgnoreRules(candidate, COMMON_SECRET_RULES);
+        if (match) return { absolutePath, source: "common-secrets", pattern: match.pattern };
+      }
+    }
+
+    if (projectRules.length) {
+      const relativePath = pathForRoot(root, absolutePath);
+      if (relativePath) {
+        const match = matchIgnoreRules(relativePath, projectRules);
+        if (match) return { absolutePath, source: ".secretignore", pattern: match.pattern };
+      }
+    }
+
+    if (protectGitignore && (await isGitIgnored(cwd, absolutePath))) return { absolutePath, source: ".gitignore" };
+    return undefined;
+  };
 }
 
-export async function guardedPathMatch(ctx: any, absolutePath: string): Promise<GuardMatch | undefined> {
-  const cwd = ctx?.cwd ?? process.cwd();
-
-  if (settingValue("protectCommonSecrets", true)) {
-    const match = await commonSecretMatch(cwd, absolutePath);
-    if (match) return match;
-  }
-
-  if (settingValue("protectSecretignore", true)) {
-    const match = await secretignoreMatch(ctx, absolutePath);
-    if (match) return match;
-  }
-
-  if (settingValue("protectGitignore", false) && (await isGitIgnored(cwd, absolutePath))) {
-    return { absolutePath, source: ".gitignore" };
-  }
-
-  return undefined;
+export async function guardedPathMatch(ctx: any, absolutePath: string, settings: ScopedSettings): Promise<GuardMatch | undefined> {
+  return (await createGuardMatcher(ctx, settings))(absolutePath);
 }
 
-function guardSourcesDescription(): string {
+function guardSourcesDescription(settings: ScopedSettings): string {
   const sources: string[] = [];
-  if (settingValue("protectCommonSecrets", true)) sources.push("common secret patterns");
-  if (settingValue("protectSecretignore", true)) sources.push("project .secretignore files");
-  if (settingValue("protectGitignore", false)) sources.push("legacy .gitignore rules");
+  if (settings.get("protectCommonSecrets", true)) sources.push("common secret patterns");
+  if (settings.get("protectSecretignore", true)) sources.push("project .secretignore files");
+  if (settings.get("protectGitignore", false)) sources.push("legacy .gitignore rules");
   return sources.length ? sources.join(", ") : "configured guard rules";
 }
 
-function reminder(systemPrompt: string): string {
-  return `${systemPrompt}\n\nSecrets Guard is active. Treat paths matched by ${guardSourcesDescription()} as inaccessible: do not read, list, search, write, edit, summarize, reveal, or infer their contents. Do not use bash or another tool to bypass this guard. If the user asks for guarded content, explain that Secrets Guard blocks access.`;
+function reminder(systemPrompt: string, settings: ScopedSettings): string {
+  return `${systemPrompt}\n\nSecrets Guard is active. Treat paths matched by ${guardSourcesDescription(settings)} as inaccessible: do not read, list, search, write, edit, summarize, reveal, or infer their contents. Do not use bash or another tool to bypass this guard. If the user asks for guarded content, explain that Secrets Guard blocks access.`;
 }
 
 function explicitPathInput(event: any): unknown {
@@ -347,10 +335,7 @@ function explicitPathInput(event: any): unknown {
 }
 
 function protectionEnabled(toolName: string): boolean {
-  if (toolName === "read") return settingValue("protectReads", true);
-  if (toolName === "write" || toolName === "edit") return settingValue("protectWrites", true);
-  if (toolName === "ls" || toolName === "grep" || toolName === "find") return settingValue("protectSearchTargets", true);
-  return false;
+  return toolName === "read" || toolName === "write" || toolName === "edit" || toolName === "ls" || toolName === "grep" || toolName === "find";
 }
 
 function unquoteToken(token: string): string {
@@ -387,11 +372,81 @@ export function bashPathTokens(command: string): string[] {
   return tokens;
 }
 
-async function blockedGuardedPath(ctx: any, rawPath: unknown): Promise<GuardMatch | undefined> {
+async function canonicalWritePath(absolutePath: string): Promise<string> {
+  const suffix: string[] = [];
+  let current = absolutePath;
+  while (true) {
+    try {
+      return resolve(await realpath(current), ...suffix);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return absolutePath;
+      suffix.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+async function pathCandidates(cwd: string, rawPath: unknown, forWrite: boolean): Promise<string[]> {
+  const lexical = resolveToolPath(cwd, rawPath);
+  if (!lexical) return [];
+  let canonical = lexical;
+  try {
+    canonical = await realpath(lexical);
+  } catch {
+    if (forWrite) canonical = await canonicalWritePath(lexical);
+  }
+  return [...new Set([lexical, canonical])];
+}
+
+async function blockedGuardedPath(ctx: any, rawPath: unknown, settings: ScopedSettings, forWrite = false, matcher?: GuardMatcher): Promise<GuardMatch | undefined> {
   const cwd = ctx?.cwd ?? process.cwd();
-  const absolutePath = resolveToolPath(cwd, rawPath);
-  if (!absolutePath) return undefined;
-  return guardedPathMatch(ctx, absolutePath);
+  const match = matcher ?? await createGuardMatcher(ctx, settings);
+  for (const candidate of await pathCandidates(cwd, rawPath, forWrite)) {
+    const blocked = await match(candidate);
+    if (blocked) return blocked;
+  }
+  return undefined;
+}
+
+async function guardedDescendantMatch(ctx: any, rawRoot: unknown, recursive: boolean, matcher: GuardMatcher, settings: ScopedSettings): Promise<GuardMatch | undefined> {
+  const cwd = ctx?.cwd ?? process.cwd();
+  const [root] = await pathCandidates(cwd, rawRoot ?? ".", false);
+  if (!root) return undefined;
+  try {
+    if (!(await stat(root)).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  const queue = [root];
+  const visited = new Set<string>();
+  while (queue.length) {
+    const directory = queue.shift()!;
+    let canonicalDirectory: string;
+    try {
+      canonicalDirectory = await realpath(directory);
+    } catch {
+      continue;
+    }
+    if (visited.has(canonicalDirectory)) continue;
+    visited.add(canonicalDirectory);
+
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const child = join(directory, entry.name);
+      const blocked = await blockedGuardedPath(ctx, child, settings, false, matcher);
+      if (blocked) return blocked;
+      if (recursive && entry.isDirectory() && entry.name !== ".git") queue.push(child);
+    }
+    if (!recursive) break;
+  }
+  return undefined;
 }
 
 function blockReason(match: GuardMatch): string {
@@ -399,34 +454,40 @@ function blockReason(match: GuardMatch): string {
   return `Secrets Guard blocked guarded path (${source}): ${match.absolutePath}`;
 }
 
-export function shouldInjectReminder(): boolean {
-  return settingValue("enabled", true) && settingValue("promptReminder", true);
+export function shouldInjectReminder(settings: ScopedSettings): boolean {
+  return settings.get("enabled", true);
 }
 
 export default function secretsGuard(pi: ExtensionAPI) {
+  registerSettingsSection(pi, SECRETS_SETTINGS_SECTION);
+  const settings = settingsFor(pi, SETTINGS_ID);
   pi.on("before_agent_start", async (event: any) => {
-    if (!shouldInjectReminder()) return;
-    return { systemPrompt: reminder(event.systemPrompt ?? "") };
+    if (!shouldInjectReminder(settings)) return;
+    return { systemPrompt: reminder(event.systemPrompt ?? "", settings) };
   });
 
   pi.on("tool_call", async (event: any, ctx: any) => {
-    if (!settingValue("enabled", true)) return;
+    if (!settings.get("enabled", true)) return;
 
     if (event.toolName === "bash") {
-      const mode = settingValue<BashGuard>("bashGuard", "best-effort");
+      const mode = settings.get<BashGuard>("bashGuard", "best-effort");
       if (mode === "off") return;
       if (mode === "block") return { block: true, reason: "Secrets Guard: bash is blocked by /pip-settings." };
       const command = String(event.input?.command ?? "");
       for (const token of bashPathTokens(command)) {
-        const blocked = await blockedGuardedPath(ctx, token);
+        const blocked = await blockedGuardedPath(ctx, token, settings);
         if (blocked) return { block: true, reason: blockReason(blocked) };
       }
       return;
     }
 
     if (!protectionEnabled(event.toolName)) return;
-    const rawPath = explicitPathInput(event);
-    const blocked = await blockedGuardedPath(ctx, rawPath);
+    const matcher = await createGuardMatcher(ctx, settings);
+    const searchTool = event.toolName === "ls" || event.toolName === "grep" || event.toolName === "find";
+    const rawPath = explicitPathInput(event) ?? (searchTool ? "." : undefined);
+    const forWrite = event.toolName === "write" || event.toolName === "edit";
+    let blocked = await blockedGuardedPath(ctx, rawPath, settings, forWrite, matcher);
+    if (!blocked && searchTool) blocked = await guardedDescendantMatch(ctx, rawPath, event.toolName !== "ls", matcher, settings);
     if (!blocked) return;
     ctx.ui?.notify?.(`Secrets Guard blocked ${event.toolName}: ${blocked.absolutePath}`, "warning");
     return { block: true, reason: blockReason(blocked) };

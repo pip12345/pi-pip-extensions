@@ -28,6 +28,8 @@ export interface QuotaFetchOptions {
   now?: () => number;
   /** Effective Pi model.baseUrl. Quota adapters append provider-specific usage paths to it. */
   modelBaseUrl?: string;
+  /** Resolved credentials for the active model. null explicitly disables adapter fallback lookup. */
+  credentials?: QuotaCredentials | null;
 }
 
 export interface QuotaProviderAdapter {

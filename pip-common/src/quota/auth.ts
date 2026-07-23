@@ -26,27 +26,29 @@ export function resolveAuthValue(value: unknown): string | undefined {
   return trimmed;
 }
 
-export function getClaudeToken(auth: Record<string, any> = loadPiAuthJson(), env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (auth.anthropic?.access) return auth.anthropic.access;
-  if (auth.anthropic?.key) return resolveAuthValue(auth.anthropic.key);
-  return env.ANTHROPIC_API_KEY;
+export function getClaudeToken(auth: Record<string, any> = loadPiAuthJson()): string | undefined {
+  const credential = auth.anthropic;
+  return credential?.type === "oauth" && typeof credential.access === "string" ? credential.access : undefined;
 }
 
 export function getCopilotToken(auth: Record<string, any> = loadPiAuthJson(), env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return auth["github-copilot"]?.refresh ?? auth["github-copilot"]?.access ?? env.GITHUB_COPILOT_TOKEN;
+  const credential = auth["github-copilot"];
+  if (credential?.type === "oauth") return credential.access ?? credential.refresh;
+  return env.GITHUB_COPILOT_TOKEN;
 }
 
 export function getCodexCredentials(options: { auth?: Record<string, any>; env?: NodeJS.ProcessEnv; codexAuthPath?: string } = {}): QuotaCredentials | undefined {
   const auth = options.auth ?? loadPiAuthJson();
   const env = options.env ?? process.env;
-  if (auth["openai-codex"]?.access) return { token: auth["openai-codex"].access, accountId: auth["openai-codex"]?.accountId };
-  if (env.OPENAI_API_KEY) return { token: env.OPENAI_API_KEY };
+  const credential = auth["openai-codex"];
+  if (credential?.type === "oauth" && typeof credential.access === "string") {
+    return { token: credential.access, accountId: credential.accountId ?? credential.account_id };
+  }
 
   const codexPath = options.codexAuthPath ?? join(env.CODEX_HOME || join(homedir(), ".codex"), "auth.json");
   try {
     if (existsSync(codexPath)) {
       const data = JSON.parse(readFileSync(codexPath, "utf8"));
-      if (data.OPENAI_API_KEY) return { token: data.OPENAI_API_KEY };
       if (data.tokens?.access_token) return { token: data.tokens.access_token, accountId: data.tokens.account_id };
     }
   } catch {}

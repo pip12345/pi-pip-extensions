@@ -12,12 +12,14 @@ Pip footer for pi. This is the renamed successor to `pi-token-counter`: it keeps
 - optional project/CWD and git branch
 - additional lines registered by other pip plugins via `pip-common`'s footer line registry
 
+Quota state is isolated by provider, account credential, and effective base URL. Switching models clears old quota immediately, and disabled/headless sessions start no footer timers or quota requests.
+
 ## Settings
 
 Configure in `/pip-settings` under **Pip Footer**:
 
 - Enabled
-- Quota provider: `auto`, `codex`, `anthropic`, `copilot`, `off`
+- Quota provider: `auto`, `codex`, `anthropic`, `copilot`, `off`. Auto checks only an exact supported provider using Pi subscription OAuth; standard API-key models do not trigger subscription endpoints.
 - Context bar
 - Model
 - Above-editor token counter

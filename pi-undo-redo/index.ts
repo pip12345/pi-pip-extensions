@@ -1,5 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 
 import {
   backupSessionFile,
@@ -8,10 +7,15 @@ import {
   hasExternalChildren,
   hashSessionRecords,
   isSessionEntry,
+  makeEffectiveLeafLast,
   parseSessionFile,
   parentIdOf,
-  pipSettings,
+  pipPath,
   registerSettingsSection,
+  sessionHeaderLeafValues,
+  setSessionHeaderLeaf,
+  settingsFor,
+  type ScopedSettings,
   setting,
   textFromContent,
   writeSessionRecordsAtomic,
@@ -36,12 +40,13 @@ interface PendingRawPrompt {
   beforeLeafId: string | null;
   rawText: string;
   expandedText?: string;
-  timestamp?: number;
 }
 
 const REDO_KEY = Symbol.for("pi-undo-redo.redo-stack");
 const PENDING_RAW_KEY = Symbol.for("pi-undo-redo.pending-raw-prompt");
 const SETTINGS_SECTION = "undo-redo";
+const RAW_PROMPT_CUSTOM_TYPE = "pip.undo-redo.raw-prompt";
+const MAX_RAW_PROMPT_CHARS = 64 * 1024;
 
 type ExtensionAPI = any;
 type Ctx = any;
@@ -91,39 +96,28 @@ function setPendingRawPrompt(value: PendingRawPrompt | undefined): void {
   else delete state[PENDING_RAW_KEY];
 }
 
-function rawPromptMapFile(): string {
-  return join(ensurePipSubdir("undo-redo"), "raw-prompts.json");
-}
-
-function rawPromptKey(sessionFile: string, entryId: string): string {
-  return `${sessionFile}#${entryId}`;
-}
-
-function readRawPromptMap(): Record<string, string> {
-  const path = rawPromptMapFile();
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
+function recalledRawPrompt(entries: readonly SessionEntry[], entryId: string): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry.type !== "custom" || entry.customType !== RAW_PROMPT_CUSTOM_TYPE) continue;
+    if (entry.data?.messageId !== entryId || typeof entry.data?.rawText !== "string") continue;
+    if (entry.data.rawText.length > MAX_RAW_PROMPT_CHARS) continue;
+    return entry.data.rawText;
   }
+  return undefined;
 }
 
-function writeRawPromptMap(map: Record<string, string>): void {
-  writeFileSync(rawPromptMapFile(), JSON.stringify(map, null, 2));
+function rawPromptForStorage(pending: PendingRawPrompt): string | undefined {
+  if (!pending.rawText.trim() || pending.rawText === pending.expandedText) return undefined;
+  return pending.rawText.length <= MAX_RAW_PROMPT_CHARS ? pending.rawText : undefined;
 }
 
-function rememberRawPrompt(sessionFile: string, entryId: string, rawText: string): void {
-  if (!rawText.trim()) return;
-  const map = readRawPromptMap();
-  map[rawPromptKey(sessionFile, entryId)] = rawText;
-  writeRawPromptMap(map);
-}
-
-function recalledRawPrompt(sessionFile: string | undefined, entryId: string): string | undefined {
-  if (!sessionFile) return undefined;
-  return readRawPromptMap()[rawPromptKey(sessionFile, entryId)];
+function cleanupLegacyRawPromptMap(path = pipPath("undo-redo", "raw-prompts.json")): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // The legacy cache is non-authoritative; an unreadable file must not block startup.
+  }
 }
 
 function clone<T>(value: T): T {
@@ -140,8 +134,8 @@ function parseSkillInvocation(text: string): { name: string; userMessage?: strin
   return { name: match[1], userMessage: match[2]?.trim() || undefined };
 }
 
-function promptText(entry: SessionEntry, sessionFile?: string): string {
-  const raw = recalledRawPrompt(sessionFile, entry.id);
+function promptText(entry: SessionEntry, entries: readonly SessionEntry[]): string {
+  const raw = recalledRawPrompt(entries, entry.id);
   if (raw) return raw;
   const text = textFromContent((entry as any).message?.content, "\n");
   const skill = parseSkillInvocation(text);
@@ -157,32 +151,12 @@ function leafFromCtx(ctx: Ctx, branch: any[]): string | undefined {
   return ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id;
 }
 
-function updateHeaderLeaf(header: any, leafId: string | null): void {
-  for (const key of ["leafId", "currentLeafId", "activeLeafId"]) {
-    if (key in header) header[key] = leafId;
-  }
-}
-
-function headerLeafValues(header: any): Array<string | null> {
-  return ["leafId", "currentLeafId", "activeLeafId"].filter((key) => key in header).map((key) => header[key] ?? null);
-}
-
 function backupOptions() {
-  const keep = Number.parseInt(String(getSetting("keepBackups", "25")), 10) || 25;
-  const maxAge = getSetting("backupMaxAgeDays", "7");
-  return { keepBackups: keep, maxAgeDays: maxAge === "never" ? "never" as const : Number.parseInt(String(maxAge), 10) || 7 };
+  return { keepBackups: 25, maxAgeDays: 7 };
 }
 
-function getSetting(key: string, fallback: unknown): unknown {
-  try {
-    return pipSettings.get(`${SETTINGS_SECTION}.${key}`);
-  } catch {
-    return fallback;
-  }
-}
-
-function settingsEnabled(): boolean {
-  return getSetting("enabled", true) !== false;
+function settingsEnabled(settings: ScopedSettings): boolean {
+  return settings.get<boolean>("enabled", true) !== false;
 }
 
 export interface UndoPlan {
@@ -193,7 +167,7 @@ export interface UndoPlan {
   promptText: string;
 }
 
-export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], leafId?: string, sessionFile?: string): UndoPlan {
+export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], leafId?: string): UndoPlan {
   if (!branch.length) throw new Error("Nothing to undo.");
   const currentLeafId = leafId ?? branch.at(-1)?.id;
   if (!currentLeafId || branch.at(-1)?.id !== currentLeafId) throw new Error("Cannot undo: current leaf mismatch.");
@@ -216,7 +190,7 @@ export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], lea
 
   const target = tail[0];
   const previousLeafId = parentIdOf(target);
-  return { target, tail, previousLeafId, restoredLeafId: currentLeafId, promptText: promptText(target, sessionFile) };
+  return { target, tail, previousLeafId, restoredLeafId: currentLeafId, promptText: promptText(target, allEntries) };
 }
 
 function backupAndCleanup(sessionFile: string, reason: string): void {
@@ -234,20 +208,10 @@ async function replaceCurrentSession(ctx: Ctx, sessionFile: string, withSession?
   await withSession?.(ctx);
 }
 
-function makeEffectiveLeafLast(records: SessionRecord[], leafId: string | null): SessionRecord[] {
-  if (!leafId) return records;
-  const leafIndex = records.findIndex((record) => isSessionEntry(record) && record.id === leafId);
-  if (leafIndex < 0 || leafIndex === records.length - 1) return records;
-  const next = [...records];
-  const [leaf] = next.splice(leafIndex, 1);
-  next.push(leaf);
-  return next;
-}
-
 function removeTail(file: ParsedSessionFile, tail: SessionEntry[], previousLeafId: string | null): SessionRecord[] {
   const tailIds = new Set(tail.map((entry) => entry.id));
   const header = clone(file.header);
-  updateHeaderLeaf(header, previousLeafId);
+  setSessionHeaderLeaf(header, previousLeafId);
   const records = file.raw
     .map((record) => (record.type === "session" ? header : record))
     .filter((record) => !(isSessionEntry(record) && tailIds.has(record.id)));
@@ -259,8 +223,8 @@ function restoreTail(_file: ParsedSessionFile, slot: RedoSlot): SessionRecord[] 
   return makeEffectiveLeafLast(records, slot.restoredLeafId);
 }
 
-async function undo(ctx: Ctx) {
-  if (!settingsEnabled()) return ctx.ui.notify("Undo/redo is disabled.", "warning");
+async function undo(ctx: Ctx, settings: ScopedSettings) {
+  if (!settingsEnabled(settings)) return ctx.ui.notify("Undo/redo is disabled.", "warning");
   if (ctx.isIdle?.() === false) return ctx.ui.notify("Cannot undo while pi is running.", "warning");
   const sessionFile = sessionFileFromCtx(ctx);
   if (!sessionFile) return ctx.ui.notify("Cannot undo: no session file.", "warning");
@@ -268,9 +232,9 @@ async function undo(ctx: Ctx) {
   const branch = ctx.sessionManager.getBranch?.() ?? [];
   const currentLeafId = leafFromCtx(ctx, branch);
   const file = parseSessionFile(sessionFile);
-  const fileLeafValues = headerLeafValues(file.header);
+  const fileLeafValues = sessionHeaderLeafValues(file.header);
   if (fileLeafValues.some((fileLeaf) => fileLeaf !== currentLeafId)) throw new Error("Cannot undo: session file is out of sync.");
-  const plan = planUndo(branch, file.entries, currentLeafId, sessionFile);
+  const plan = planUndo(branch, file.entries, currentLeafId);
   const nextRecords = removeTail(file, plan.tail, plan.previousLeafId);
 
   backupAndCleanup(sessionFile, "undo");
@@ -291,8 +255,8 @@ async function undo(ctx: Ctx) {
   });
 }
 
-async function redo(ctx: Ctx) {
-  if (!settingsEnabled()) return ctx.ui.notify("Undo/redo is disabled.", "warning");
+async function redo(ctx: Ctx, settings: ScopedSettings) {
+  if (!settingsEnabled(settings)) return ctx.ui.notify("Undo/redo is disabled.", "warning");
   if (ctx.isIdle?.() === false) return ctx.ui.notify("Cannot redo while pi is running.", "warning");
   const slot = redoSlot();
   if (!slot) return ctx.ui.notify("Nothing to redo.", "info");
@@ -319,23 +283,23 @@ async function redo(ctx: Ctx) {
 }
 
 export default function undoRedoExtension(pi: ExtensionAPI) {
-  registerSettingsSection({
+  registerSettingsSection(pi, {
     id: SETTINGS_SECTION,
     title: "Undo / Redo",
     description: "Tail-only /undo and /redo with safety backups.",
     order: 60,
     settings: {
       enabled: setting.boolean({ default: true, label: "Enabled", order: 1, description: "Enable /undo and /redo for the current branch tip." }),
-      keepBackups: setting.enum({ default: "25", choices: ["10", "25", "50", "100"], label: "Keep backups", order: 2, description: "Maximum number of undo/redo backup files to keep." }),
-      backupMaxAgeDays: setting.enum({ default: "7", choices: ["1", "7", "30", "never"], label: "Backup max age", order: 3, description: "Delete older backup files after this many days, or never by age." }),
     },
   });
+
+  const settings = settingsFor(pi, SETTINGS_SECTION);
 
   pi.registerCommand("undo", {
     description: "Permanently remove the latest prompt at the end of the current branch and restore it to the editor",
     handler: async (_args: string, ctx: Ctx) => {
       try {
-        await undo(ctx);
+        await undo(ctx, settings);
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
       }
@@ -346,13 +310,15 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
     description: "Restore the exact prompt/response removed by /undo",
     handler: async (_args: string, ctx: Ctx) => {
       try {
-        await redo(ctx);
+        await redo(ctx, settings);
       } catch (error) {
         clearRedoStack();
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
       }
     },
   });
+
+  pi.on("session_start", () => cleanupLegacyRawPromptMap());
 
   pi.on("input", (event: any, ctx: Ctx) => {
     const rawText = String(event.text ?? "");
@@ -368,7 +334,6 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
     const pending = pendingRawPrompt();
     if (!pending || event.message?.role !== "user") return;
     pending.expandedText = textFromContent(event.message.content, "\n");
-    pending.timestamp = typeof event.message.timestamp === "number" ? event.message.timestamp : undefined;
     setPendingRawPrompt(pending);
   });
 
@@ -381,11 +346,12 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
       const file = parseSessionFile(sessionFile);
       const candidates = file.entries.filter((entry) => isUserEntry(entry) && parentIdOf(entry) === pending.beforeLeafId);
       const match = candidates.find((entry) => textFromContent((entry as any).message?.content, "\n") === pending.expandedText) ?? candidates.at(-1);
-      if (match) rememberRawPrompt(sessionFile, match.id, pending.rawText);
+      const rawText = match ? rawPromptForStorage(pending) : undefined;
+      if (match && rawText) pi.appendEntry(RAW_PROMPT_CUSTOM_TYPE, { version: 1, messageId: match.id, rawText });
     } finally {
       setPendingRawPrompt(undefined);
     }
   });
 }
 
-export const __test = { planUndo, redoSlot, setRedoSlot, redoStack, setRedoStack, removeTail, restoreTail, rememberRawPrompt, recalledRawPrompt };
+export const __test = { RAW_PROMPT_CUSTOM_TYPE, MAX_RAW_PROMPT_CHARS, planUndo, redoSlot, setRedoSlot, redoStack, setRedoStack, removeTail, restoreTail, recalledRawPrompt, rawPromptForStorage, cleanupLegacyRawPromptMap };

@@ -1,4 +1,5 @@
 export type TinyMcpTransportType = "stdio" | "http" | "streamable-http" | "sse";
+export type StderrMode = "ignore" | "tail" | "inherit";
 
 export interface TinyMcpServerConfig {
   type?: TinyMcpTransportType;
@@ -13,7 +14,6 @@ export interface TinyMcpServerConfig {
 }
 
 export interface TinyMcpConfig {
-  settings?: Record<string, unknown>;
   mcpServers: Record<string, TinyMcpServerConfig>;
 }
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
-import { backupSessionFile, cleanupBackups, hasExternalChildren, hashSessionFile, parseSessionFile, serializeSessionFile, writeSessionFileAtomic, type SessionEntry } from "../src/session-file.ts";
+import { backupSessionFile, cleanupBackups, hasExternalChildren, hashSessionFile, makeEffectiveLeafLast, parseSessionFile, serializeSessionFile, sessionHeaderLeafValues, setSessionHeaderLeaf, writeSessionFileAtomic, type SessionEntry } from "../src/session-file.ts";
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), "pip-session-file-"));
@@ -22,6 +22,26 @@ describe("session file helpers", () => {
     writeSessionFileAtomic(path, { header: parsed.header, entries: [...parsed.entries, { type: "message", id: "b", parentId: "a" }] });
     expect(hashSessionFile(parseSessionFile(path))).not.toBe(before);
     expect(readFileSync(path, "utf8")).toContain('"id":"b"');
+  });
+
+  it("makes the selected leaf the effective final record and updates known header fields", () => {
+    const header = { type: "session" as const, leafId: "old", currentLeafId: "old" };
+    const a = { type: "message", id: "a", parentId: null };
+    const b = { type: "message", id: "b", parentId: "a" };
+    setSessionHeaderLeaf(header, "a");
+    const records = makeEffectiveLeafLast([header, a, b], "a");
+    expect(records.at(-1)).toBe(a);
+    expect(sessionHeaderLeafValues(header)).toEqual(["a", "a"]);
+  });
+
+  it("leaves the original target intact and removes temporary files when replacement fails", () => {
+    const dir = tempDir();
+    const target = join(dir, "session.jsonl");
+    mkdirSync(target);
+    expect(() => writeSessionFileAtomic(target, { header: { type: "session" }, entries: [] })).toThrow();
+    expect(existsSync(target)).toBe(true);
+    expect(readdirSync(dir)).toEqual(["session.jsonl"]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("detects external children of a tail", () => {

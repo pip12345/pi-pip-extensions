@@ -30,27 +30,28 @@ describe("pi package manifests", () => {
     }
   });
 
-  it("each pi-* package declares existing extension entrypoints with default factories", async () => {
+  it("each feature package declares its bundled common bootstrap and source entrypoint", async () => {
     for (const dir of packageDirs()) {
       const manifestPath = join(dir, "package.json");
       expect(existsSync(manifestPath), `${dir} has package.json`).toBe(true);
 
       const manifest = readJson(manifestPath);
-      expect(manifest.pi?.extensions, `${manifest.name} has pi.extensions`).toBeInstanceOf(Array);
-      expect(manifest.pi.extensions.length, `${manifest.name} has at least one extension`).toBeGreaterThan(0);
+      expect(manifest.pi?.extensions, `${manifest.name} loads common before its feature`).toEqual([
+        "node_modules/pip-common/index.ts",
+        "./index.ts",
+      ]);
+      expect(manifest.dependencies?.["pip-common"], `${manifest.name} depends on common`).toBe("0.1.0");
+      expect(manifest.bundledDependencies, `${manifest.name} bundles common`).toContain("pip-common");
 
-      for (const extensionPath of manifest.pi.extensions) {
-        const absolutePath = join(dir, extensionPath);
-        expect(existsSync(absolutePath), `${manifest.name} extension exists: ${extensionPath}`).toBe(true);
-        const mod = await import(pathToFileURL(absolutePath).href);
-        expect(typeof mod.default, `${manifest.name} default export is an extension factory`).toBe("function");
-      }
+      const sourceEntrypoint = join(dir, "index.ts");
+      expect(existsSync(sourceEntrypoint), `${manifest.name} source entrypoint exists`).toBe(true);
+      const mod = await import(pathToFileURL(sourceEntrypoint).href);
+      expect(typeof mod.default, `${manifest.name} default export is an extension factory`).toBe("function");
     }
   });
 
   it("declares peer dependencies for imported pi packages", () => {
     const importsByPackage: Record<string, string[]> = {
-      "pi-provider-model-patches": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
       "pi-tool-ui": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
       "pi-stats": ["@earendil-works/pi-tui"],
       "pi-tree-edit": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],

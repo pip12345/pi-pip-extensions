@@ -1,10 +1,11 @@
-import type { TokenUsage as Tokens } from "../../../pip-common/index.ts";
+import type { SessionUsageKind, TokenUsage as Tokens } from "../../../pip-common/index.ts";
 
 export type RangeKey = "today" | "7d" | "30d" | "all";
 export type GroupBy = "model" | "provider" | "day";
 
 export interface GlobalUsageEvent extends Tokens {
   id?: string;
+  kind?: SessionUsageKind;
   ts: number;
   cwd?: string;
   sessionFile?: string;

@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { boxLines, branchEntries, firstResultText, hasTuiCustom, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, setting, settingsFor, themeFg, truncateToWidth } from "../pip-common/index.ts";
+import { boxLines, branchEntries, firstResultText, hasTuiCustom, moveSelection, PipCustomComponent, registerPipTool, registerSettingsSection, restoreLatestCustomState, selectionWindow, setting, settingsFor, themeFg, truncateToWidth, wrapAnsi } from "../pip-common/index.ts";
 
 export type TodoStatus = "pending" | "active" | "done";
 
@@ -26,24 +26,12 @@ const SETTINGS_ID = "todo";
 const CUSTOM_TYPE = "pip.todo.state";
 const WIDGET_KEY = "pi-todo";
 const STATUSES = ["pending", "active", "done"] as const;
-
-registerSettingsSection({
-  id: SETTINGS_ID,
-  title: "Todo",
-  description: "Minimal session todo tools and compact widget.",
-  order: 40,
-  settings: {
-    enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Enable todo tools, the /todo command, and the compact todo widget." }),
-    compactRows: setting.enum({ label: "Compact rows", default: "4", choices: ["2", "3", "4", "6"] as const, order: 2, description: "Fixed height for the always-on todo widget while todos exist." }),
-    showCompleted: setting.enum({ label: "Show completed", default: "smart", choices: ["smart", "always", "never"] as const, order: 3, description: "Controls whether completed todos appear in the compact widget." }),
-    hideWhenAllDone: setting.boolean({ label: "Hide when all done", default: false, order: 4, description: "Hide the compact widget once every todo is marked done." }),
-    doneStyle: setting.enum({ label: "Done style", default: "strike+dim", choices: ["strike+dim", "dim", "plain"] as const, order: 5, description: "Visual style for completed todo text in the compact widget and /todo view." }),
-    placement: setting.enum({ label: "Placement", default: "above", choices: ["above", "below"] as const, order: 6, description: "Place the compact todo widget above or below the editor." }),
-  },
-});
-
-const scopedSettings = settingsFor(SETTINGS_ID);
-const settingValue = scopedSettings.get;
+export const TODO_LIMITS = {
+  items: 100,
+  updates: 100,
+  textLength: 500,
+  matchLength: 500,
+} as const;
 
 function emptyState(): TodoState {
   return { todos: [], nextId: 1, updatedAt: Date.now() };
@@ -58,8 +46,8 @@ function normalizeTodos(input: Array<Partial<TodoItem> & { text?: unknown; statu
   let activeSeen = false;
   const todos: TodoItem[] = [];
 
-  for (const raw of input) {
-    const text = String(raw.text ?? "").trim();
+  for (const raw of input.slice(0, TODO_LIMITS.items)) {
+    const text = String(raw.text ?? "").trim().slice(0, TODO_LIMITS.textLength);
     if (!text) continue;
     const explicitId = typeof raw.id === "number" && Number.isInteger(raw.id) && raw.id > 0 ? raw.id : undefined;
     const id = explicitId ?? nextId++;
@@ -81,9 +69,9 @@ function cloneState(state: TodoState): TodoState {
 
 function normalizeState(data: any): TodoState {
   if (!data || typeof data !== "object" || !Array.isArray(data.todos)) return emptyState();
-  const startId = typeof data.nextId === "number" ? data.nextId : 1;
+  const startId = Number.isInteger(data.nextId) && data.nextId > 0 ? data.nextId : 1;
   const state = normalizeTodos(data.todos, startId);
-  state.updatedAt = typeof data.updatedAt === "number" ? data.updatedAt : Date.now();
+  state.updatedAt = typeof data.updatedAt === "number" && Number.isFinite(data.updatedAt) ? data.updatedAt : Date.now();
   return state;
 }
 
@@ -160,7 +148,10 @@ export function renderCompactTodos(state: TodoState, width: number, theme: any =
   const { items, hiddenAbove, hiddenBelow } = chooseVisibleTodos(todos, rows, showCompleted);
   if (!items.length) return [];
   const displayRows: Array<TodoItem | { overflow: string }> = [...items];
-  const overflowParts = [hiddenBelow > 0 ? `${hiddenBelow} below` : ""].filter(Boolean);
+  const overflowParts = [
+    hiddenAbove > 0 ? `${hiddenAbove} above` : "",
+    hiddenBelow > 0 ? `${hiddenBelow} below` : "",
+  ].filter(Boolean);
   if (overflowParts.length && displayRows.length < rows) displayRows.push({ overflow: overflowParts.join(" · ") });
   else if (overflowParts.length && displayRows.length === rows) displayRows[displayRows.length - 1] = { overflow: overflowParts.join(" · ") };
   if (!displayRows.length) return [];
@@ -183,7 +174,34 @@ export function renderCompactTodos(state: TodoState, width: number, theme: any =
 
 function compactList(todos: TodoItem[]): string {
   if (!todos.length) return "No todos";
-  return todos.map((todo) => `[${todo.status}] #${todo.id} ${todo.text}`).join("\n");
+  const bounded = todos.slice(0, TODO_LIMITS.items);
+  const lines = bounded.map((todo) => `[${todo.status}] #${todo.id} ${todo.text.slice(0, TODO_LIMITS.textLength)}`);
+  if (todos.length > bounded.length) lines.push(`... ${todos.length - bounded.length} more todos omitted`);
+  return lines.join("\n");
+}
+
+function validateTodoWriteInput(todos: unknown): asserts todos is Array<{ text: string; status?: TodoStatus }> {
+  if (!Array.isArray(todos)) throw new Error("todo_write requires a todos array.");
+  if (todos.length > TODO_LIMITS.items) throw new Error(`todo_write accepts at most ${TODO_LIMITS.items} todos.`);
+  for (const [index, todo] of todos.entries()) {
+    if (!todo || typeof todo !== "object" || typeof todo.text !== "string" || !todo.text.trim()) throw new Error(`todo ${index + 1} requires non-empty text.`);
+    if (todo.text.length > TODO_LIMITS.textLength) throw new Error(`todo ${index + 1} text must be ${TODO_LIMITS.textLength} characters or fewer.`);
+    if (todo.status !== undefined && !isStatus(todo.status)) throw new Error(`todo ${index + 1} has an invalid status.`);
+  }
+}
+
+function validateTodoUpdatesInput(updates: unknown): asserts updates is Array<{ id?: number; match?: string; text?: string; status?: TodoStatus }> {
+  if (!Array.isArray(updates)) throw new Error("todo_update requires an updates array.");
+  if (updates.length > TODO_LIMITS.updates) throw new Error(`todo_update accepts at most ${TODO_LIMITS.updates} updates.`);
+  for (const [index, update] of updates.entries()) {
+    if (!update || typeof update !== "object") throw new Error(`todo update ${index + 1} must be an object.`);
+    if (update.id !== undefined && !validId(update.id)) throw new Error(`todo update ${index + 1} id must be a positive integer.`);
+    if (update.match !== undefined && typeof update.match !== "string") throw new Error(`todo update ${index + 1} match must be a string.`);
+    if (typeof update.match === "string" && update.match.length > TODO_LIMITS.matchLength) throw new Error(`todo update ${index + 1} match must be ${TODO_LIMITS.matchLength} characters or fewer.`);
+    if (update.text !== undefined && typeof update.text !== "string") throw new Error(`todo update ${index + 1} text must be a string.`);
+    if (typeof update.text === "string" && update.text.length > TODO_LIMITS.textLength) throw new Error(`todo update ${index + 1} text must be ${TODO_LIMITS.textLength} characters or fewer.`);
+    if (update.status !== undefined && !isStatus(update.status)) throw new Error(`todo update ${index + 1} has an invalid status.`);
+  }
 }
 
 function validId(value: unknown): value is number {
@@ -242,6 +260,8 @@ function applyUpdates(state: TodoState, updates: Array<{ id?: number; match?: st
 
 class TodoInspector extends PipCustomComponent<void> {
   private selected = 0;
+  private offset = 0;
+  private pageSize = 1;
 
   constructor(tui: any, theme: any, done: () => void, private getState: () => TodoState, private mutate: (state: TodoState) => void) {
     super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d", "q", "Q"] });
@@ -249,8 +269,12 @@ class TodoInspector extends PipCustomComponent<void> {
 
   protected handleKey(key: string): void {
     const state = this.getState();
-    if (key === "up" || key === "k") this.selected = Math.max(0, this.selected - 1);
-    else if (key === "down" || key === "j") this.selected = Math.min(Math.max(0, state.todos.length - 1), this.selected + 1);
+    if (key === "up" || key === "k") this.selected = moveSelection(this.selected, -1, state.todos.length);
+    else if (key === "down" || key === "j") this.selected = moveSelection(this.selected, 1, state.todos.length);
+    else if (key === "pageup") this.selected = moveSelection(this.selected, -this.pageSize, state.todos.length);
+    else if (key === "pagedown") this.selected = moveSelection(this.selected, this.pageSize, state.todos.length);
+    else if (key === "home") this.selected = 0;
+    else if (key === "end") this.selected = Math.max(0, state.todos.length - 1);
     else if (key === "space") {
       const next = cloneState(state);
       const todo = next.todos[this.selected];
@@ -277,12 +301,23 @@ class TodoInspector extends PipCustomComponent<void> {
     const state = this.getState();
     const th = this.theme;
     const bodyWidth = Math.max(1, width);
-    const innerWidth = bodyWidth - 4;
-    const lines: string[] = [themeFg(th, "dim", "j/k move · space cycle · d delete · c clear done · q close"), ""];
+    const innerWidth = Math.max(1, bodyWidth - 4);
+    const bodyRows = this.overlayRowBudget({ maxRows: 24, minRows: 4, reservedRows: 2, maxHeightRatio: 0.8 });
+    const lines = [...wrapAnsi(themeFg(th, "dim", "j/k move · page up/down · space cycle · d delete · c clear done · q close"), innerWidth), ""];
     if (!state.todos.length) lines.push(themeFg(th, "dim", "No todos."));
-    for (const [index, todo] of state.todos.entries()) {
-      const marker = index === this.selected ? themeFg(th, "accent", "›") : " ";
-      lines.push(truncateToWidth(`${marker} ${renderIcon(todo, th)} ${themeFg(th, "accent", `#${todo.id}`)} ${renderTodoText(todo, th, "strike+dim")}`, innerWidth));
+    else {
+      this.selected = moveSelection(this.selected, 0, state.todos.length);
+      const available = Math.max(1, bodyRows - lines.length);
+      const showPosition = state.todos.length > available && available > 1;
+      this.pageSize = Math.max(1, available - (showPosition ? 1 : 0));
+      const view = selectionWindow(state.todos, this.selected, this.offset, this.pageSize);
+      this.selected = view.selected;
+      this.offset = view.offset;
+      for (const [relativeIndex, todo] of view.items.entries()) {
+        const marker = view.offset + relativeIndex === this.selected ? themeFg(th, "accent", "›") : " ";
+        lines.push(truncateToWidth(`${marker} ${renderIcon(todo, th)} ${themeFg(th, "accent", `#${todo.id}`)} ${renderTodoText(todo, th, "strike+dim")}`, innerWidth));
+      }
+      if (showPosition) lines.push(themeFg(th, "dim", `${view.offset + 1}–${view.end} of ${state.todos.length}`));
     }
     return boxLines(lines, bodyWidth, th, { title: "Todos" });
   }
@@ -291,10 +326,10 @@ class TodoInspector extends PipCustomComponent<void> {
 const TodoWriteParams = Type.Object({
   todos: Type.Array(
     Type.Object({
-      text: Type.String({ description: "Todo text" }),
+      text: Type.String({ minLength: 1, maxLength: TODO_LIMITS.textLength, description: "Todo text" }),
       status: Type.Optional(StringEnum(["pending", "active", "done"] as const)),
     }),
-    { description: "Full replacement todo list" }
+    { maxItems: TODO_LIMITS.items, description: "Full replacement todo list" }
   ),
 });
 
@@ -302,11 +337,11 @@ const TodoUpdateParams = Type.Object({
   updates: Type.Array(
     Type.Object({
       id: Type.Optional(Type.Number({ description: "Todo id" })),
-      match: Type.Optional(Type.String({ description: "Case-insensitive text match if id is omitted" })),
-      text: Type.Optional(Type.String({ description: "New todo text" })),
+      match: Type.Optional(Type.String({ maxLength: TODO_LIMITS.matchLength, description: "Case-insensitive text match if id is omitted" })),
+      text: Type.Optional(Type.String({ maxLength: TODO_LIMITS.textLength, description: "New todo text" })),
       status: Type.Optional(StringEnum(["pending", "active", "done"] as const)),
     }),
-    { description: "Batch todo updates" }
+    { maxItems: TODO_LIMITS.updates, description: "Batch todo updates" }
   ),
 });
 
@@ -336,6 +371,20 @@ function normalTodoReadResult(state: TodoState, theme: any): Text {
 }
 
 export default function todoExtension(pi: ExtensionAPI) {
+  registerSettingsSection(pi, {
+    id: SETTINGS_ID,
+    title: "Todo",
+    description: "Minimal session todo tools and compact widget.",
+    order: 40,
+    settings: {
+      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Enable todo tools, the /todo command, and the compact todo widget." }),
+      showCompleted: setting.enum({ label: "Show completed", default: "smart", choices: ["smart", "always", "never"] as const, order: 2, description: "Controls whether completed todos appear in the compact widget." }),
+      hideWhenAllDone: setting.boolean({ label: "Hide when all done", default: false, order: 3, description: "Hide the compact widget once every todo is marked done." }),
+      placement: setting.enum({ label: "Placement", default: "above", choices: ["above", "below"] as const, order: 4, description: "Place the compact todo widget above or below the editor." }),
+    },
+  });
+  const scopedSettings = settingsFor(pi, SETTINGS_ID);
+  const settingValue = scopedSettings.get;
   let state = emptyState();
   let currentCtx: any;
 
@@ -346,9 +395,9 @@ export default function todoExtension(pi: ExtensionAPI) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
       return;
     }
-    const rows = Number(settingValue<string>("compactRows", "4"));
+    const rows = 4;
     const showCompleted = settingValue<ShowCompleted>("showCompleted", "smart");
-    const doneStyle = settingValue<DoneStyle>("doneStyle", "strike+dim");
+    const doneStyle: DoneStyle = "strike+dim";
     const hideWhenAllDone = settingValue<boolean>("hideWhenAllDone", false);
     const linesFactory = (_tui: any, theme: any) => ({
       invalidate() {},
@@ -360,6 +409,8 @@ export default function todoExtension(pi: ExtensionAPI) {
     if (!rendered.length) ctx.ui.setWidget(WIDGET_KEY, undefined);
     else ctx.ui.setWidget(WIDGET_KEY, linesFactory, { placement: settingValue<Placement>("placement", "above") === "below" ? "belowEditor" : "aboveEditor" });
   };
+
+  const unsubscribeSettings = scopedSettings.onChange(() => refreshWidget());
 
   const persist = (next: TodoState, ctx = currentCtx) => {
     state = normalizeState(next);
@@ -375,7 +426,10 @@ export default function todoExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event: any, ctx: any) => reconstruct(ctx));
   pi.on("session_tree", async (_event: any, ctx: any) => reconstruct(ctx));
-  pi.on("session_shutdown", async (_event: any, ctx: any) => ctx?.ui?.setWidget?.(WIDGET_KEY, undefined));
+  pi.on("session_shutdown", async (_event: any, ctx: any) => {
+    unsubscribeSettings();
+    ctx?.ui?.setWidget?.(WIDGET_KEY, undefined);
+  });
 
   registerPipTool(pi, {
     tool: {
@@ -391,7 +445,9 @@ export default function todoExtension(pi: ExtensionAPI) {
     ],
     parameters: TodoWriteParams,
     async execute(_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
-      const next = normalizeTodos(params.todos ?? []);
+      if (!settingValue("enabled", true)) return { content: [{ type: "text", text: "Todo is disabled in /pip-settings." }], details: { disabled: true } };
+      validateTodoWriteInput(params.todos);
+      const next = normalizeTodos(params.todos);
       persist(next, ctx);
       return { content: [{ type: "text", text: `Set ${stateSummary(state.todos)}` }], details: cloneState(state) };
     },
@@ -422,7 +478,9 @@ export default function todoExtension(pi: ExtensionAPI) {
     promptSnippet: "Batch update existing session todos by id or text match",
     parameters: TodoUpdateParams,
     async execute(_id: string, params: any, _signal: any, _onUpdate: any, ctx: any) {
-      const result = applyUpdates(state, params.updates ?? []);
+      if (!settingValue("enabled", true)) return { content: [{ type: "text", text: "Todo is disabled in /pip-settings." }], details: { disabled: true } };
+      validateTodoUpdatesInput(params.updates);
+      const result = applyUpdates(state, params.updates);
       if (result.changed) persist(result.state, ctx);
       const suffix = result.errors.length ? ` (${result.errors.join("; ")})` : "";
       return { content: [{ type: "text", text: `Updated ${result.updated} todo${result.updated === 1 ? "" : "s"}${suffix}` }], details: { ...cloneState(result.changed ? state : result.state), errors: result.errors, updated: result.updated } };
@@ -455,6 +513,7 @@ export default function todoExtension(pi: ExtensionAPI) {
     promptSnippet: "Read the current session todo list",
     parameters: Type.Object({}),
     async execute() {
+      if (!settingValue("enabled", true)) return { content: [{ type: "text", text: "Todo is disabled in /pip-settings." }], details: { disabled: true } };
       return { content: [{ type: "text", text: compactList(state.todos) }], details: cloneState(state) };
     },
     renderCall(_args: any, theme: any) {
@@ -478,15 +537,22 @@ export default function todoExtension(pi: ExtensionAPI) {
   pi.registerCommand("todo", {
     description: "Inspect and edit session todos",
     handler: async (args: string, ctx: any) => {
+      if (!settingValue("enabled", true)) return ctx.ui?.notify?.("Todo is disabled in /pip-settings.", "warning");
       currentCtx = ctx;
       const [cmd = "", first = "", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const textRest = [first, ...rest].join(" ").trim();
 
       const byId = (idText: string) => state.todos.find((todo) => todo.id === Number(idText));
-      if (cmd === "add" && textRest) persist(normalizeState({ ...state, todos: [...state.todos, { id: state.nextId, text: textRest, status: "pending" }], nextId: state.nextId + 1 }), ctx);
+      if (cmd === "add" && textRest) {
+        if (state.todos.length >= TODO_LIMITS.items) ctx.ui?.notify?.(`Todo list is limited to ${TODO_LIMITS.items} items`, "warning");
+        else if (textRest.length > TODO_LIMITS.textLength) ctx.ui?.notify?.(`Todo text is limited to ${TODO_LIMITS.textLength} characters`, "warning");
+        else persist(normalizeState({ ...state, todos: [...state.todos, { id: state.nextId, text: textRest, status: "pending" }], nextId: state.nextId + 1 }), ctx);
+      }
       else if (cmd === "edit" && first && rest.join(" ").trim()) {
         const todo = byId(first);
-        if (todo) persist({ ...state, todos: state.todos.map((item) => (item.id === todo.id ? { ...item, text: rest.join(" ").trim() } : item)), updatedAt: Date.now() }, ctx);
+        const nextText = rest.join(" ").trim();
+        if (nextText.length > TODO_LIMITS.textLength) ctx.ui?.notify?.(`Todo text is limited to ${TODO_LIMITS.textLength} characters`, "warning");
+        else if (todo) persist({ ...state, todos: state.todos.map((item) => (item.id === todo.id ? { ...item, text: nextText } : item)), updatedAt: Date.now() }, ctx);
         else ctx.ui?.notify?.(`Todo #${first} not found`, "warning");
       } else if (["done", "active", "pending"].includes(cmd) && first) {
         const status = cmd as TodoStatus;
@@ -513,4 +579,4 @@ export default function todoExtension(pi: ExtensionAPI) {
   });
 }
 
-export const __test = { SETTINGS_ID, CUSTOM_TYPE, WIDGET_KEY, normalizeTodos, applyUpdates, compactList };
+export const __test = { SETTINGS_ID, CUSTOM_TYPE, WIDGET_KEY, normalizeTodos, applyUpdates, compactList, validateTodoWriteInput, validateTodoUpdatesInput };

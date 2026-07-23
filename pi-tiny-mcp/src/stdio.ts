@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { createInterface } from "node:readline";
-import type { StderrMode } from "./settings.ts";
+import type { StderrMode } from "./types.ts";
+import { MAX_MCP_MESSAGE_BYTES, MAX_MCP_STDERR_LINE_CHARS } from "./transport-limits.ts";
 
 export interface StdioTransportOptions {
   command: string;
@@ -29,35 +29,63 @@ export class StdioTransport extends EventEmitter {
     });
     this.child = child;
 
-    const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    rl.on("line", (line) => {
-      if (!line.trim()) return;
+    let stdoutBuffer = "";
+    let stdoutFailed = false;
+    const failStdout = (error: Error) => {
+      if (stdoutFailed) return;
+      stdoutFailed = true;
+      stdoutBuffer = "";
+      this.emit("error", error);
+      child.kill("SIGTERM");
+    };
+    const handleLine = (line: string) => {
+      if (!line.trim() || stdoutFailed) return;
+      if (Buffer.byteLength(line, "utf8") > MAX_MCP_MESSAGE_BYTES) {
+        failStdout(new Error(`MCP stdout message exceeded ${MAX_MCP_MESSAGE_BYTES} byte limit`));
+        return;
+      }
       try {
         this.emit("message", JSON.parse(line));
-      } catch (error) {
-        this.emit("error", new Error(`Invalid JSON on MCP stdout: ${line.slice(0, 200)}`));
+      } catch {
+        failStdout(new Error(`Invalid JSON on MCP stdout: ${line.slice(0, 200)}`));
       }
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (stdoutFailed) return;
+      stdoutBuffer += chunk;
+      while (true) {
+        const newline = stdoutBuffer.indexOf("\n");
+        if (newline < 0) break;
+        const line = stdoutBuffer.slice(0, newline).replace(/\r$/, "");
+        stdoutBuffer = stdoutBuffer.slice(newline + 1);
+        handleLine(line);
+        if (stdoutFailed) return;
+      }
+      if (Buffer.byteLength(stdoutBuffer, "utf8") > MAX_MCP_MESSAGE_BYTES) failStdout(new Error(`MCP stdout message exceeded ${MAX_MCP_MESSAGE_BYTES} byte limit`));
     });
 
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       if (this.options.stderr === "inherit") process.stderr.write(chunk);
+      const boundedChunk = chunk.slice(0, MAX_MCP_STDERR_LINE_CHARS * 50);
       if (this.options.stderr === "tail" || this.options.stderr === undefined) {
-        this.stderrTail.push(...chunk.split(/\r?\n/).filter(Boolean));
+        this.stderrTail.push(...boundedChunk.split(/\r?\n/).filter(Boolean).map((line) => line.slice(0, MAX_MCP_STDERR_LINE_CHARS)));
         this.stderrTail = this.stderrTail.slice(-50);
       }
-      this.emit("stderr", chunk);
+      this.emit("stderr", boundedChunk);
     });
 
     child.on("error", (error) => this.emit("error", error));
     child.on("exit", (code, signal) => {
+      if (stdoutBuffer.trim() && !stdoutFailed) handleLine(stdoutBuffer.replace(/\r$/, ""));
+      stdoutBuffer = "";
       this.closed = true;
-      rl.close();
       this.emit("close", { code, signal });
     });
   }
 
-  send(message: Record<string, unknown>): void {
+  send(message: Record<string, unknown>, _signal?: AbortSignal): void {
     if (!this.child || this.closed) throw new Error("MCP server process is not running");
     this.child.stdin.write(`${JSON.stringify(message)}\n`, "utf8");
   }

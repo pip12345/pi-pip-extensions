@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { emptyUsage } from "../../pip-common/index.ts";
+import { emptyUsage, type ScopedSettings } from "../../pip-common/index.ts";
 import type { AgentConfig, LaunchInput, Runner, SubagentRun, SubagentSnapshot } from "./types.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { deleteRunSessionFile } from "./runner.ts";
 import { appendWorkspaceGuidance, contextRoot, runContextDir } from "./context.ts";
-import { settingValue } from "./settings.ts";
 import { deleteManagedChildSession, deleteParentPersistence, gcOrphanedParents, readParentRuns, restoredRun, toPersistedRun, writeParentRuns } from "./persistence.ts";
-
-const KEY = Symbol.for("pip-subagents.manager");
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_COMPLETION_CHARS, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_EVENT_TEXT_CHARS, MAX_SUBAGENT_EVENTS } from "./bounds.ts";
 
 export interface ManagerOptions {
   runner: Runner;
@@ -16,6 +14,7 @@ export interface ManagerOptions {
   inject?: (parentSessionKey: string, message: string) => void;
   persistenceDir?: string;
   contextDir?: string;
+  settings?: ScopedSettings;
 }
 
 function id(): string {
@@ -39,6 +38,7 @@ function wrapSteerMessage(message: string): string {
 
 export class SubagentManager {
   private shuttingDown = false;
+  private pendingPersistence = new Map<string, ReturnType<typeof setTimeout>>();
   runs = new Map<string, SubagentRun>();
   aliases = new Map<string, string>();
   foreground = new Set<string>();
@@ -51,6 +51,7 @@ export class SubagentManager {
   contextDir?: string;
   loadedParents = new Set<string>();
   parentBranches = new Map<string, Set<string>>();
+  private settings: ScopedSettings;
 
   constructor(options: ManagerOptions) {
     this.runner = options.runner;
@@ -58,6 +59,7 @@ export class SubagentManager {
     this.inject = options.inject;
     this.persistenceDir = options.persistenceDir;
     this.contextDir = options.contextDir;
+    this.settings = options.settings ?? { id: "subagents-defaults", path: (key) => key, get: (_key, fallback) => fallback, onChange: () => () => undefined };
   }
 
   configure(options: Partial<ManagerOptions>): void {
@@ -66,6 +68,7 @@ export class SubagentManager {
     if (options.inject) this.inject = options.inject;
     if (options.persistenceDir) this.persistenceDir = options.persistenceDir;
     if (options.contextDir) this.contextDir = options.contextDir;
+    if (options.settings) this.settings = options.settings;
   }
 
   setActiveParent(key: string, parentSessionFile?: string, branchIds?: string[]): void {
@@ -119,9 +122,9 @@ export class SubagentManager {
     for (const record of loaded.runs) {
       if (this.runs.has(record.id)) continue;
       const run = restoredRun(record, this.now());
-      run.contextRoot ??= contextRoot(run.parentSessionKey, this.contextDir);
-      run.runContextDir ??= runContextDir(run.parentSessionKey, run.id, this.contextDir);
-      run.persist = () => this.saveRun(run);
+      run.contextRoot = contextRoot(parentSessionKey, this.contextDir);
+      run.runContextDir = runContextDir(parentSessionKey, run.id, this.contextDir);
+      run.persist = () => this.scheduleSaveRun(run);
       this.runs.set(run.id, run);
       if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
     }
@@ -129,6 +132,9 @@ export class SubagentManager {
   }
 
   private saveParent(parentSessionKey: string): void {
+    const pending = this.pendingPersistence.get(parentSessionKey);
+    if (pending) clearTimeout(pending);
+    this.pendingPersistence.delete(parentSessionKey);
     const persisted = [...this.runs.values()].filter((run) => run.parentSessionKey === parentSessionKey).map(toPersistedRun).filter((run): run is NonNullable<typeof run> => Boolean(run));
     const parentSessionFile = persisted[0]?.parentSessionFile;
     if (!parentSessionFile) {
@@ -140,6 +146,17 @@ export class SubagentManager {
 
   private saveRun(run: SubagentRun): void {
     this.saveParent(run.parentSessionKey);
+  }
+
+  private scheduleSaveRun(run: SubagentRun): void {
+    const parentSessionKey = run.parentSessionKey;
+    if (this.pendingPersistence.has(parentSessionKey)) return;
+    const timer = setTimeout(() => {
+      this.pendingPersistence.delete(parentSessionKey);
+      this.saveParent(parentSessionKey);
+    }, 250);
+    timer.unref?.();
+    this.pendingPersistence.set(parentSessionKey, timer);
   }
 
   private touchRun(run: SubagentRun, at = this.now()): void {
@@ -180,11 +197,93 @@ export class SubagentManager {
     return [...this.runs.values()].filter((run) => run.status === "running").length;
   }
 
-  launch(input: LaunchInput): SubagentRun {
+  private assertCanStartGeneration(run?: SubagentRun): void {
     if (this.shuttingDown) throw new Error("Subagent manager is shutting down.");
+    const maxRunning = this.settings.get("maxRunning", 6);
+    const running = [...this.runs.values()].filter((candidate) => candidate !== run && candidate.status === "running").length;
+    if (running >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
+  }
+
+  private startGeneration(
+    run: SubagentRun,
+    options: { prompt: string; displayPrompt?: string; background: boolean; signal?: AbortSignal },
+    execute: () => Promise<unknown>,
+  ): Promise<SubagentRun> {
+    this.assertCanStartGeneration(run);
+    run.generation = (run.generation ?? 0) + 1;
+    const generation = run.generation;
+    run.removeParentAbort?.();
+    run.abortController = new AbortController();
+    run.errorText = undefined;
+    run.resultText = undefined;
+    run.completedAt = undefined;
+    run.status = "running";
+    run.background = options.background;
+    run.detached = options.background;
+    run.forwarding = !options.background;
+    if (options.background) this.foreground.delete(run.id);
+    else this.foreground.add(run.id);
+
+    run.detachPromise = new Promise<void>((resolve) => { run.resolveDetach = resolve; });
+    run.detach = () => {
+      run.background = true;
+      run.detached = true;
+      run.forwarding = false;
+      run.removeParentAbort?.();
+      run.removeParentAbort = undefined;
+      this.foreground.delete(run.id);
+      run.resolveDetach?.();
+    };
+
+    if (!options.background && options.signal) {
+      const onAbort = () => {
+        if (run.detached || run.background || run.generation !== generation) return;
+        void this.cancel(run).catch(() => undefined);
+      };
+      options.signal.addEventListener("abort", onAbort, { once: true });
+      run.removeParentAbort = () => options.signal?.removeEventListener("abort", onAbort);
+      if (options.signal.aborted) onAbort();
+    }
+
+    run.prompt = options.displayPrompt ?? options.prompt;
+    this.touchRun(run);
+    const promise = Promise.resolve()
+      .then(async () => {
+        if (run.abortController.signal.aborted) throw new Error("Cancelled");
+        await execute();
+        return run;
+      })
+      .catch((error) => {
+        if (run.generation !== generation) return run;
+        run.status = run.abortController.signal.aborted ? "cancelled" : "error";
+        run.errorText = run.status === "cancelled" ? "Cancelled" : boundSubagentText(error instanceof Error ? error.message : String(error), MAX_SUBAGENT_ERROR_CHARS, 40);
+        return run;
+      })
+      .then((finished) => {
+        if (run.generation !== generation) return finished;
+        run.removeParentAbort?.();
+        run.removeParentAbort = undefined;
+        this.foreground.delete(run.id);
+        if (this.shuttingDown || this.runs.get(run.id) !== run) return finished;
+        if (run.status === "running") run.status = run.abortController.signal.aborted ? "cancelled" : "completed";
+        if (run.resultText) run.resultText = boundSubagentResult(run.resultText, run.sessionFile);
+        if (run.errorText) run.errorText = boundSubagentText(run.errorText, MAX_SUBAGENT_ERROR_CHARS, 40);
+        run.events = snapshotRun(run).events;
+        run.completedAt = this.now();
+        run.updatedAt = run.completedAt;
+        run.prompt = options.displayPrompt ?? options.prompt;
+        if (run.background && run.status !== "cancelled") this.completeBackground(run);
+        this.saveRun(run);
+        this.cleanup();
+        return finished;
+      });
+    run.runPromise = promise;
+    return promise;
+  }
+
+  launch(input: LaunchInput): SubagentRun {
     this.cleanup();
-    const maxRunning = settingValue("maxRunning", 6);
-    if (this.runningCount() >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
+    this.assertCanStartGeneration();
     this.ensureNameAvailable(input.name, input.parentSessionKey);
     const runId = id();
     const root = contextRoot(input.parentSessionKey, this.contextDir);
@@ -202,7 +301,7 @@ export class SubagentManager {
       anchorEntryId: input.anchorEntryId,
       background: input.background,
       detached: input.background,
-      status: "running",
+      status: "completed",
       createdAt: this.now(),
       updatedAt: this.now(),
       contextRoot: root,
@@ -212,113 +311,54 @@ export class SubagentManager {
       abortController: new AbortController(),
       forwarding: !input.background,
     };
-    run.persist = () => this.saveRun(run);
+    run.persist = () => this.scheduleSaveRun(run);
     this.runs.set(run.id, run);
     if (run.name) this.aliases.set(this.aliasKey(run.parentSessionKey, run.name), run.id);
-    if (!run.background) this.foreground.add(run.id);
-    run.detachPromise = new Promise<void>((resolve) => { run.resolveDetach = resolve; });
-    if (!run.background && input.signal) {
-      const onAbort = () => {
-        if (run.detached || run.background) return;
-        void this.cancel(run).catch(() => undefined);
-      };
-      input.signal.addEventListener("abort", onAbort, { once: true });
-      run.removeParentAbort = () => input.signal?.removeEventListener("abort", onAbort);
-      if (input.signal.aborted) onAbort();
-    }
-
-    run.detach = () => {
-      run.background = true;
-      run.detached = true;
-      run.forwarding = false;
-      run.removeParentAbort?.();
-      run.removeParentAbort = undefined;
-      this.foreground.delete(run.id);
-      run.resolveDetach?.();
-    };
-
-    this.saveRun(run);
 
     const launchInput = { ...input, prompt: appendWorkspaceGuidance(input.prompt, root, runDir), contextRoot: root, runContextDir: runDir };
-    run.runPromise = this.runner.launch(launchInput, run).catch((error) => {
-      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-      run.completedAt = this.now();
-      run.updatedAt = run.completedAt;
-      return run;
-    }).then((finished) => {
-      if (this.shuttingDown || this.runs.get(finished.id) !== finished) return finished;
-      this.foreground.delete(run.id);
-      finished.removeParentAbort?.();
-      finished.removeParentAbort = undefined;
-      finished.prompt = input.prompt;
-      if (finished.background && finished.status !== "cancelled") this.completeBackground(finished);
-      this.saveRun(finished);
-      this.cleanup();
-      return finished;
-    });
+    try {
+      this.startGeneration(run, { prompt: input.prompt, background: input.background, signal: input.signal }, () => this.runner.launch(launchInput, run));
+    } catch (error) {
+      this.runs.delete(run.id);
+      if (run.name) this.aliases.delete(this.aliasKey(run.parentSessionKey, run.name));
+      throw error;
+    }
     return run;
   }
 
-  async continueRun(run: SubagentRun, prompt: string, agent?: AgentConfig): Promise<void> {
+  async continueRun(run: SubagentRun, prompt: string, agent?: AgentConfig, signal?: AbortSignal, displayPrompt = prompt): Promise<void> {
     if (run.status === "running") throw new Error(`Subagent ${run.id} is already running.`);
     if (!run.sessionFile) throw new Error(`Subagent ${run.id} cannot be continued because its child session file is missing.`);
-    run.abortController = new AbortController();
-    run.errorText = undefined;
-    run.resultText = undefined;
-    run.status = "running";
-    run.background = false;
-    run.detached = false;
-    run.forwarding = true;
-    this.foreground.add(run.id);
     const root = run.contextRoot ?? contextRoot(run.parentSessionKey, this.contextDir);
     const runDir = run.runContextDir ?? runContextDir(run.parentSessionKey, run.id, this.contextDir);
     run.contextRoot = root;
     run.runContextDir = runDir;
     const promptWithWorkspace = appendWorkspaceGuidance(prompt, root, runDir);
-    this.touchRun(run);
-    try {
+    const generation = this.startGeneration(run, { prompt, displayPrompt, background: false, signal }, async () => {
       if (run.continuePrompt) await run.continuePrompt(promptWithWorkspace);
       else {
         if (!agent) throw new Error(`Subagent ${run.id} cannot be continued until its agent definition is available.`);
         run.model ??= agent.model;
-        run.runPromise = this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, model: run.model, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir }, run);
-        await run.runPromise;
+        await this.runner.launch({ agent, prompt: promptWithWorkspace, cwd: run.cwd, parentSessionKey: run.parentSessionKey, parentSessionFile: run.parentSessionFile, anchorEntryId: run.anchorEntryId, name: run.name, keep: run.keep, background: false, model: run.model, resumeSessionFile: run.sessionFile, contextRoot: root, runContextDir: runDir, signal }, run);
       }
-      if (run.status === "running") run.status = "completed";
-    } catch (error) {
-      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-      throw error;
-    } finally {
-      run.prompt = prompt;
-      run.completedAt = this.now();
-      run.updatedAt = run.completedAt;
-      this.foreground.delete(run.id);
-      this.saveRun(run);
-    }
+    });
+    await generation;
+    if (run.status === "error") throw new Error(run.errorText ?? `Subagent ${run.id} failed.`);
+    if (run.status === "cancelled") throw new Error(`Subagent ${run.id} was cancelled.`);
   }
 
-  async steer(run: SubagentRun, message: string, agent?: AgentConfig): Promise<void> {
+  async steer(run: SubagentRun, message: string, agent?: AgentConfig, signal?: AbortSignal): Promise<void> {
     const steeringPrompt = wrapSteerMessage(message);
     const at = this.now();
-    run.events.push({ type: "steer", text: message, at });
-    if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
+    run.events.push({ type: "steer", text: boundSubagentText(message, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40), at });
+    if (run.events.length > MAX_SUBAGENT_EVENTS) run.events.splice(0, run.events.length - MAX_SUBAGENT_EVENTS);
     this.touchRun(run, at);
 
-    if (!run.steer) {
-      if (run.status === "running") throw new Error(`Subagent ${run.id} cannot be steered.`);
-      await this.continueRun(run, steeringPrompt, agent);
-      run.prompt = message;
-      this.touchRun(run);
+    if (run.status !== "running") {
+      await this.continueRun(run, steeringPrompt, agent, signal, message);
       return;
     }
-
-    if (run.status !== "running") {
-      run.abortController = new AbortController();
-      run.errorText = undefined;
-      run.resultText = undefined;
-    }
+    if (!run.steer) throw new Error(`Subagent ${run.id} cannot be steered.`);
     await run.steer(steeringPrompt, message);
     this.touchRun(run);
   }
@@ -375,8 +415,7 @@ export class SubagentManager {
   }
 
   private deleteRunContext(run: SubagentRun): void {
-    if (!run.runContextDir) return;
-    rmSync(run.runContextDir, { recursive: true, force: true });
+    rmSync(runContextDir(run.parentSessionKey, run.id, this.contextDir), { recursive: true, force: true });
   }
 
   list(parentSessionKey?: string): SubagentRun[] {
@@ -386,12 +425,14 @@ export class SubagentManager {
 
   completionMessage(run: SubagentRun): string {
     const title = run.status === "completed" ? "completed" : "failed";
-    const body = run.status === "completed" ? `<subagent_result>\n${run.resultText ?? "(no output)"}\n</subagent_result>` : `Error: ${run.errorText ?? "unknown"}`;
-    return [`**Background subagent ${title}: ${run.id}** (${[run.agent, run.model, `${((run.completedAt ?? this.now()) - run.createdAt) / 1000}s`].filter(Boolean).join(", ")})`, `> ${run.prompt.slice(0, 160)}`, "", body].join("\n");
+    const body = run.status === "completed"
+      ? `<subagent_result>\n${boundSubagentResult(run.resultText ?? "(no output)", run.sessionFile, MAX_SUBAGENT_COMPLETION_CHARS - 1000)}\n</subagent_result>`
+      : `Error: ${boundSubagentText(run.errorText ?? "unknown", MAX_SUBAGENT_ERROR_CHARS, 40)}`;
+    return boundSubagentText([`**Background subagent ${title}: ${run.id}** (${[run.agent, run.model, `${((run.completedAt ?? this.now()) - run.createdAt) / 1000}s`].filter(Boolean).join(", ")})`, `> ${run.prompt.slice(0, 160)}`, "", body].join("\n"), MAX_SUBAGENT_COMPLETION_CHARS, 220);
   }
 
   completeBackground(run: SubagentRun): void {
-    if (!settingValue("injectBackgroundResults", true)) return;
+    if (!this.settings.get("injectBackgroundResults", true)) return;
     const message = this.completionMessage(run);
     if (this.activeParentSessionKey === run.parentSessionKey && this.inject) this.inject(run.parentSessionKey, message);
     else this.pendingCompletions.set(run.parentSessionKey, [...(this.pendingCompletions.get(run.parentSessionKey) ?? []), message]);
@@ -405,7 +446,7 @@ export class SubagentManager {
   }
 
   cleanup(parentSessionKey?: string): void {
-    const ttlMs = settingValue("ephemeralTtlMinutes", 30) * 60_000;
+    const ttlMs = this.settings.get("ephemeralTtlMinutes", 30) * 60_000;
     const now = this.now();
     const candidates = [...this.runs.values()].filter((run) => !parentSessionKey || run.parentSessionKey === parentSessionKey);
     for (const run of candidates) {
@@ -417,7 +458,7 @@ export class SubagentManager {
       }
       if (run.status !== "running" && now - run.updatedAt > ttlMs) this.pruneEphemeral(run);
     }
-    const max = settingValue("maxRecentPerParent", 20);
+    const max = 20;
     const groups = new Map<string, SubagentRun[]>();
     for (const run of this.runs.values()) {
       if (parentSessionKey && run.parentSessionKey !== parentSessionKey) continue;
@@ -460,25 +501,7 @@ export class SubagentManager {
     this.aliases.clear();
     this.foreground.clear();
     this.pendingCompletions.clear();
+    for (const timer of this.pendingPersistence.values()) clearTimeout(timer);
+    this.pendingPersistence.clear();
   }
-}
-
-export function getManager(options: ManagerOptions): SubagentManager {
-  const globalState = globalThis as any;
-  const current = globalState[KEY];
-  if (!current) globalState[KEY] = new SubagentManager(options);
-  else current.configure(options);
-  return globalState[KEY];
-}
-
-export async function shutdownGlobalManager(): Promise<void> {
-  const globalState = globalThis as any;
-  const current = globalState[KEY];
-  delete globalState[KEY];
-  if (current && typeof current.shutdown === "function") await current.shutdown();
-}
-
-export function resetManagerForTests(): void {
-  const globalState = globalThis as any;
-  delete globalState[KEY];
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cacheHitRateFromUsage, normalizeUsage, pipPath, promptTokensFromUsage } from "../../../pip-common/index.ts";
+import { cacheHitRateFromUsage, normalizeUsage, pipPath, promptTokensFromUsage, sessionUsageRecords } from "../../../pip-common/index.ts";
 import { buildSessionContext } from "../session-context.ts";
 
 export interface TokenBreakdown {
@@ -56,6 +56,38 @@ function emptyBreakdown(): TokenBreakdown {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
 }
 
+interface TimedBreakdown {
+  tokens: TokenBreakdown;
+  latestTs: number;
+  found: boolean;
+}
+
+function persistedSessionTokenAggregate(ctx: any): TimedBreakdown {
+  const total = emptyBreakdown();
+  let found = false;
+  let latestTs = -Infinity;
+  let latestCacheHitRate: number | undefined;
+  const entries = ctx?.sessionManager?.getEntries?.() ?? [];
+  for (const record of sessionUsageRecords(entries)) {
+    const usage = tokenBreakdownFromUsage(record.usage);
+    if (!usage) continue;
+    addTokenBreakdown(total, usage);
+    const ts = record.timestamp ?? -Infinity;
+    if (usage.latestCacheHitRate !== undefined && ts >= latestTs) {
+      latestTs = ts;
+      latestCacheHitRate = usage.latestCacheHitRate;
+    }
+    found = true;
+  }
+  if (latestCacheHitRate !== undefined) total.latestCacheHitRate = latestCacheHitRate;
+  return { tokens: total, latestTs, found };
+}
+
+export function getPersistedSessionTokens(ctx: any): TokenBreakdown | undefined {
+  const aggregate = persistedSessionTokenAggregate(ctx);
+  return aggregate.found ? aggregate.tokens : undefined;
+}
+
 function sessionFile(ctx: any): string | undefined {
   return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.sessionFile;
 }
@@ -92,16 +124,21 @@ function eventDays(): string[] {
 let historicalCache: { key: string; expiresAt: number; tokens: TokenBreakdown | undefined } | undefined;
 
 export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean } = {}): TokenBreakdown | undefined {
-  const sessions = linkedSessionFiles(sessionFile(ctx));
-  if (!sessions.size) return undefined;
-  const cacheKey = [...sessions].sort().join("\0");
+  const parentSessionFile = sessionFile(ctx);
+  const ledgerSessions = linkedSessionFiles(parentSessionFile);
+  const persisted = persistedSessionTokenAggregate(ctx);
+  // Persisted parent entries are canonical in Pi 0.81. The event ledger remains
+  // the source for linked child sessions and a fallback for legacy parent sessions.
+  if (persisted.found && parentSessionFile) ledgerSessions.delete(parentSessionFile);
+  if (!persisted.found && !ledgerSessions.size) return undefined;
+  const cacheKey = [parentSessionFile ?? "", ...ledgerSessions].sort().join("\0");
   const now = Date.now();
   if (!options.fresh && historicalCache?.key === cacheKey && historicalCache.expiresAt > now) return historicalCache.tokens ? { ...historicalCache.tokens } : undefined;
-  const total = emptyBreakdown();
+  const total = persisted.found ? { ...persisted.tokens } : emptyBreakdown();
   const seen = new Set<string>();
-  let found = false;
-  let latestTs = -Infinity;
-  let latestCacheHitRate: number | undefined;
+  let found = persisted.found;
+  let latestTs = persisted.latestTs;
+  let latestCacheHitRate = persisted.tokens.latestCacheHitRate;
   for (const day of eventDays()) {
     const dayDir = pipPath("usage", "events", day);
     for (const file of readdirSync(dayDir, { withFileTypes: true })) {
@@ -111,7 +148,7 @@ export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean 
         if (!line) continue;
         try {
           const event = JSON.parse(line);
-          if (!sessions.has(event?.sessionFile)) continue;
+          if (!ledgerSessions.has(event?.sessionFile)) continue;
           const dedupe = typeof event.id === "string" && event.id ? event.id : createHash("sha1").update(line).digest("hex");
           if (seen.has(dedupe)) continue;
           seen.add(dedupe);
@@ -124,13 +161,13 @@ export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean 
             latestTs = candidateTs;
             latestCacheHitRate = candidateCacheHitRate;
           }
-          if (latestCacheHitRate !== undefined) total.latestCacheHitRate = latestCacheHitRate;
-          else delete total.latestCacheHitRate;
           found = true;
         } catch {}
       }
     }
   }
+  if (latestCacheHitRate !== undefined) total.latestCacheHitRate = latestCacheHitRate;
+  else delete total.latestCacheHitRate;
   const tokens = found ? total : undefined;
   historicalCache = { key: cacheKey, expiresAt: now + 1000, tokens: tokens ? { ...tokens } : undefined };
   return tokens;

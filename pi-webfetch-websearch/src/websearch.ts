@@ -2,14 +2,14 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { themeFg, truncateToWidth } from "../../pip-common/index.ts";
+import { themeFg, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
 import { artifactPathLabel, artifactSummary, writeArtifact } from "./artifacts.ts";
 import { callMcpTool } from "./mcp.ts";
 import { formatChars, MAX_TIMEOUT_SECONDS, truncateContent } from "./limits.ts";
-import { settingValue, type SearchContextSetting, type SearchResultsSetting, type TimeoutSetting, type WebSearchProviderSetting } from "./settings.ts";
 import { formatWebSearchArtifact } from "./websearch-format.ts";
 
 const AUTO_INLINE_MAX_CHARS = 8_000;
+const MAX_MCP_RESPONSE_BYTES = 1024 * 1024;
 
 export type WebSearchProvider = "exa" | "parallel";
 type WebSearchProviderParam = WebSearchProvider | "auto";
@@ -21,7 +21,7 @@ const DEFAULT_PARALLEL_URL = "https://search.parallel.ai/mcp";
 
 const WebSearchParams = Type.Object({
   query: Type.String({ description: "Web search query" }),
-  numResults: Type.Optional(Type.Number({ description: "Number of results to request. Defaults to /pip-settings." })),
+  numResults: Type.Optional(Type.Number({ description: "Number of results to request. Defaults to 8." })),
   provider: Type.Optional(StringEnum(["auto", "exa", "parallel"] as const, { description: "Search provider. Auto tries Parallel, then Exa." })),
   livecrawl: Type.Optional(StringEnum(["fallback", "preferred"] as const, { description: "Live crawl mode when supported by the provider." })),
   type: Type.Optional(StringEnum(["auto", "fast", "deep"] as const, { description: "Search type when supported by the provider." })),
@@ -46,19 +46,17 @@ function providerOrder(provider: WebSearchProviderParam): WebSearchProvider[] {
 }
 
 function clampTimeout(seconds: unknown): number {
-  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : Number(settingValue<TimeoutSetting>("searchTimeout", "25"));
+  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : 25;
   return Math.min(Math.max(0.1, value), MAX_TIMEOUT_SECONDS);
 }
 
 function clampResults(value: unknown): number {
-  const fallback = Number(settingValue<SearchResultsSetting>("searchResults", "8")) || 8;
-  const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 8;
   return Math.min(Math.max(1, Math.floor(raw)), 20);
 }
 
 function clampContext(value: unknown): number {
-  const fallback = Number(settingValue<SearchContextSetting>("searchContext", "10000")) || 10_000;
-  const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 10_000;
   return Math.min(Math.max(1000, Math.floor(raw)), 100_000);
 }
 
@@ -109,19 +107,20 @@ function buildProviderCall(provider: WebSearchProvider, params: any, ctx: any, n
   };
 }
 
-export async function executeWebSearch(params: any, signal?: AbortSignal, ctx?: any) {
-  if (!settingValue<boolean>("enabled", true) || !settingValue<boolean>("websearchEnabled", true)) {
+export async function executeWebSearch(params: any, settings: ScopedSettings, signal?: AbortSignal, ctx?: any) {
+  if (!settings.get("websearchEnabled", true)) {
     return { content: [{ type: "text" as const, text: "websearch is disabled in /pip-settings." }], details: { disabled: true } };
   }
 
   const query = String(params.query ?? "").trim();
   if (!query) throw new Error("Search query is required.");
 
-  const selected = (params.provider ?? envProvider() ?? settingValue<WebSearchProviderSetting>("searchProvider", "auto")) as WebSearchProviderParam;
+  const selected = (params.provider ?? envProvider() ?? settings.get<WebSearchProviderParam>("searchProvider", "auto")) as WebSearchProviderParam;
   const attempts = providerOrder(selected);
   const numResults = clampResults(params.numResults);
   const contextMaxCharacters = clampContext(params.contextMaxCharacters);
   const timeoutMs = clampTimeout(params.timeout) * 1000;
+  const maxResponseBytes = Math.min(MAX_MCP_RESPONSE_BYTES, Math.max(256 * 1024, contextMaxCharacters * 6 + 64 * 1024));
   const errors: string[] = [];
 
   let selectedProvider: WebSearchProvider | undefined;
@@ -129,9 +128,9 @@ export async function executeWebSearch(params: any, signal?: AbortSignal, ctx?: 
   for (const provider of attempts) {
     const call = buildProviderCall(provider, { ...params, query }, ctx, numResults, contextMaxCharacters);
     try {
-      const result = await callMcpTool({ ...call, timeoutMs, signal });
+      const result = await callMcpTool({ ...call, timeoutMs, maxResponseBytes, signal });
       selectedProvider = provider;
-      text = result?.trim() || "No search results found. Please try a different query.";
+      text = result.trim();
       break;
     } catch (error: any) {
       errors.push(`${provider}: ${error?.message ?? String(error)}`);
@@ -147,6 +146,7 @@ export async function executeWebSearch(params: any, signal?: AbortSignal, ctx?: 
     fallbackUsed: selectedProvider !== attempts[0],
     numResults,
     contextMaxCharacters,
+    responseByteLimit: maxResponseBytes,
     fullOutputChars: text.length,
     outputPolicy: "auto",
   };
@@ -168,7 +168,7 @@ export async function executeWebSearch(params: any, signal?: AbortSignal, ctx?: 
   };
 }
 
-export function registerWebsearchTool(pi: ExtensionAPI): void {
+export function registerWebsearchTool(pi: ExtensionAPI, settings: ScopedSettings): void {
   pi.registerTool({
     name: "websearch",
     label: "Web Search",
@@ -184,7 +184,7 @@ export function registerWebsearchTool(pi: ExtensionAPI): void {
     ],
     parameters: WebSearchParams,
     async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: any): Promise<any> {
-      return executeWebSearch(params, signal, { ...ctx, pi });
+      return executeWebSearch(params, settings, signal, { ...ctx, pi });
     },
     renderCall(args: any, theme: any) {
       return new Text(themeFg(theme, "toolTitle", "websearch") + themeFg(theme, "muted", ` ${truncateToWidth(String(args.query ?? ""), 80)}`), 0, 0);

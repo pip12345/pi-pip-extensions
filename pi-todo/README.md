@@ -8,9 +8,9 @@ Minimal session-scoped todo tools for pi.
 - `todo_update` - batch update existing todos by `id` or text match
 - `todo_read` - read the current todo list
 
-Todos are flat and use three states: `pending`, `active`, and `done`. Prefer batch writes/updates to avoid tool-call spam.
+Todos are flat and use three states: `pending`, `active`, and `done`. Prefer batch writes/updates to avoid tool-call spam. A session list is limited to 100 todos, each todo is limited to 500 characters, and one `todo_update` call accepts at most 100 updates.
 
-When `pi-quiet-tools` is installed and enabled, todo tool rows render compactly while the always-on todo widget remains the main progress display.
+When `pi-tool-ui` is installed and enabled, todo tool rows render compactly while the always-on todo widget remains the main progress display.
 
 ## Command
 
@@ -26,7 +26,7 @@ When `pi-quiet-tools` is installed and enabled, todo tool rows render compactly 
 /todo clear
 ```
 
-Plain `/todo` opens a small inspector. Use `j/k`, arrows, `space` to cycle status, `d` to delete, `c` to clear done, and `q`/Esc to close.
+Plain `/todo` opens a terminal-height-aware scrolling inspector. Use `j/k` or arrows to move, Page Up/Down and Home/End for larger jumps, `space` to cycle status, `d` to delete, `c` to clear done, and `q`/Esc to close.
 
 ## Storage
 
@@ -37,8 +37,8 @@ State is saved as custom entries in the pi session tree (`pip.todo.state`), so b
 Configure in `/pip-settings` under **Todo**:
 
 - Enabled
-- Compact rows: `2`, `3`, `4`, or `6`
 - Show completed: `smart`, `always`, or `never`
 - Hide when all done
-- Done style: `strike+dim`, `dim`, or `plain`
 - Placement: above or below editor
+
+The compact widget uses four rows and `strike+dim` completed-item styling.

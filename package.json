@@ -12,9 +12,7 @@
       "pip-common/index.ts",
       "pi-context/index.ts",
       "pi-pip-footer/index.ts",
-      "pi-plan-mode/index.ts",
       "pi-prompt-profiles/index.ts",
-      "pi-provider-model-patches/index.ts",
       "pi-provider-proxy/index.ts",
       "pi-question/index.ts",
       "pi-secrets-guard/index.ts",
@@ -35,15 +33,16 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pack:workspaces": "node scripts/pack-workspaces.mjs"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.80.1",
-    "@earendil-works/pi-coding-agent": "0.80.1",
-    "@earendil-works/pi-tui": "0.80.1",
+    "@earendil-works/pi-ai": "0.81.0",
+    "@earendil-works/pi-coding-agent": "0.81.0",
+    "@earendil-works/pi-tui": "0.81.0",
     "@types/node": "^24.3.0",
     "typebox": "^1.1.24",
     "typescript": "^5.7.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }

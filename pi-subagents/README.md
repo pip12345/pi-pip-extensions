@@ -18,7 +18,7 @@ subagent({ action: "background", id? })
 subagent({ action: "cancel"|"keep"|"forget", id })
 ```
 
-Ephemeral subagents can be continued or steered while they are retained. Their TTL is refreshed whenever they run, receive a message/steer, or emit activity. Use `keep:true` or `action:"keep"` only to disable TTL expiry, or enable **Always keep** in `/pip-settings`. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor.
+Ephemeral subagents can be continued or steered while they are retained. Their TTL is refreshed whenever they run, receive a message/steer, or emit activity. Use `keep:true` or `action:"keep"` to disable TTL expiry. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor. Failed or parent-cancelled foreground launches and continuations reject the tool call; status/read remains the successful inspection path for retained failed runs.
 
 ## Commands
 
@@ -35,7 +35,7 @@ Ephemeral subagents can be continued or steered while they are retained. Their T
 /subagent agents [name]
 ```
 
-`/subagent view` opens a fullscreen manager-backed live viewer for output/tools and inline steering. Use ↑/↓/PgUp/PgDn to scroll, End to follow live output, `s` to steer, and `q`/Esc to close. Steering is wrapped as a mid-run note so the child keeps completing its original delegated task unless explicitly told to abandon it. It does not switch into the child session. `Ctrl+Shift+B` moves all foreground subagents to background. Subagents are visible only while their creation anchor is in the current branch; off-branch ephemerals are pruned, off-branch kept runs are hidden. If a parent session file is deleted from `/resume`, its persisted subagents are lazily cleaned up on the next subagent/session activation.
+`/subagent view` opens a fullscreen manager-backed live viewer for output/tools and inline steering. Use ↑/↓/PgUp/PgDn to scroll, End to follow live output, `s` to steer, and `q`/Esc to close. Steering is wrapped as a mid-run note so the child keeps completing its original delegated task unless explicitly told to abandon it. It does not switch into the child session. `Ctrl+Shift+B` moves all foreground subagents to background. Subagents are visible only while their creation anchor is in the current branch; off-branch ephemerals are pruned, off-branch kept runs are hidden. If a parent session file is deleted from `/resume`, its persisted subagents are lazily cleaned up on the next subagent/session activation. Restored workspace paths are recomputed from validated run IDs; malformed persistence indexes are quarantined rather than used for cleanup.
 
 ## Agent files
 
@@ -47,6 +47,8 @@ Preferred paths:
 Legacy compatibility:
 
 - `.agents/*.md`
+
+Project and legacy project agent files are ignored until Pi reports the project as trusted. Builtin and user agent files remain available in untrusted projects.
 
 Schema:
 
@@ -78,7 +80,5 @@ Configure in `/pip-settings` under **Subagents**:
 
 - Enabled
 - Ephemeral TTL
-- Max recent
 - Max running
 - Inject background results
-- Always keep

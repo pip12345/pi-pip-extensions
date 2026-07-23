@@ -1,9 +1,8 @@
-import { copyFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import { boxLines, clampSelectedIndex, hasTuiCustom, PipCustomComponent, pipSettings, registerSettingsSection, selectionOffset, setting, stripAnsi, truncateToWidth, visibleWidth } from "../pip-common/index.ts";
-import { HELP_ITEMS, TREE_EDIT_SETTINGS_ID, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type SnapshotToolResults, type Theme, type TreeRow } from "./types.ts";
+import { backupSessionFile, boxLines, clampSelectedIndex, cleanupBackups, ensurePipSubdir, hasTuiCustom, makeEffectiveLeafLast, PipCustomComponent, selectionOffset, setSessionHeaderLeaf, stripAnsi, truncateToWidth, visibleWidth, writeSessionRecordsAtomic } from "../pip-common/index.ts";
+import { HELP_ITEMS, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
-import { parseSessionFile, timestampForFile, validateDraft } from "./session.ts";
+import { parseSessionFile, validateDraft } from "./session.ts";
 import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
 
 function wrapHelp(items: string[], width: number, theme: Theme): string[] {
@@ -43,7 +42,6 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   private flashSeenNonce = 0;
   private flashOn = false;
   private flashTimer: ReturnType<typeof setInterval> | null = null;
-  private highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(draft: DraftSession, ctx: Ctx, tui: any, theme: Theme, done: (result?: ExitResult) => void) {
     super(tui, theme, done, { closeKeys: [] });
@@ -75,16 +73,10 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     }, 120);
   }
 
-  private ensureHighlightTimer(): void {}
-
   dispose(): void {
     if (this.flashTimer) {
       clearInterval(this.flashTimer);
       this.flashTimer = null;
-    }
-    if (this.highlightTimer) {
-      clearTimeout(this.highlightTimer);
-      this.highlightTimer = null;
     }
   }
 
@@ -190,7 +182,13 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       else { this.draft.viewSelectedId = selectedId; this.close({ action: "label", id: selectedId }); return; }
     } else if (selectedId && key === "S") {
       if (isVirtual) { this.draft.message = "Select real rows to summarize"; changed = true; }
-      else { this.draft.viewSelectedId = selectedId; (this.draft as any).__lastFoldedIds = new Set<string>(); (this.draft as any).__lastVisibleRangeEntries = this.operationRangeEntries(rows, selectedRowKey, true).map(clone); if (this.includeSubbranches) this.draft.message = "Summarization uses main path only; subbranches excluded"; this.close({ action: "summarize", id: selectedId }); return; }
+      else {
+        this.draft.viewSelectedId = selectedId;
+        const visibleRangeEntries = this.operationRangeEntries(rows, selectedRowKey, true).map(clone);
+        if (this.includeSubbranches) this.draft.message = "Summarization uses main path only; subbranches excluded";
+        this.close({ action: "summarize", id: selectedId, foldedIds: new Set<string>(), visibleRangeEntries });
+        return;
+      }
     }
 
     if (changed) this.requestRender();
@@ -424,10 +422,16 @@ async function saveDraft(sessionFile: string, draft: DraftSession, ctx: Ctx): Pr
   draft.cleanupLabels();
   const errors = validateDraft(draft.header, draft.entries);
   if (errors.length) throw new Error(`Draft validation failed:\n${errors.slice(0, 10).join("\n")}`);
-  const backup = `${sessionFile}.bak-${timestampForFile()}`;
-  copyFileSync(sessionFile, backup);
-  const content = [draft.header, ...draft.entries].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
-  writeFileSync(sessionFile, content, "utf8");
+  if (draft.targetLeafId && !draft.entries.some((entry) => entry.id === draft.targetLeafId)) throw new Error(`Draft target leaf is missing: ${draft.targetLeafId}`);
+
+  const header = clone(draft.header);
+  setSessionHeaderLeaf(header, draft.targetLeafId);
+  const records = makeEffectiveLeafLast([header, ...draft.entries], draft.targetLeafId);
+  const backupDir = ensurePipSubdir("backup", "tree-edit");
+  const backup = backupSessionFile(sessionFile, "tree-edit", { backupDir });
+  writeSessionRecordsAtomic(sessionFile, records);
+  cleanupBackups(backupDir);
+
   await ctx.switchSession(sessionFile, {
     withSession: async (nextCtx: Ctx) => {
       if (draft.targetLeafId) {
@@ -439,35 +443,6 @@ async function saveDraft(sessionFile: string, draft: DraftSession, ctx: Ctx): Pr
 }
 
 export default function (pi: ExtensionAPI) {
-  registerSettingsSection({
-    id: TREE_EDIT_SETTINGS_ID,
-    title: "Tree Edit",
-    order: 40,
-    settings: {
-      summarySnapshots: setting.boolean({
-        label: "Summary snapshots",
-        default: true,
-        order: 1,
-        description: "Store original summarized entries inside summary details so expanded summary insets can still recover them after replacement/deletion.",
-      }),
-      snapshotToolResults: setting.enum({
-        label: "Snapshot tool results",
-        default: "truncated",
-        choices: ["off", "truncated", "full"] as const,
-        order: 2,
-        description: "Controls whether tool/bash results are preserved in summary snapshots: off skips them, truncated keeps shortened output, full stores exact outputs.",
-      }),
-      toolResultTruncation: setting.number({
-        label: "Tool result truncation",
-        default: 20000,
-        min: 1000,
-        step: 1000,
-        order: 3,
-        description: "Maximum characters kept per large tool-output text field when Snapshot tool results is set to truncated.",
-      }),
-    },
-  });
-
   pi.registerCommand("tree-edit", {
     description: "Open transactional session tree editor",
     handler: async (_args: string, ctx: Ctx) => {
@@ -499,8 +474,7 @@ export default function (pi: ExtensionAPI) {
         }
         if (result?.action === "summarize") {
           draft.checkpoint();
-          await draft.summarizeToClipboard(result.id, ctx, (draft as any).__lastFoldedIds ?? new Set(), (draft as any).__lastVisibleRangeEntries);
-          delete (draft as any).__lastVisibleRangeEntries;
+          await draft.summarizeToClipboard(result.id, ctx, result.foldedIds, result.visibleRangeEntries);
           continue;
         }
         if (result?.action === "compact") {

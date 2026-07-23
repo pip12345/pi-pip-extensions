@@ -16,7 +16,12 @@ export function sharedContextDir(parentSessionKey: string, baseDir?: string): st
   return join(contextRoot(parentSessionKey, baseDir), "shared");
 }
 
+export function isSafeRunId(runId: unknown): runId is string {
+  return typeof runId === "string" && runId.length > 0 && runId.length <= 128 && runId !== "." && runId !== ".." && /^[A-Za-z0-9._-]+$/.test(runId);
+}
+
 export function runContextDir(parentSessionKey: string, runId: string, baseDir?: string): string {
+  if (!isSafeRunId(runId)) throw new Error(`Invalid subagent run id: ${runId}`);
   return join(contextRoot(parentSessionKey, baseDir), "runs", runId);
 }
 

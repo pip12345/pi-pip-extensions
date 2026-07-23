@@ -1,3 +1,5 @@
+import { createSettingsRegistry, setPipSettingsRegistryForTests } from "./settings.ts";
+
 export interface MockPi {
   tools: Map<string, any>;
   commands: Map<string, any>;
@@ -6,6 +8,7 @@ export interface MockPi {
   messages: any[];
   userMessages: any[];
   entries: any[];
+  events: object;
   registerTool(tool: any): void;
   registerCommand(name: string, command: any): void;
   registerShortcut(shortcut: string, shortcutDef: any): void;
@@ -16,7 +19,7 @@ export interface MockPi {
 }
 
 export function createMockPi(): MockPi {
-  return {
+  const pi: MockPi = {
     tools: new Map(),
     commands: new Map(),
     handlers: new Map(),
@@ -24,6 +27,7 @@ export function createMockPi(): MockPi {
     messages: [],
     userMessages: [],
     entries: [],
+    events: {},
     registerTool(tool: any) {
       this.tools.set(tool.name, tool);
     },
@@ -48,6 +52,8 @@ export function createMockPi(): MockPi {
       this.entries.push({ customType, data });
     },
   };
+  setPipSettingsRegistryForTests(pi, createSettingsRegistry({}, { persistPath: false }));
+  return pi;
 }
 
 export function createMockSessionManager(entries: any[] = [], leafId?: string) {
@@ -92,6 +98,7 @@ export function createMockCtx(options: any = {}) {
       custom: options.custom ?? (async () => undefined),
     },
     isIdle: () => options.idle ?? true,
+    isProjectTrusted: () => options.projectTrusted ?? true,
     abort: () => undefined,
     hasPendingMessages: () => false,
     shutdown: () => undefined,

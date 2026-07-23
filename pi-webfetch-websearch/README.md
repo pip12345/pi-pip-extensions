@@ -28,6 +28,8 @@ The tools decide whether to return content inline or save it to a session artifa
 - Larger cleaned pages are saved to an artifact file under `~/.pi/agent/pip/webfetch-websearch`.
 - If `maxChars` is explicitly small, `webfetch` treats that as a request for a small inline excerpt and truncates to that limit.
 - Artifact responses include the saved path and an outline when headings are available.
+- Bodies are streamed and cancelled at the fixed 5 MB byte limit.
+- Private hosts are always blocked: every redirect is validated and DNS-approved public addresses are pinned to the connection; cancellation and request deadlines also cover DNS resolution.
 
 Current inline threshold: about 8k characters.
 
@@ -41,6 +43,7 @@ Use `read`, `grep`, or `bash`/`sed` against artifact paths for focused inspectio
 - Full formatted search context is saved to an artifact automatically.
 - Larger search contexts return the artifact summary/path instead of dumping all result context inline.
 - `contextMaxCharacters` bounds provider-side context when supported and also caps compact inline output.
+- Provider responses have an additional client-side streaming byte cap; malformed responses, JSON-RPC errors, and MCP tool-level `isError` results trigger automatic fallback.
 
 This gives the model enough immediate context for small searches while preserving the full result set for follow-up inspection.
 
@@ -67,6 +70,6 @@ Optional env vars:
 
 ## Settings
 
-Configure in `/pip-settings` under **Web Fetch/Search**.
+Configure Webfetch enabled, Websearch enabled, and the persistent search-provider preference in `/pip-settings` under **Web Fetch/Search**. Fetch format, timeout, output size, result count, and search context remain per-call tool arguments. Fixed defaults are markdown, 30-second fetch timeout, eight search results, 10,000 search-context characters, and a 25-second search timeout. Artifacts are retained for 24 hours with at most 50 per session.
 
 There are no external parser dependencies. HTML cleaning/conversion lives in `src/html.ts`; site-specific handlers live under `src/sites/`; MCP JSON-RPC/SSE parsing lives in `src/mcp.ts`.

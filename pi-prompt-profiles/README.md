@@ -8,6 +8,5 @@ The package also includes managed profiles under `pi-prompt-profiles/prompts/`. 
 
 Settings:
 
-- Enabled: on/off
-- Profile: selected markdown file
+- Profile: selected markdown file or off
 - Mode: append, prepend, or replace

@@ -1,19 +1,18 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AuthStorage, ModelRegistry, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
 import { hasTuiCustom, registerPipTool } from "../pip-common/index.ts";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
-import { getManager, resetManagerForTests, shutdownGlobalManager, type SubagentManager } from "./src/manager.ts";
+import { SubagentManager } from "./src/manager.ts";
 import { RealRunner } from "./src/runner.ts";
 import { renderSubagentCall, renderSubagentResult, formatRunStatus } from "./src/render.ts";
 import { SubagentViewer } from "./src/view.ts";
 import { parseModelRef } from "./src/model-ref.ts";
 import { SubagentParams, type SubagentParamsType } from "./src/schema.ts";
-import { registerSubagentSettings, settingValue } from "./src/settings.ts";
+import { registerSubagentSettings, subagentSettings } from "./src/settings.ts";
 import type { AgentConfig, Runner, SubagentRun } from "./src/types.ts";
 
-registerSubagentSettings();
 
 function parentKey(ctx: any): string {
   return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.getSessionId?.() ?? "unknown";
@@ -52,12 +51,16 @@ function launchModelOverride(params: SubagentParamsType): string | undefined {
   return parseModelRef(params.model).value;
 }
 
-function textResult(text: string, details?: any, isError = false) {
-  return { content: [{ type: "text" as const, text }], details, isError };
+function textResult(text: string, details?: any) {
+  return { content: [{ type: "text" as const, text }], details };
 }
 
-function findAgent(cwd: string, name: string): AgentConfig {
-  const discovered = discoverAgents(cwd);
+function projectTrusted(ctx: any): boolean {
+  return ctx?.isProjectTrusted?.() === true;
+}
+
+function findAgent(cwd: string, name: string, trusted: boolean): AgentConfig {
+  const discovered = discoverAgents(cwd, { projectTrusted: trusted });
   const agent = discovered.agents.find((item) => item.name === name);
   if (!agent) {
     const diagnostics = discovered.diagnostics.length ? `\n\nDiagnostics:\n${discovered.diagnostics.map((d) => `- ${d.path}: ${d.message}`).join("\n")}` : "";
@@ -66,18 +69,20 @@ function findAgent(cwd: string, name: string): AgentConfig {
   return agent;
 }
 
-function agentNamesPrompt(cwd: string): string {
-  const names = discoverAgents(cwd).agents.map((agent) => agent.name);
+function agentNamesPrompt(cwd: string, trusted: boolean): string {
+  const names = discoverAgents(cwd, { projectTrusted: trusted }).agents.map((agent) => agent.name);
   if (!names.length) return "";
   return [`Available subagent agents: ${names.join(", ")}.`, "Use only these subagent agent names; do not invent names."].join("\n");
 }
 
-function listAgents(cwd: string): string {
-  const discovered = discoverAgents(cwd);
+function listAgents(cwd: string, trusted: boolean): string {
+  const discovered = discoverAgents(cwd, { projectTrusted: trusted });
   const lines = ["Agents:"];
   for (const agent of discovered.agents) lines.push(`- ${agent.name} [${agent.source}] ${agent.description} (${agent.filePath})`);
   if (!discovered.agents.length) lines.push("(none)");
-  lines.push("", "Create project agents in .pi/agents/<name>.md or user agents in ~/.pi/agent/agents/<name>.md. Legacy .agents/*.md is also scanned.", "", "Template:", AGENT_TEMPLATE.trim());
+  lines.push("", trusted
+    ? "Create project agents in .pi/agents/<name>.md or user agents in ~/.pi/agent/agents/<name>.md. Legacy .agents/*.md is also scanned."
+    : "Project agent files are ignored until the project is trusted. User agents live in ~/.pi/agent/agents/<name>.md.", "", "Template:", AGENT_TEMPLATE.trim());
   if (discovered.diagnostics.length) lines.push("", "Diagnostics:", ...discovered.diagnostics.map((d) => `- ${d.path}: ${d.message}`));
   return lines.join("\n");
 }
@@ -92,7 +97,7 @@ function modelMatches(model: any, query: string): boolean {
 }
 
 async function availableSubagentModels(ctx: any, query?: string): Promise<{ text: string; models: Array<{ id: string; name?: string }> }> {
-  const registry = ctx?.modelRegistry ?? ModelRegistry.create(AuthStorage.create());
+  const registry = ctx?.modelRegistry ?? await ModelRuntime.create();
   await Promise.resolve(registry.refresh?.());
   const all = [...(await Promise.resolve(registry.getAvailable?.() ?? []))].sort((a: any, b: any) => modelRef(a).localeCompare(modelRef(b)));
   const q = query?.trim();
@@ -151,8 +156,13 @@ async function showSubagentView(ctx: any, manager: SubagentManager, run: Subagen
 async function waitRun(run: SubagentRun, timeoutMs?: number): Promise<"done" | "timeout" | "detached"> {
   const runPromise = run.runPromise?.then(() => "done" as const) ?? Promise.resolve("done" as const);
   const detached = run.detachPromise?.then(() => "detached" as const) ?? new Promise<"detached">(() => undefined);
-  const timeout = timeoutMs ? new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)) : new Promise<"timeout">(() => undefined);
-  return Promise.race([runPromise, detached, timeout]);
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = timeoutMs ? new Promise<"timeout">((resolve) => { timeoutTimer = setTimeout(() => resolve("timeout"), timeoutMs); }) : new Promise<"timeout">(() => undefined);
+  try {
+    return await Promise.race([runPromise, detached, timeout]);
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+  }
 }
 
 export interface SubagentsExtensionOptions {
@@ -162,8 +172,11 @@ export interface SubagentsExtensionOptions {
 
 export function createSubagentsExtension(options: SubagentsExtensionOptions = {}) {
   return function subagentsExtension(pi: ExtensionAPI) {
+    registerSubagentSettings(pi);
+    const settings = subagentSettings(pi);
     const runner = options.runner ?? new RealRunner();
-    const manager = options.manager ?? getManager({ runner });
+    const manager = options.manager ?? new SubagentManager({ runner, settings });
+    if (options.manager) manager.configure({ settings });
 
     const activate = (ctx: any) => {
       manager.configure({ inject: (_key, message) => pi.sendUserMessage(message, { deliverAs: "followUp" }) });
@@ -173,15 +186,14 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.on("session_start", async (_event: any, ctx: any) => activate(ctx));
     pi.on("session_tree", async (_event: any, ctx: any) => activate(ctx));
     pi.on("before_agent_start", async (event: any, ctx: any) => {
-      if (!settingValue("enabled", true)) return;
-      const block = agentNamesPrompt(ctx?.cwd ?? process.cwd());
+      if (!settings.get("enabled", true)) return;
+      const block = agentNamesPrompt(ctx?.cwd ?? process.cwd(), projectTrusted(ctx));
       if (!block) return;
       return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${block}`.trim() };
     });
     pi.on("session_shutdown", async (event: any, ctx: any) => {
       if (event?.reason === "quit" || event?.reason === "reload") {
-        if (options.manager) await manager.shutdown();
-        else await shutdownGlobalManager();
+        await manager.shutdown();
         return;
       }
       if (event?.reason === "resume" || event?.reason === "new" || event?.reason === "fork") manager.deactivateParent(parentKey(ctx));
@@ -190,6 +202,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerShortcut?.(Key.ctrlShift("b"), {
       description: "Move foreground subagents to background",
       handler: async (ctx: any) => {
+        if (!settings.get("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
         activate(ctx);
         const detached = manager.detachAll(parentKey(ctx));
         ctx.ui?.notify?.(detached.length ? `Moved ${detached.length} subagent${detached.length === 1 ? "" : "s"} to background.` : "No foreground subagents running.", "info");
@@ -204,7 +217,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           "Launch and manage quiet subagent task runs with isolated context. The caller must include all context the subagent needs in prompt.",
           "Use action:'agents' to list agent files and creation paths; action:'get_agent' to inspect a default/schema example; action:'models' to list exact available model override ids.",
           "Agent files live in ~/.pi/agent/agents/*.md, .pi/agents/*.md, or legacy .agents/*.md. Launch may pass model:'provider/model-id' to override the agent file model; omitted model override uses the agent model or parent/current model.",
-          "Ephemeral subagents can be messaged or steered while retained; each interaction refreshes their TTL. Use keep:true for runs that should not expire; /pip-settings can enable Always keep.",
+          "Ephemeral subagents can be messaged or steered while retained; each interaction refreshes their TTL. Use keep:true for runs that should not expire.",
           "Use background:true for long tasks. action:'background' moves foreground subagents to background. Nested subagents are disabled. Use /subagent view for live inspection/steering."
         ].join(" "),
         promptSnippet: "Launch and manage quiet subagent task runs with isolated context.",
@@ -219,21 +232,22 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
         renderCall: renderSubagentCall,
         renderResult: renderSubagentResult,
         async execute(_toolCallId: string, params: SubagentParamsType, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-          if (!settingValue("enabled", true)) return textResult("Subagents are disabled in /pip-settings.", undefined, true);
+          if (!settings.get("enabled", true)) throw new Error("Subagents are disabled in /pip-settings.");
           const cwd = ctx?.cwd ?? process.cwd();
+          const trusted = projectTrusted(ctx);
           const key = parentKey(ctx);
           activate(ctx);
           try {
             const action = params.action;
             if (modelOverrideRequested(params) && !isLaunchRequest(params)) throw new Error("model overrides are only supported when launching a subagent.");
-            if (action === "agents") return textResult(listAgents(cwd));
+            if (action === "agents") return textResult(listAgents(cwd, trusted));
             if (action === "models") {
               const available = await availableSubagentModels(ctx, params.query);
               return textResult(available.text, { models: available.models });
             }
             if (action === "get_agent") {
               if (!params.agent) throw new Error("get_agent requires agent.");
-              return textResult(formatAgent(findAgent(cwd, params.agent)));
+              return textResult(formatAgent(findAgent(cwd, params.agent, trusted)));
             }
             if (action === "list" || (!action && !params.agent && !params.id && !params.prompt)) return textResult(listRuns(manager, key));
             if (action === "status" || action === "read") {
@@ -241,7 +255,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               if (!run) throw new Error(`Subagent not found: ${params.id ?? "<missing id>"}`);
               if (params.wait && run.status === "running") await waitRun(run, params.timeoutMs ?? 60_000);
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
+              return textResult(formatRunStatus(snapshot), { run: snapshot });
             }
             if (action === "background") {
               const runs = params.id ? [manager.resolve(params.id, key)].filter((run): run is SubagentRun => Boolean(run)) : manager.detachAll(key);
@@ -272,31 +286,33 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
               if (!params.message) throw new Error("steer requires message.");
-              await manager.steer(run, params.message, findAgent(cwd, run.agent));
+              await manager.steer(run, params.message, findAgent(cwd, run.agent, trusted), signal);
               return textResult(`Steered subagent ${run.id}.`, { run: manager.snapshot(run) });
             }
             if (params.id && params.prompt) {
               const run = manager.resolve(params.id, key);
               if (!run) throw new Error(`Subagent not found: ${params.id}`);
-              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent));
+              await manager.continueRun(run, params.prompt, findAgent(cwd, run.agent, trusted), signal);
               const snapshot = manager.snapshot(run);
-              return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
+              return textResult(formatRunStatus(snapshot), { run: snapshot });
             }
             if (!params.agent || !params.prompt) throw new Error("Launch requires agent and prompt, or use an action.");
-            const agent = findAgent(cwd, params.agent);
-            const keep = params.keep ?? settingValue("alwaysKeep", false);
+            const agent = findAgent(cwd, params.agent, trusted);
+            const keep = params.keep ?? false;
             const explicitModel = launchModelOverride(params);
             const run = manager.launch({ agent, prompt: params.prompt, cwd, parentSessionKey: key, parentSessionFile: parentFile(ctx), anchorEntryId: parentAnchorEntryId(ctx), name: params.name, keep, background: params.background === true, model: explicitModel ?? (agent.model ? undefined : currentModelString(ctx)), signal, onUpdate });
-            const backgroundHint = settingValue("injectBackgroundResults", true)
+            const backgroundHint = settings.get("injectBackgroundResults", true)
               ? "Result will arrive as a follow-up message when done; no routine status checks needed."
               : "Background result injection is disabled; use status/read later if needed.";
             if (run.background) return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nBackground subagent running. ${backgroundHint}`, { run: manager.snapshot(run) });
             const outcome = await waitRun(run);
             if (outcome === "detached") return textResult(`subagent_id: ${run.id}\nstate: running\nbackground: true\n\nMoved to background. ${backgroundHint}`, { run: manager.snapshot(run) });
             const snapshot = manager.snapshot(run);
-            return textResult(formatRunStatus(snapshot), { run: snapshot }, run.status === "error");
+            if (run.status === "error") throw new Error(run.errorText ?? `Subagent ${run.id} failed.`);
+            if (run.status === "cancelled") throw new Error(`Subagent ${run.id} was cancelled.`);
+            return textResult(formatRunStatus(snapshot), { run: snapshot });
           } catch (error) {
-            return textResult(error instanceof Error ? error.message : String(error), undefined, true);
+            throw error instanceof Error ? error : new Error(String(error));
           }
         },
       },
@@ -321,7 +337,9 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
     pi.registerCommand("subagent", {
       description: "Inspect, view, steer, cancel, or background subagents",
       handler: async (args: string, ctx: any) => {
+        if (!settings.get("enabled", true)) return ctx.ui?.notify?.("Subagents are disabled in /pip-settings.", "warning");
         activate(ctx);
+        const trusted = projectTrusted(ctx);
         const [cmd, ref, ...rest] = (args ?? "").trim().split(/\s+/).filter(Boolean);
         try {
           if (!cmd) {
@@ -340,7 +358,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             else if (action === "steer") {
               const message = await ctx.ui?.input?.("Steer subagent", "");
               if (!message) return;
-              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent));
+              await manager.steer(selectedRun, message, findAgent(ctx.cwd ?? process.cwd(), selectedRun.agent, trusted), ctx.signal);
               ctx.ui?.notify?.(`Steered ${selectedRun.id}.`, "info");
             } else if (action === "background") { manager.detach(selectedRun); ctx.ui?.notify?.(`Moved ${selectedRun.id} to background.`, "info"); }
             else if (action === "cancel") { await manager.cancel(selectedRun); ctx.ui?.notify?.(`Cancelled ${selectedRun.id}.`, "info"); }
@@ -353,8 +371,8 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
             return;
           }
           if (cmd === "agents") {
-            if (ref) ctx.ui?.notify?.(formatAgent(findAgent(ctx.cwd ?? process.cwd(), ref)), "info");
-            else ctx.ui?.notify?.(listAgents(ctx.cwd ?? process.cwd()), "info");
+            if (ref) ctx.ui?.notify?.(formatAgent(findAgent(ctx.cwd ?? process.cwd(), ref, trusted)), "info");
+            else ctx.ui?.notify?.(listAgents(ctx.cwd ?? process.cwd(), trusted), "info");
             return;
           }
           if (cmd === "context") {
@@ -384,7 +402,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
           else if (cmd === "steer") {
             const message = rest.join(" ");
             if (!message) throw new Error("steer requires a message.");
-            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent));
+            await manager.steer(run, message, findAgent(ctx.cwd ?? process.cwd(), run.agent, trusted), ctx.signal);
             ctx.ui?.notify?.(`Steered ${run.id}.`, "info");
           } else if (cmd === "status" || cmd === "read") ctx.ui?.notify?.(formatRunStatus(manager.snapshot(run)), "info");
           else if (cmd === "keep") { manager.keep(run); ctx.ui?.notify?.(`Kept ${run.id}.`, "info"); }
@@ -404,6 +422,6 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
 }
 
 export default createSubagentsExtension();
-export { resetManagerForTests };
+export const __test = { waitRun };
 export { discoverAgents } from "./src/agents.ts";
 export { SubagentManager } from "./src/manager.ts";

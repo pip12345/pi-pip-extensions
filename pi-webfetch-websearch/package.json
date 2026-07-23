@@ -22,15 +22,29 @@
   },
   "pi": {
     "extensions": [
+      "node_modules/pip-common/index.ts",
       "./index.ts"
     ]
   },
   "files": [
     "index.ts",
-    "src",
+    "src/artifacts.ts",
+    "src/entities.ts",
+    "src/html.ts",
+    "src/http.ts",
+    "src/limits.ts",
+    "src/mcp.ts",
+    "src/settings.ts",
+    "src/sites/github.ts",
+    "src/webfetch.ts",
+    "src/websearch-format.ts",
+    "src/websearch.ts",
     "README.md"
   ],
   "dependencies": {
     "pip-common": "0.1.0"
-  }
+  },
+  "bundledDependencies": [
+    "pip-common"
+  ]
 }

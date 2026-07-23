@@ -28,7 +28,7 @@ export function resolveAnthropicUsageUrl(modelBaseUrl?: string): string {
 }
 
 export async function fetchAnthropicUsage(options: QuotaFetchOptions = {}): Promise<QuotaSnapshot> {
-  const token = getClaudeToken();
+  const token = options.credentials === undefined ? getClaudeToken() : options.credentials?.token;
   if (!token) return snapshot([], options, undefined, "no-auth");
   try {
     const res = await fetchWithTimeout(resolveAnthropicUsageUrl(options.modelBaseUrl), {

@@ -6,7 +6,7 @@ import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
 import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
-import { flushPipTools, pipSettings, resetPipToolsForTests, visibleWidth } from "../pip-common/index.ts";
+import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
@@ -14,15 +14,6 @@ const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${n
 
 beforeEach(() => {
   initTheme("dark", false);
-  resetPipToolsForTests();
-  // Tests should not depend on the developer's persisted /pip-settings state.
-  toolUi(createMockPi() as any);
-  pipSettings.set("tool-ui.enabled", true);
-  pipSettings.set("tool-ui.read", true);
-  pipSettings.set("tool-ui.grep", true);
-  pipSettings.set("tool-ui.find", true);
-  pipSettings.set("tool-ui.ls", true);
-  pipSettings.set("tool-ui.editDiff", true);
   resetPipToolsForTests();
 });
 
@@ -40,8 +31,8 @@ describe("pi-tool-ui", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     expect([...pi.tools.keys()]).toEqual(["read", "grep", "find", "ls", "edit"]);
-    expect(pipSettings.definition("tool-ui")?.read.description).toContain("compact rendering");
-    expect(pipSettings.definition("tool-ui")?.editDiff.description).toContain("split diffs");
+    expect(Object.keys(getPipSettingsRegistry(pi).definition("tool-ui") ?? {})).toEqual(["enabled", "diffLayout", "editDiff"]);
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.editDiff.description).toContain("diffs");
   });
 
   it("renders compact read calls", () => {
@@ -53,18 +44,19 @@ describe("pi-tool-ui", () => {
     expect(rendered).not.toContain("expanded");
   });
 
-  it("registers minimal built-in shims instead of cloning full Pi render definitions", () => {
+  it("preserves full built-in prompt contracts while replacing rendering", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const read = getRegisteredTool(pi, "read");
     const edit = getRegisteredTool(pi, "edit");
 
-    expect(read.promptSnippet).toBeUndefined();
-    expect(read.promptGuidelines).toBeUndefined();
+    for (const name of ["read", "grep", "find", "ls", "edit"]) expect(getRegisteredTool(pi, name).promptSnippet).toBeTypeOf("string");
+    expect(read.promptSnippet).toBe("Read file contents");
+    expect(read.promptGuidelines).toContain("Use read to examine files instead of cat or sed.");
     expect(read.renderShell).toBe("self");
     expect(read.renderCall).toBeTypeOf("function");
-    expect(edit.promptSnippet).toBeUndefined();
-    expect(edit.promptGuidelines).toBeUndefined();
+    expect(edit.promptSnippet).toContain("precise file edits");
+    expect(edit.promptGuidelines).toContain("Use edit for precise changes (edits[].oldText must match exactly)");
     expect(edit.renderShell).toBe("self");
     expect(edit.renderCall).toBeTypeOf("function");
     expect(edit.renderResult).toBeTypeOf("function");
@@ -79,12 +71,16 @@ describe("pi-tool-ui", () => {
     expect(rendered).toContain("expanded");
   });
 
-  it("hides successful collapsed results but shows errors", () => {
+  it("uses renderer isError and bounds every collapsed failure line", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     const grep = getRegisteredTool(pi, "grep");
-    expect(grep.renderResult({ content: [{ type: "text", text: "ok" }] }, { expanded: false }, theme).render(80)).toEqual([]);
-    expect(grep.renderResult({ content: [{ type: "text", text: "Error: nope\nmore" }] }, { expanded: false }, theme).render(80).join("\n")).toContain("Error: nope");
+    expect(grep.renderResult({ content: [{ type: "text", text: "ok" }] }, { expanded: false }, theme, { isError: false }).render(80)).toEqual([]);
+    expect(grep.renderResult({ content: [{ type: "text", text: "Error-looking success" }] }, { expanded: false }, theme, { isError: false }).render(80)).toEqual([]);
+    const failure = grep.renderResult({ content: [{ type: "text", text: `ENOENT ${"x".repeat(500)}\nmore` }] }, { expanded: false }, theme, { isError: true }).render(500).join("\n");
+    expect(failure).toContain("ENOENT");
+    expect(failure).not.toContain("more");
+    expect(visibleWidth(failure.trimEnd())).toBeLessThanOrEqual(200);
   });
 
   it("uses renderShell:self for edit instead of patching the built-in preview shell", () => {
@@ -127,12 +123,12 @@ describe("pi-tool-ui", () => {
 
   it("uses the default edit shell and renderer when edit diff is disabled", () => {
     resetPipToolsForTests();
-    pipSettings.set("tool-ui.enabled", true);
-    pipSettings.set("tool-ui.editDiff", false);
     const pi = createMockPi();
+    setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "tool-ui": { enabled: true, editDiff: false } }, { persistPath: false }));
     toolUi(pi as any);
     const edit = getRegisteredTool(pi, "edit");
-    const rendered = edit.renderCall({ path: "a.ts", edits: [] }, markedTheme, { cwd: process.cwd() }).render(80).join("\n");
+    const args = { path: "a.ts", edits: [] };
+    const rendered = edit.renderCall(args, markedTheme, { state: {}, args, cwd: process.cwd(), isPartial: false, isError: false, expanded: false }).render(80).join("\n");
 
     expect(edit.renderShell).toBe("default");
     expect(rendered).not.toContain("<bg:toolSuccessBg>");
@@ -151,6 +147,20 @@ describe("pi-tool-ui", () => {
     expect(rendered).toContain("old value");
     expect(rendered).toContain("new value");
     expect(rendered).toContain("│");
+  });
+
+  it("shows authoritative edit errors instead of a stale success diff", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const rendered = edit.renderResult(
+      { content: [{ type: "text", text: "Path not found: missing.ts\ndetails" }], details: { diff: "-old\n+new" } },
+      { expanded: false },
+      theme,
+      { isError: true },
+    ).render(100).join("\n");
+    expect(rendered).toContain("Path not found: missing.ts");
+    expect(rendered).not.toContain("+new");
   });
 
   it("never renders edit diff lines wider than the provided width", () => {
@@ -294,7 +304,7 @@ describe("pi-tool-ui", () => {
   it("falls back to colored unified edit diffs on narrow terminals", () => {
     const pi = createMockPi();
     toolUi(pi as any);
-    pipSettings.set("tool-ui.diffLayout", "auto");
+    getPipSettingsRegistry(pi).set("tool-ui.diffLayout", "auto");
     const edit = getRegisteredTool(pi, "edit");
     const diff = " 1 same\n-2 old value\n+2 new value\n 3 tail";
     const rendered = edit.renderResult({ content: [], details: { diff } }, { expanded: true }, markedTheme, { state: {}, args: { path: "a.ts", edits: [] }, cwd: process.cwd(), isError: false }).render(80).join("\n");
@@ -314,7 +324,7 @@ describe("pi-tool-ui", () => {
     expect(write.renderShell).toBe("self");
     expect(write.renderCall({ todos: [{ text: "x" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_write: 1 todos");
     expect(write.renderResult({ content: [{ type: "text", text: "Set 1 todo" }], details: { todos: [{ id: 1, text: "x", status: "pending" }] } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-    expect(pipSettings.definition("tool-ui")?.todo_write.description).toContain("compact Tool UI rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_write).toBeUndefined();
   });
 
   it("display metadata rendering is load-order safe before flush", () => {
@@ -326,7 +336,7 @@ describe("pi-tool-ui", () => {
 
     expect(update.renderShell).toBe("self");
     expect(update.renderCall({ updates: [{ match: "x", status: "done" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_update: 1 updates");
-    expect(pipSettings.definition("tool-ui")?.todo_update.description).toContain("compact Tool UI rendering");
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_update).toBeUndefined();
   });
 
   it("display metadata rendering is re-applied when Tool UI loads after pip tools registered", () => {
@@ -351,8 +361,8 @@ describe("pi-tool-ui", () => {
     expect(mcp.renderShell).toBe("self");
     expect(mcp.renderCall({ search: "files" }, theme, {}).render(80).join("\n")).toContain("› tiny-mcp: search files");
     expect(mcp.renderResult({ content: [{ type: "text", text: "Connected ghidra." }] }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-    const error = mcp.renderResult({ content: [{ type: "text", text: "Error: nope\nmore" }] }, { expanded: false }, theme, {}).render(80).join("\n");
-    expect(error).toContain("Error: nope");
+    const error = mcp.renderResult({ content: [{ type: "text", text: "ENOENT: nope\nmore" }] }, { expanded: false }, theme, { isError: true }).render(80).join("\n");
+    expect(error).toContain("ENOENT: nope");
     expect(error).not.toContain("⚠");
   });
 
@@ -368,6 +378,6 @@ describe("pi-tool-ui", () => {
     expect(tool.renderShell).toBe(before.renderShell);
     expect(tool.renderCall).toBe(before.renderCall);
     expect(tool.renderResult).toBe(before.renderResult);
-    expect(pipSettings.definition("tool-ui")?.subagent).toBeUndefined();
+    expect(getPipSettingsRegistry(pi).definition("tool-ui")?.subagent).toBeUndefined();
   });
 });

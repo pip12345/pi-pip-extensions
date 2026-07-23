@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { pipPath } from "./paths.ts";
+import { piRuntimeKey, type PiRuntimeOwner } from "./runtime.ts";
 
 export type SettingType = "boolean" | "string" | "number" | "enum";
 
@@ -22,6 +23,7 @@ export interface SettingDefinition<T = any> {
   min?: number;
   max?: number;
   step?: number;
+  requiresReload?: boolean;
 }
 
 export interface SettingSection {
@@ -39,17 +41,30 @@ export interface SettingRow {
   path: string;
 }
 
+export interface SettingChange {
+  path: string;
+  section: string;
+  key: string;
+  previousValue: unknown;
+  value: unknown;
+}
+
+export type SettingsChangeListener = (changes: readonly SettingChange[]) => void;
 export type SettingsDefinition = Record<string, SettingDefinition>;
 
 export const DEFAULT_SETTINGS_PATH = pipPath("pip-settings.json");
 
 function baseValidate(definition: SettingDefinition, value: unknown): boolean {
-  if (definition.validate) return definition.validate(value);
-  if (definition.type === "boolean") return typeof value === "boolean";
-  if (definition.type === "string") return typeof value === "string";
-  if (definition.type === "number") return typeof value === "number" && Number.isFinite(value);
-  if (definition.type === "enum") return Boolean(definition.choices?.includes(value));
-  return false;
+  let valid = false;
+  if (definition.type === "boolean") valid = typeof value === "boolean";
+  else if (definition.type === "string") valid = typeof value === "string";
+  else if (definition.type === "number") {
+    valid = typeof value === "number" && Number.isFinite(value);
+    if (valid && definition.min !== undefined) valid = (value as number) >= definition.min;
+    if (valid && definition.max !== undefined) valid = (value as number) <= definition.max;
+  } else if (definition.type === "enum") valid = Boolean(definition.choices?.includes(value));
+  if (!valid) return false;
+  return definition.validate ? definition.validate(value) : true;
 }
 
 function labelFromKey(key: string): string {
@@ -64,23 +79,42 @@ function normalizeChoice<T>(choice: T, definition: SettingDefinition): SettingCh
   return { value: choice, label };
 }
 
-function readSettingsFile(path: string): Record<string, Record<string, unknown>> {
+export interface SettingsLoadResult {
+  values: Record<string, Record<string, unknown>>;
+  error?: Error;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function readSettingsFile(path: string): SettingsLoadResult {
+  if (!existsSync(path)) return { values: {} };
   try {
-    if (!existsSync(path)) return {};
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!isRecord(parsed) || Object.values(parsed).some((section) => !isRecord(section))) {
+      throw new Error("settings root and sections must be JSON objects");
+    }
+    return { values: parsed as Record<string, Record<string, unknown>> };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { values: {}, error: new Error(`Cannot read ${path}: ${message}`) };
   }
 }
 
-function writeSettingsFile(path: string, values: Record<string, Record<string, unknown>>): void {
+export function writeSettingsFile(path: string, values: Record<string, Record<string, unknown>>): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(values, null, 2)}\n`);
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(values, null, 2)}\n`);
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export const setting = {
-  boolean(options: boolean | { default: boolean; label?: string; description?: string; order?: number; labels?: { true?: string; false?: string } }, description?: string): SettingDefinition<boolean> {
+  boolean(options: boolean | { default: boolean; label?: string; description?: string; order?: number; labels?: { true?: string; false?: string }; requiresReload?: boolean }, description?: string): SettingDefinition<boolean> {
     if (typeof options === "object") {
       return {
         type: "boolean",
@@ -88,24 +122,25 @@ export const setting = {
         label: options.label,
         description: options.description,
         order: options.order,
+        requiresReload: options.requiresReload,
         choices: [true, false],
         choiceLabels: { true: options.labels?.true ?? "on", false: options.labels?.false ?? "off" },
       };
     }
     return { type: "boolean", default: options, description, choices: [true, false], choiceLabels: { true: "on", false: "off" } };
   },
-  string(options: string | { default: string; label?: string; description?: string; order?: number }, description?: string): SettingDefinition<string> {
-    if (typeof options === "object") return { type: "string", default: options.default, label: options.label, description: options.description, order: options.order };
+  string(options: string | { default: string; label?: string; description?: string; order?: number; requiresReload?: boolean }, description?: string): SettingDefinition<string> {
+    if (typeof options === "object") return { type: "string", default: options.default, label: options.label, description: options.description, order: options.order, requiresReload: options.requiresReload };
     return { type: "string", default: options, description };
   },
-  number(options: number | { default: number; label?: string; description?: string; order?: number; min?: number; max?: number; step?: number }, description?: string): SettingDefinition<number> {
+  number(options: number | { default: number; label?: string; description?: string; order?: number; min?: number; max?: number; step?: number; requiresReload?: boolean }, description?: string): SettingDefinition<number> {
     if (typeof options === "object") {
-      return { type: "number", default: options.default, label: options.label, description: options.description, order: options.order, min: options.min, max: options.max, step: options.step };
+      return { type: "number", default: options.default, label: options.label, description: options.description, order: options.order, min: options.min, max: options.max, step: options.step, requiresReload: options.requiresReload };
     }
     return { type: "number", default: options, description };
   },
   enum<const T extends string>(
-    options: T | { default: T; choices: readonly (T | SettingChoice<T>)[]; label?: string; description?: string; order?: number },
+    options: T | { default: T; choices: readonly (T | SettingChoice<T>)[]; label?: string; description?: string; order?: number; requiresReload?: boolean },
     choices?: readonly T[],
     description?: string
   ): SettingDefinition<T> {
@@ -113,25 +148,59 @@ export const setting = {
       const rawChoices = options.choices.map((choice) => (typeof choice === "object" ? choice.value : choice));
       const choiceLabels: Record<string, string> = {};
       for (const choice of options.choices) if (typeof choice === "object") choiceLabels[String(choice.value)] = choice.label;
-      return { type: "enum", default: options.default, choices: rawChoices, choiceLabels, label: options.label, description: options.description, order: options.order };
+      return { type: "enum", default: options.default, choices: rawChoices, choiceLabels, label: options.label, description: options.description, order: options.order, requiresReload: options.requiresReload };
     }
     return { type: "enum", default: options, choices, description };
   },
 };
 
-export function createSettingsRegistry(initialValues: Record<string, Record<string, unknown>> = {}, options: { persistPath?: string | false } = {}) {
+export function createSettingsRegistry(
+  initialValues: Record<string, Record<string, unknown>> = {},
+  options: { persistPath?: string | false; loadError?: Error } = {},
+) {
   const definitions = new Map<string, SettingsDefinition>();
   const sections = new Map<string, SettingSection>();
-  const values = new Map<string, Record<string, unknown>>();
+  const values = new Map<string, Record<string, unknown>>(Object.entries(initialValues).map(([id, sectionValues]) => [id, { ...sectionValues }]));
   const persistPath = options.persistPath;
+  const initialLoadError = options.loadError;
+  const changeListeners = new Set<SettingsChangeListener>();
 
-  function ensureSection(plugin: string) {
-    if (!values.has(plugin)) values.set(plugin, { ...(initialValues[plugin] ?? {}) });
-    return values.get(plugin)!;
+  function ensureSection(plugin: string, target = values) {
+    if (!target.has(plugin)) target.set(plugin, {});
+    return target.get(plugin)!;
   }
 
-  function persist() {
-    if (persistPath) writeSettingsFile(persistPath, registry.all());
+  function valuesObject(source = values): Record<string, Record<string, unknown>> {
+    return Object.fromEntries([...source.entries()].map(([id, sectionValues]) => [id, { ...sectionValues }]));
+  }
+
+  function assertWritable(): void {
+    if (persistPath && initialLoadError) throw initialLoadError;
+  }
+
+  function commitUpdates(updates: Array<{ plugin: string; key: string; value: unknown }>): SettingChange[] {
+    assertWritable();
+    const next = new Map<string, Record<string, unknown>>([...values.entries()].map(([id, sectionValues]) => [id, { ...sectionValues }]));
+    const changes: SettingChange[] = [];
+    for (const update of updates) {
+      const sectionValues = ensureSection(update.plugin, next);
+      const previousValue = sectionValues[update.key];
+      if (Object.is(previousValue, update.value)) continue;
+      sectionValues[update.key] = update.value;
+      changes.push({ path: `${update.plugin}.${update.key}`, section: update.plugin, key: update.key, previousValue, value: update.value });
+    }
+    if (!changes.length) return changes;
+    if (persistPath) writeSettingsFile(persistPath, valuesObject(next));
+    values.clear();
+    for (const [id, sectionValues] of next) values.set(id, sectionValues);
+    for (const listener of [...changeListeners]) {
+      try {
+        listener(changes);
+      } catch (error) {
+        console.error("pip settings change listener failed", error);
+      }
+    }
+    return changes;
   }
 
   const registry = {
@@ -139,13 +208,15 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
       this.registerSection({ id: plugin, title: labelFromKey(plugin), settings: definition });
     },
     registerSection(section: SettingSection) {
+      for (const [key, definition] of Object.entries(section.settings)) {
+        if (!baseValidate(definition, definition.default)) throw new Error(`Invalid default value for setting: ${section.id}.${key}`);
+      }
       sections.set(section.id, section);
       definitions.set(section.id, section.settings);
       const sectionValues = ensureSection(section.id);
-      for (const [key, settingDefinition] of Object.entries(section.settings)) {
-        if (!baseValidate(settingDefinition, sectionValues[key])) sectionValues[key] = settingDefinition.default;
+      for (const [key, definition] of Object.entries(section.settings)) {
+        if (!baseValidate(definition, sectionValues[key])) sectionValues[key] = definition.default;
       }
-      persist();
     },
     definition(plugin: string) {
       return definitions.get(plugin);
@@ -178,15 +249,27 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
       const definition = definitions.get(plugin)?.[key];
       if (!definition) throw new Error(`Unknown setting: ${path}`);
       if (!baseValidate(definition, value)) throw new Error(`Invalid value for setting: ${path}`);
-      ensureSection(plugin)[key] = value;
-      persist();
+      commitUpdates([{ plugin, key, value }]);
+    },
+    apply(nextValues: Record<string, Record<string, unknown>>): SettingChange[] {
+      const updates: Array<{ plugin: string; key: string; value: unknown }> = [];
+      for (const [plugin, definition] of definitions) {
+        const sectionValues = nextValues[plugin];
+        if (!sectionValues) continue;
+        for (const [key, settingDefinition] of Object.entries(definition)) {
+          if (!Object.hasOwn(sectionValues, key)) continue;
+          const value = sectionValues[key];
+          if (!baseValidate(settingDefinition, value)) throw new Error(`Invalid value for setting: ${plugin}.${key}`);
+          updates.push({ plugin, key, value });
+        }
+      }
+      return updates.length ? commitUpdates(updates) : [];
     },
     reset(path: string) {
       const [plugin, key] = path.split(".", 2);
       const definition = definitions.get(plugin)?.[key];
       if (!definition) throw new Error(`Unknown setting: ${path}`);
-      ensureSection(plugin)[key] = definition.default;
-      persist();
+      commitUpdates([{ plugin, key, value: definition.default }]);
     },
     choices(path: string): SettingChoice[] {
       const [plugin, key] = path.split(".", 2);
@@ -212,9 +295,17 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
       return row.definition.label ?? labelFromKey(row.key);
     },
     all() {
-      const out: Record<string, Record<string, unknown>> = {};
-      for (const plugin of definitions.keys()) out[plugin] = { ...ensureSection(plugin) };
-      return out;
+      return valuesObject();
+    },
+    loadError() {
+      return initialLoadError;
+    },
+    onChange(listener: SettingsChangeListener) {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
+    dispose() {
+      changeListeners.clear();
     },
   };
 
@@ -223,18 +314,41 @@ export function createSettingsRegistry(initialValues: Record<string, Record<stri
 
 export type SettingsRegistry = ReturnType<typeof createSettingsRegistry>;
 
-const GLOBAL_SETTINGS_KEY = Symbol.for("pip-common.settings-registry");
-
-export function getPipSettingsRegistry(): SettingsRegistry {
-  const globalState = globalThis as any;
-  if (!globalState[GLOBAL_SETTINGS_KEY]) {
-    globalState[GLOBAL_SETTINGS_KEY] = createSettingsRegistry(readSettingsFile(DEFAULT_SETTINGS_PATH), { persistPath: DEFAULT_SETTINGS_PATH });
-  }
-  return globalState[GLOBAL_SETTINGS_KEY];
+interface SettingsRuntimeState {
+  registry: SettingsRegistry;
 }
 
-export const pipSettings = getPipSettingsRegistry();
+const SETTINGS_RUNTIME_STATES_KEY = Symbol.for("pip-common.settings.runtime-states");
 
-export function registerSettingsSection(section: SettingSection): void {
-  pipSettings.registerSection(section);
+function settingsRuntimeStates(): WeakMap<object, SettingsRuntimeState> {
+  const globalState = globalThis as any;
+  if (!globalState[SETTINGS_RUNTIME_STATES_KEY]) globalState[SETTINGS_RUNTIME_STATES_KEY] = new WeakMap<object, SettingsRuntimeState>();
+  return globalState[SETTINGS_RUNTIME_STATES_KEY];
+}
+
+function createPersistedSettingsRegistry(): SettingsRegistry {
+  const loaded = readSettingsFile(DEFAULT_SETTINGS_PATH);
+  return createSettingsRegistry(loaded.values, { persistPath: DEFAULT_SETTINGS_PATH, loadError: loaded.error });
+}
+
+export function getPipSettingsRegistry(pi: PiRuntimeOwner): SettingsRegistry {
+  const key = piRuntimeKey(pi);
+  let state = settingsRuntimeStates().get(key);
+  if (state) return state.registry;
+  state = { registry: createPersistedSettingsRegistry() };
+  settingsRuntimeStates().set(key, state);
+  const owner = pi as any;
+  owner.on?.("session_shutdown", async () => {
+    state!.registry.dispose();
+    settingsRuntimeStates().delete(key);
+  });
+  return state.registry;
+}
+
+export function setPipSettingsRegistryForTests(pi: PiRuntimeOwner, registry: SettingsRegistry): void {
+  settingsRuntimeStates().set(piRuntimeKey(pi), { registry });
+}
+
+export function registerSettingsSection(pi: PiRuntimeOwner, section: SettingSection): void {
+  getPipSettingsRegistry(pi).registerSection(section);
 }

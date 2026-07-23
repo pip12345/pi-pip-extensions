@@ -1,20 +1,21 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import promptProfiles, { __test } from "./index.ts";
 import { createMockPi } from "../pip-common/testing.ts";
-import { pipSettings } from "../pip-common/index.ts";
+import { getPipSettingsRegistry } from "../pip-common/index.ts";
 
 describe("pi-prompt-profiles", () => {
   it("registers prompt settings and before_agent_start hook", () => {
     const pi = createMockPi();
     promptProfiles(pi as any);
     expect(pi.handlers.has("before_agent_start")).toBe(true);
-    expect(pipSettings.section(__test.SETTINGS_ID)?.title).toBe("Prompt Profiles");
-    expect(pipSettings.definition(__test.SETTINGS_ID)?.enabled.default).toBe(true);
-    expect(pipSettings.definition(__test.SETTINGS_ID)?.profile.default).toBe("default.md");
-    expect(pipSettings.definition(__test.SETTINGS_ID)?.mode.default).toBe("append");
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section(__test.SETTINGS_ID)?.title).toBe("Prompt Profiles");
+    expect(settings.definition(__test.SETTINGS_ID)?.enabled).toBeUndefined();
+    expect(settings.definition(__test.SETTINGS_ID)?.profile.default).toBe("default.md");
+    expect(settings.definition(__test.SETTINGS_ID)?.mode.default).toBe("append");
   });
 
   it("discovers markdown profiles from a prompt directory", () => {
@@ -25,6 +26,29 @@ describe("pi-prompt-profiles", () => {
     const profiles = __test.discoverProfiles(dir);
     expect(profiles.map((profile) => profile.id)).toEqual(["alpha.md"]);
     expect(profiles[0]?.source).toBe("bundled");
+  });
+
+  it("discovers and reads profiles exposed as per-file symlinks", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-prompt-profiles-"));
+    const promptsDir = join(root, "prompts");
+    const target = join(root, "shipped-default");
+    mkdirSync(promptsDir);
+    writeFileSync(target, "symlinked default prompt\n");
+    symlinkSync(target, join(promptsDir, "default.md"));
+
+    expect(__test.discoverProfiles(promptsDir).map((profile) => profile.id)).toEqual(["default.md"]);
+    expect(__test.readSelectedProfile("default.md", promptsDir)).toBe("symlinked default prompt");
+  });
+
+  it("rejects settings registration when the bundled default is actually missing", () => {
+    const settings = getPipSettingsRegistry(createMockPi());
+    expect(() =>
+      settings.registerSection({
+        id: __test.SETTINGS_ID,
+        title: "Prompt Profiles",
+        settings: { profile: __test.profileSettingDefinition([]) },
+      }),
+    ).toThrow("Invalid default value for setting: prompt-profiles.profile");
   });
 
   it("merges user profiles over bundled profiles by filename", () => {

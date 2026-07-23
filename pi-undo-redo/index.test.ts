@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -38,6 +38,7 @@ describe("pi-undo-redo", () => {
     expect(pi.commands.has("undo")).toBe(true);
     expect(pi.commands.has("redo")).toBe(true);
     expect(pi.handlers.has("input")).toBe(true);
+    expect(pi.handlers.has("session_start")).toBe(true);
   });
 
   it("plans a tail-only undo", () => {
@@ -52,6 +53,46 @@ describe("pi-undo-redo", () => {
     const entries = [user("u1", null, expanded), assistant("a1", "u1")];
     const plan = __test.planUndo(entries, entries, "a1");
     expect(plan.promptText).toBe("/skill:foo hello");
+  });
+
+  it("restores transformed raw input from session-owned metadata", () => {
+    const expanded = '<skill name="foo" location="/tmp/foo.md">\nExpanded body\n</skill>';
+    const entries = [
+      user("u1", null, expanded),
+      assistant("a1", "u1"),
+      { type: "custom", id: "raw1", parentId: "a1", customType: __test.RAW_PROMPT_CUSTOM_TYPE, data: { version: 1, messageId: "u1", rawText: "  /skill:foo  " } } as SessionEntry,
+    ];
+    expect(__test.planUndo(entries, entries, "raw1").promptText).toBe("  /skill:foo  ");
+  });
+
+  it("persists only changed, bounded raw input as session metadata", async () => {
+    const expanded = '<skill name="foo" location="/tmp/foo.md">\nExpanded body\n</skill>';
+    const entries = [user("u1", null, expanded), assistant("a1", "u1")];
+    const path = tempSession(entries);
+    const pi = createMockPi();
+    undoRedo(pi as any);
+    const ctx = createMockCtx({
+      sessionManager: {
+        getSessionFile: () => path,
+        getLeafId: () => null,
+      },
+    });
+
+    await emitEvent(pi, "input", { text: "/skill:foo" }, ctx);
+    await emitEvent(pi, "message_end", { message: { role: "user", content: [{ type: "text", text: expanded }] } }, ctx);
+    await emitEvent(pi, "turn_end", {}, ctx);
+    expect(pi.entries).toEqual([{ customType: __test.RAW_PROMPT_CUSTOM_TYPE, data: { version: 1, messageId: "u1", rawText: "/skill:foo" } }]);
+
+    expect(__test.rawPromptForStorage({ rawText: "same", expandedText: "same" } as any)).toBeUndefined();
+    expect(__test.rawPromptForStorage({ rawText: "x".repeat(__test.MAX_RAW_PROMPT_CHARS + 1), expandedText: "different" } as any)).toBeUndefined();
+  });
+
+  it("removes the obsolete global raw-prompt cache", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-undo-redo-legacy-"));
+    const path = join(dir, "raw-prompts.json");
+    writeFileSync(path, JSON.stringify({ old: "prompt" }));
+    __test.cleanupLegacyRawPromptMap(path);
+    expect(existsSync(path)).toBe(false);
   });
 
   it("refuses undo when the target tail has an external child", () => {
@@ -75,6 +116,26 @@ describe("pi-undo-redo", () => {
     const redoCtx = ctxFor(path, parseSessionFile(path).entries);
     await runCommand(pi, "redo", "", redoCtx);
     expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1", "a1", "u2", "a2"]);
+  });
+
+  it("undo and redo carry session-owned raw metadata with the removed tail", async () => {
+    const expanded = '<skill name="foo" location="/tmp/foo.md">\nExpanded body\n</skill>';
+    const entries = [
+      user("u1", null, expanded),
+      assistant("a1", "u1"),
+      { type: "custom", id: "raw1", parentId: "a1", customType: __test.RAW_PROMPT_CUSTOM_TYPE, data: { version: 1, messageId: "u1", rawText: "/skill:foo" } } as SessionEntry,
+    ];
+    const path = tempSession(entries);
+    const pi = createMockPi();
+    undoRedo(pi as any);
+    const ctx = ctxFor(path, entries);
+
+    await runCommand(pi, "undo", "", ctx);
+    expect(parseSessionFile(path).entries).toEqual([]);
+    expect((ctx.ui as any).editorText).toBe("/skill:foo");
+
+    await runCommand(pi, "redo", "", ctxFor(path, []));
+    expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1", "a1", "raw1"]);
   });
 
   it("supports multiple undo and redo steps", async () => {

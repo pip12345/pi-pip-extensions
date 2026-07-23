@@ -26,7 +26,7 @@ export function parseCopilotUsageResponse(data: any, now = Date.now()): QuotaWin
 }
 
 export async function fetchCopilotUsage(options: QuotaFetchOptions = {}): Promise<QuotaSnapshot> {
-  const token = getCopilotToken();
+  const token = options.credentials === undefined ? getCopilotToken() : options.credentials?.token;
   if (!token) return snapshot([], options, undefined, "no-auth");
   try {
     const res = await fetchWithTimeout("https://api.github.com/copilot_internal/user", {

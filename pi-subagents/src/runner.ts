@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { addUsage, emptyUsage, isPipReadOnlyActive, normalizeUsage, pipPath } from "../../pip-common/index.ts";
+import { addUsage, emptyUsage, normalizeUsage, pipPath } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { parseModelRef } from "./model-ref.ts";
 import { snapshotRun } from "./snapshot.ts";
 import { PiChildAgentRuntime, type ChildAgentRuntime, type ChildAgentRuntimeSession } from "./child-runtime.ts";
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_EVENT_TEXT_CHARS, MAX_SUBAGENT_EVENTS, MAX_SUBAGENT_RESULT_CHARS } from "./bounds.ts";
 
 function safePart(value: string): string {
   const slug = value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
@@ -24,7 +25,7 @@ export function deleteRunSessionFile(run: SubagentRun): void {
   try { rmdirSync(dirname(run.sessionFile)); } catch {}
 }
 
-function summarizeArgs(tool: string, args: any): string {
+function summarizeArgs(args: any): string {
   if (!args || typeof args !== "object") return "";
   const keys = ["path", "pattern", "query", "command", "url", "literal"].filter((key) => args[key] != null);
   const parts = keys.slice(0, 2).map((key) => String(args[key]).replace(/\s+/g, " ").slice(0, 80));
@@ -32,7 +33,15 @@ function summarizeArgs(tool: string, args: any): string {
 }
 
 function textFromMessage(msg: any): string {
-  return (msg?.content ?? []).filter((part: any) => part?.type === "text").map((part: any) => part.text ?? "").join("\n");
+  const parts: string[] = [];
+  let remaining = MAX_SUBAGENT_RESULT_CHARS;
+  for (const part of Array.isArray(msg?.content) ? msg.content : []) {
+    if (part?.type !== "text" || remaining <= 0) continue;
+    const text = String(part.text ?? "").slice(0, remaining);
+    if (text) parts.push(text);
+    remaining -= text.length + 1;
+  }
+  return boundSubagentText(parts.join("\n"), MAX_SUBAGENT_RESULT_CHARS);
 }
 
 function appendBounded(out: string[], value: unknown, remaining: () => number): void {
@@ -69,20 +78,23 @@ function summarizeToolResult(result: any): string | undefined {
 }
 
 function pushEvent(run: SubagentRun, event: SubagentRun["events"][number]): number {
+  if (event.type === "text_delta" || event.type === "steer") event = { ...event, text: boundSubagentText(event.text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40) };
+  else if (event.type === "tool_start") event = { ...event, id: boundSubagentText(event.id, 200, 1), name: boundSubagentText(event.name, 200, 1), argsSummary: boundSubagentText(event.argsSummary, 500, 4) };
+  else event = { ...event, id: boundSubagentText(event.id, 200, 1), resultSummary: event.resultSummary ? boundSubagentText(event.resultSummary, 500, 4) : undefined };
   const previous = run.events.at(-1);
   if (previous?.type === "text_delta" && event.type === "text_delta") {
-    previous.text += event.text;
+    previous.text = boundSubagentText(previous.text + event.text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40);
     previous.at = event.at;
     return run.events.length - 1;
   }
   run.events.push(event);
-  if (run.events.length > 300) run.events.splice(0, run.events.length - 300);
+  if (run.events.length > MAX_SUBAGENT_EVENTS) run.events.splice(0, run.events.length - MAX_SUBAGENT_EVENTS);
   return run.events.indexOf(event);
 }
 
 function replaceTextEvent(run: SubagentRun, index: number | undefined, text: string, at: number): number {
   if (index != null && run.events[index]?.type === "text_delta") {
-    run.events[index] = { type: "text_delta", text, at };
+    run.events[index] = { type: "text_delta", text: boundSubagentText(text, MAX_SUBAGENT_EVENT_TEXT_CHARS, 40), at };
     return index;
   }
   return pushEvent(run, { type: "text_delta", text, at });
@@ -95,10 +107,8 @@ function activeTools(tools: AgentTools): string[] | undefined {
   return tools;
 }
 
-const MUTATING_TOOLS = new Set(["edit", "write", "todo_write", "todo_update"]);
-
-function finalizeTools(names: string[]): string[] {
-  return names.filter((name) => name !== "subagent" && (!isPipReadOnlyActive() || !MUTATING_TOOLS.has(name)));
+function withoutNestedSubagent(names: string[]): string[] {
+  return names.filter((name) => name !== "subagent");
 }
 
 export class RealRunner implements Runner {
@@ -134,7 +144,7 @@ export class RealRunner implements Runner {
           assistantEventIndex = undefined;
         } else if (event.type === "tool_execution_start") {
           starts.set(event.toolCallId, now);
-          pushEvent(run, { type: "tool_start", id: event.toolCallId, name: event.toolName, argsSummary: summarizeArgs(event.toolName, event.args), at: now });
+          pushEvent(run, { type: "tool_start", id: event.toolCallId, name: event.toolName, argsSummary: summarizeArgs(event.args), at: now });
         } else if (event.type === "tool_execution_end") {
           const started = starts.get(event.toolCallId);
           starts.delete(event.toolCallId);
@@ -151,7 +161,7 @@ export class RealRunner implements Runner {
         } else if (event.type === "message_end" && event.message?.role === "assistant") {
           const text = textFromMessage(event.message);
           lastAssistantText = text;
-          if (text) run.resultText = text;
+          if (text) run.resultText = boundSubagentResult(text, run.sessionFile);
           const usage = normalizeUsage(event.message.usage);
           if (usage) {
             run.usage ??= emptyUsage();
@@ -180,25 +190,9 @@ export class RealRunner implements Runner {
       };
 
       async function runPrompt(prompt: string): Promise<void> {
-        run.status = "running";
-        run.prompt = prompt;
-        run.errorText = undefined;
-        run.resultText = undefined;
-        run.completedAt = undefined;
-        run.updatedAt = Date.now();
-        run.persist?.();
-        try {
-          if (run.abortController.signal.aborted) throw new Error("Cancelled");
-          await activeSession.prompt(prompt);
-          run.status = run.abortController.signal.aborted ? "cancelled" : "completed";
-        } catch (error) {
-          run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-          run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-        } finally {
-          run.completedAt = Date.now();
-          run.updatedAt = run.completedAt;
-          run.persist?.();
-        }
+        if (run.abortController.signal.aborted) throw new Error("Cancelled");
+        await activeSession.prompt(prompt);
+        if (run.abortController.signal.aborted) throw new Error("Cancelled");
       }
 
       run.steer = async (message: string, displayMessage?: string) => {
@@ -213,12 +207,12 @@ export class RealRunner implements Runner {
 
       const configured = activeTools(input.agent.tools);
       const current = configured ?? activeSession.getActiveToolNames();
-      activeSession.setActiveToolsByName(finalizeTools(current));
+      activeSession.setActiveToolsByName(withoutNestedSubagent(current));
 
       const modelString = input.model ?? input.agent.model;
       if (modelString) {
         const { provider, id } = parseModelRef(modelString);
-        const model = created.modelRegistry.find(provider, id);
+        const model = created.modelRuntime.getModel(provider, id);
         if (!model) throw new Error(`Unknown subagent model: ${modelString}. Use subagent({ action: "models", query: ${JSON.stringify(provider)} }) to list available model IDs.`);
         await activeSession.setModel(model);
       }
@@ -226,14 +220,13 @@ export class RealRunner implements Runner {
       promptStarted = true;
       await runPrompt(input.prompt);
     } catch (error) {
-      run.status = run.abortController.signal.aborted ? "cancelled" : "error";
-      run.errorText = run.status === "cancelled" ? "Cancelled" : error instanceof Error ? error.message : String(error);
-      run.completedAt = Date.now();
-      run.updatedAt = run.completedAt;
-      unsubscribe?.();
-      if (session && !promptStarted) {
-        try { session.dispose(); } catch {}
+      if (!session || !promptStarted) {
+        unsubscribe?.();
+        if (session) {
+          try { session.dispose(); } catch {}
+        }
       }
+      throw error;
     }
     return run;
   }

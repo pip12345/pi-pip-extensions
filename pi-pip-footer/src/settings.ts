@@ -1,20 +1,21 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerSettingsSection, setting } from "../../pip-common/index.ts";
 import { FOOTER_SETTINGS_ID } from "./constants.ts";
 
-export function registerFooterSettings(): void {
-  registerSettingsSection({
+export function registerFooterSettings(pi: ExtensionAPI): void {
+  registerSettingsSection(pi, {
     id: FOOTER_SETTINGS_ID,
     title: "Pip Footer",
     description: "Pip footer with quotas, context, model, and the existing above-editor token counter.",
     order: 20,
     settings: {
-      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, description: "Show the pip footer and manage its above-editor token counter." }),
+      enabled: setting.boolean({ label: "Enabled", default: true, order: 1, requiresReload: true, description: "Show the pip footer and manage its above-editor token counter." }),
       quotaProvider: setting.enum({
         label: "Quota provider",
         default: "auto",
         choices: ["auto", "codex", "anthropic", "copilot", "off"] as const,
         order: 2,
-        description: "Choose which subscription quota source to display, or disable quota checks.",
+        description: "Auto follows the active model only with subscription OAuth; choose a source explicitly to override, or disable quota checks.",
       }),
       showContext: setting.boolean({ label: "Context bar", default: true, order: 3, description: "Show current context-window usage as a compact progress bar." }),
       showModel: setting.boolean({ label: "Model", default: true, order: 4, description: "Show the active model and thinking level in the lower footer." }),

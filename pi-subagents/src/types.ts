@@ -84,6 +84,7 @@ export interface SubagentRun {
   usage: TokenUsage;
   events: SubagentEvent[];
   abortController: AbortController;
+  generation?: number;
   runPromise?: Promise<SubagentRun>;
   dispose?: () => Promise<void> | void;
   continuePrompt?: (prompt: string) => Promise<void>;

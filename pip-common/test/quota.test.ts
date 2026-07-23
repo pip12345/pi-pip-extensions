@@ -4,6 +4,7 @@ import {
   fetchQuotaForProvider,
   getCodexCredentials,
   getWindowLabel,
+  quotaCacheIdentity,
   parseAnthropicUsageResponse,
   parseCodexUsageResponse,
   parseCopilotUsageResponse,
@@ -16,17 +17,27 @@ afterEach(() => {
 });
 
 describe("quota helpers", () => {
-  it("detects quota providers from model providers", () => {
-    expect(detectQuotaProvider("openai", "auto")).toBe("codex");
-    expect(detectQuotaProvider("anthropic", "auto")).toBe("anthropic");
-    expect(detectQuotaProvider("github-copilot", "auto")).toBe("copilot");
+  it("auto-detects only exact OAuth subscription providers", () => {
+    expect(detectQuotaProvider("openai-codex", "auto", true)).toBe("codex");
+    expect(detectQuotaProvider("anthropic", "auto", true)).toBe("anthropic");
+    expect(detectQuotaProvider("github-copilot", "auto", true)).toBe("copilot");
+    expect(detectQuotaProvider("openai", "auto", true)).toBeNull();
+    expect(detectQuotaProvider("openai-codex", "auto", false)).toBeNull();
     expect(detectQuotaProvider("whatever", "codex")).toBe("codex");
-    expect(detectQuotaProvider("openai", "off")).toBeNull();
+    expect(detectQuotaProvider("openai-codex", "off", true)).toBeNull();
   });
 
-  it("gets codex credentials from pi auth first", () => {
-    expect(getCodexCredentials({ auth: { "openai-codex": { access: "pi-token", accountId: "acct" } }, env: {} })).toEqual({ token: "pi-token", accountId: "acct" });
-    expect(getCodexCredentials({ auth: {}, env: { OPENAI_API_KEY: "env-token" } })).toEqual({ token: "env-token" });
+  it("accepts only Codex subscription credentials", () => {
+    expect(getCodexCredentials({ auth: { "openai-codex": { type: "oauth", access: "pi-token", accountId: "acct" } }, env: {} })).toEqual({ token: "pi-token", accountId: "acct" });
+    expect(getCodexCredentials({ auth: { "openai-codex": { type: "api_key", key: "api-token" } }, env: { OPENAI_API_KEY: "env-token" }, codexAuthPath: "/does/not/exist" })).toBeUndefined();
+  });
+
+  it("keys quota cache identities by endpoint, account, and credential without exposing secrets", () => {
+    const first = quotaCacheIdentity("codex", "https://one.example", { token: "secret-one", accountId: "acct-1" });
+    expect(first).not.toContain("secret-one");
+    expect(quotaCacheIdentity("codex", "https://one.example", { token: "secret-two", accountId: "acct-1" })).not.toBe(first);
+    expect(quotaCacheIdentity("codex", "https://one.example", { token: "secret-one", accountId: "acct-2" })).not.toBe(first);
+    expect(quotaCacheIdentity("codex", "https://two.example", { token: "secret-one", accountId: "acct-1" })).not.toBe(first);
   });
 
   it("parses codex usage windows", () => {
@@ -55,10 +66,10 @@ describe("quota helpers", () => {
   });
 
   it("routes Codex quota through the active model baseUrl", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "token");
     const urls: string[] = [];
     const snapshot = await fetchQuotaForProvider("codex", {
       modelBaseUrl: "http://172.17.0.1:9898/chatgpt/backend-api/",
+      credentials: { token: "oauth-token", accountId: "acct" },
       now: () => now,
       fetchImpl: async (input: RequestInfo | URL) => {
         urls.push(String(input));
@@ -74,10 +85,10 @@ describe("quota helpers", () => {
   });
 
   it("routes Anthropic quota through the active model baseUrl", async () => {
-    vi.stubEnv("ANTHROPIC_API_KEY", "token");
     const urls: string[] = [];
     const snapshot = await fetchQuotaForProvider("anthropic", {
       modelBaseUrl: "http://172.17.0.1:9898/anthropic/",
+      credentials: { token: "oauth-token" },
       now: () => now,
       fetchImpl: async (input: RequestInfo | URL) => {
         urls.push(String(input));

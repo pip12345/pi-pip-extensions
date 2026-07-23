@@ -1,7 +1,7 @@
 import { Text } from "@earendil-works/pi-tui";
 import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
-import { settingValue } from "./settings.ts";
 import type { SubagentEvent, SubagentSnapshot } from "./types.ts";
+import { boundSubagentResult, boundSubagentText, MAX_SUBAGENT_ERROR_CHARS, MAX_SUBAGENT_STATUS_CHARS } from "./bounds.ts";
 
 function runFromResult(result: any): SubagentSnapshot | undefined {
   return result?.details?.run;
@@ -54,12 +54,12 @@ export function compactLine(run: SubagentSnapshot, width: number, theme: any): s
   const bg = run.status === "running" && !run.background ? " · Ctrl+Shift+B bg" : "";
   const err = run.status === "error" ? ` · ${run.errorText ?? "error"}` : "";
   const keep = run.keep ? " · kept" : "";
-  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
+  const usage = formatCompactUsage(run.usage, { includeCost: true, inputMode: "raw" });
   const usagePart = usage ? ` · ${usage}` : "";
   return truncateToWidth(themeFg(theme, "dim", `› subagent ${run.agent} ${run.id}: `) + `${taskSummary(run.prompt, 48)} · ${state} · ${elapsed(run)} · ${tools} tools${usagePart}${keep}${bg}${err}`, width);
 }
 
-export function renderSubagentCall(args: any, theme: any, context: any) {
+export function renderSubagentCall(args: any, theme: any) {
   const label = `subagent ${args?.agent ?? args?.action ?? args?.id ?? ""}`.trim();
   const model = args?.model ? String(args.model) : undefined;
   const flags = [model ? `model ${model}` : undefined, args?.background ? "background" : undefined, args?.keep ? "keep" : undefined].filter(Boolean).join(" · ");
@@ -73,7 +73,7 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
   if (!run) return new Text(firstResultText(result), 0, 0);
   const statusColor = run.status === "error" ? "error" : run.status === "completed" ? "success" : run.status === "cancelled" ? "warning" : "accent";
   const toolCount = run.events.filter((event) => event.type === "tool_start").length;
-  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
+  const usage = formatCompactUsage(run.usage, { includeCost: true, inputMode: "raw" });
   const summary = [
     themeFg(theme, statusColor, run.status === "completed" ? "done" : run.status),
     run.model || undefined,
@@ -110,7 +110,9 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
 }
 
 export function formatRunStatus(run: SubagentSnapshot): string {
-  const usage = formatCompactUsage(run.usage, { includeCost: settingValue("showUsageCost", true), inputMode: "raw" });
-  const text = run.errorText ? `\nError: ${run.errorText}` : run.resultText ? `\n\n<subagent_result>\n${run.resultText}\n</subagent_result>` : "";
-  return [`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, run.model ? `model: ${run.model}` : undefined, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n");
+  const usage = formatCompactUsage(run.usage, { includeCost: true, inputMode: "raw" });
+  const text = run.errorText
+    ? `\nError: ${boundSubagentText(run.errorText, MAX_SUBAGENT_ERROR_CHARS, 40)}`
+    : run.resultText ? `\n\n<subagent_result>\n${boundSubagentResult(run.resultText, run.sessionFile, MAX_SUBAGENT_STATUS_CHARS - 1000)}\n</subagent_result>` : "";
+  return boundSubagentText([`subagent_id: ${run.id}`, run.name ? `name: ${run.name}` : undefined, `state: ${run.status}`, `agent: ${run.agent}`, run.model ? `model: ${run.model}` : undefined, usage ? `usage: ${usage}` : undefined, `background: ${run.background}`, `keep: ${run.keep}`, text].filter(Boolean).join("\n"), MAX_SUBAGENT_STATUS_CHARS, 220);
 }

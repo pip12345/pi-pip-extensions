@@ -2,63 +2,38 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { themeFg, truncateToWidth } from "../../pip-common/index.ts";
+import { themeFg, truncateToWidth, type ScopedSettings } from "../../pip-common/index.ts";
 import { artifactPathLabel, artifactSummary, writeArtifact } from "./artifacts.ts";
 import { extractHtml, extractTitle, htmlToMarkdown, htmlToText, type HtmlExtractMode } from "./html.ts";
+import { normalizeWebUrl, requestWebUrl } from "./http.ts";
 import { rewriteGitHubUrl, type SiteFetchRewrite } from "./sites/github.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_CHARS, formatBytes, formatChars, MAX_TIMEOUT_SECONDS, signalWithTimeout, truncateContent } from "./limits.ts";
-import { settingValue, type MaxBytesSetting, type MaxCharsSetting, type TimeoutSetting, type WebFetchFormat } from "./settings.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_CHARS, formatBytes, formatChars, MAX_TIMEOUT_SECONDS, readResponseBytes, signalWithTimeout, truncateContent } from "./limits.ts";
+
+type WebFetchFormat = "markdown" | "text" | "html";
+export interface WebFetchPolicy {
+  blockPrivateHosts?: boolean;
+  upgradeHttp?: boolean;
+}
 
 const AUTO_INLINE_MAX_CHARS = 8_000;
 
 const WebFetchParams = Type.Object({
   url: Type.String({ description: "URL to fetch. Must start with http:// or https://." }),
-  format: Type.Optional(StringEnum(["markdown", "text", "html"] as const, { description: "Return markdown, text, or raw html. Defaults to /pip-settings." })),
+  format: Type.Optional(StringEnum(["markdown", "text", "html"] as const, { description: "Return markdown, text, or raw html. Defaults to markdown." })),
   timeout: Type.Optional(Type.Number({ description: "Timeout in seconds. Capped at 120." })),
   maxChars: Type.Optional(Type.Number({ description: "Maximum returned characters. Small explicit limits return inline; larger results are saved as artifacts automatically." })),
   extract: Type.Optional(StringEnum(["auto", "nav", "all"] as const, { description: "HTML extraction mode. Auto favors content; nav extracts navigation; all keeps broad body content." })),
 });
 
-function bytesFromSetting(value: MaxBytesSetting): number {
-  if (value === "1MB") return 1 * 1024 * 1024;
-  if (value === "2MB") return 2 * 1024 * 1024;
-  return DEFAULT_MAX_BYTES;
+function requestPolicy(policy: WebFetchPolicy = {}) {
+  return {
+    upgradeHttp: policy.upgradeHttp ?? false,
+    blockPrivateHosts: policy.blockPrivateHosts ?? true,
+  };
 }
 
-function parseUrl(input: string): URL {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new Error("Invalid URL.");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must start with http:// or https://.");
-  if (settingValue<boolean>("upgradeHttp", false) && url.protocol === "http:") url.protocol = "https:";
-  if (settingValue<boolean>("blockPrivateHosts", true) && isPrivateHost(url.hostname)) throw new Error("Blocked private or local host.");
-  return url;
-}
-
-function isPrivateHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
-  const v4 = parseIPv4(host);
-  if (!v4) return false;
-  const [a, b] = v4;
-  if (a === 10 || a === 127 || a === 0) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return a >= 224;
-}
-
-function parseIPv4(host: string): [number, number, number, number] | undefined {
-  const parts = host.split(".");
-  if (parts.length !== 4) return undefined;
-  const nums = parts.map((part) => (/^\d+$/.test(part) ? Number(part) : NaN));
-  if (nums.some((num) => !Number.isInteger(num) || num < 0 || num > 255)) return undefined;
-  return nums as [number, number, number, number];
+function parseUrl(input: string, policy?: WebFetchPolicy): URL {
+  return normalizeWebUrl(input, requestPolicy(policy));
 }
 
 function contentLooksText(contentType: string): boolean {
@@ -77,118 +52,130 @@ function acceptHeader(format: WebFetchFormat): string {
   return "text/markdown;q=1.0, text/plain;q=0.9, text/html;q=0.8, */*;q=0.1";
 }
 
-async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewrite | undefined, format: WebFetchFormat, timeoutSeconds: number, signal?: AbortSignal): Promise<{ response: Response; url: URL; rewrite?: SiteFetchRewrite }> {
+async function fetchWithOptionalRewrite(originalUrl: URL, rewrite: SiteFetchRewrite | undefined, format: WebFetchFormat, timeoutSeconds: number, policy: WebFetchPolicy | undefined, signal?: AbortSignal): Promise<{ response: Response; url: URL; rewrite?: SiteFetchRewrite; dispose(): void }> {
   const headers = {
     "User-Agent": "pi-webfetch-websearch/0.1",
     Accept: acceptHeader(format),
     "Accept-Language": "en-US,en;q=0.9",
   };
-  const fetchUrl = async (url: URL) => fetch(url, { redirect: "follow", signal: signalWithTimeout(signal, timeoutSeconds * 1000), headers });
-  if (!rewrite) return { response: await fetchUrl(originalUrl), url: originalUrl };
+  const managedSignal = signalWithTimeout(signal, timeoutSeconds * 1000);
+  const requestOptions = {
+    headers,
+    signal: managedSignal.signal,
+    ...requestPolicy(policy),
+  };
+  try {
+    if (!rewrite) return { ...(await requestWebUrl(originalUrl, requestOptions)), dispose: managedSignal.dispose };
 
-  const rewrittenUrl = parseUrl(rewrite.url);
-  const response = await fetchUrl(rewrittenUrl);
-  if (response.ok) return { response, url: rewrittenUrl, rewrite };
-  return { response: await fetchUrl(originalUrl), url: originalUrl };
+    const rewrittenUrl = parseUrl(rewrite.url, policy);
+    const rewritten = await requestWebUrl(rewrittenUrl, requestOptions);
+    if (rewritten.response.ok) return { ...rewritten, rewrite, dispose: managedSignal.dispose };
+    await rewritten.response.body?.cancel();
+    return { ...(await requestWebUrl(originalUrl, requestOptions)), dispose: managedSignal.dispose };
+  } catch (error) {
+    managedSignal.dispose();
+    throw error;
+  }
 }
 
 function clampTimeout(seconds: unknown): number {
-  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : Number(settingValue<TimeoutSetting>("fetchTimeout", "30"));
+  const value = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : 30;
   return Math.min(Math.max(0.1, value), MAX_TIMEOUT_SECONDS);
 }
 
 function clampMaxChars(value: unknown): number {
-  const fallback = Number(settingValue<MaxCharsSetting>("maxChars", "20000")) || DEFAULT_MAX_CHARS;
-  const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  const raw = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_CHARS;
   return Math.min(Math.max(1000, Math.floor(raw)), 200_000);
 }
 
-export async function executeWebFetch(params: any, signal?: AbortSignal, ctx?: any, pi?: any) {
-  if (!settingValue<boolean>("enabled", true) || !settingValue<boolean>("webfetchEnabled", true)) {
+export async function executeWebFetch(params: any, settings: ScopedSettings, signal?: AbortSignal, ctx?: any, pi?: any, policy?: WebFetchPolicy) {
+  if (!settings.get("webfetchEnabled", true)) {
     return { content: [{ type: "text" as const, text: "webfetch is disabled in /pip-settings." }], details: { disabled: true } };
   }
 
-  const format = (params.format ?? settingValue<WebFetchFormat>("defaultFormat", "markdown")) as WebFetchFormat;
-  const url = parseUrl(String(params.url ?? ""));
+  const format = (params.format ?? "markdown") as WebFetchFormat;
+  const url = parseUrl(String(params.url ?? ""), policy);
   const extract = (params.extract ?? "auto") as HtmlExtractMode;
   const timeoutSeconds = clampTimeout(params.timeout);
-  const maxBytes = bytesFromSetting(settingValue<MaxBytesSetting>("maxBytes", "5MB"));
+  const maxBytes = DEFAULT_MAX_BYTES;
   const maxChars = clampMaxChars(params.maxChars);
 
   const rewrite = extract === "all" ? undefined : rewriteGitHubUrl(url);
-  const fetched = await fetchWithOptionalRewrite(url, rewrite, format, timeoutSeconds, signal);
+  const fetched = await fetchWithOptionalRewrite(url, rewrite, format, timeoutSeconds, policy, signal);
   const response = fetched.response;
-
-  if (!response.ok) throw new Error(`Fetch failed: HTTP ${response.status} ${response.statusText}`.trim());
-  const contentLength = response.headers.get("content-length");
-  if (contentLength && Number(contentLength) > maxBytes) throw new Error(`Response too large: ${formatBytes(Number(contentLength))} exceeds ${formatBytes(maxBytes)} limit.`);
-
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength > maxBytes) throw new Error(`Response too large: ${formatBytes(arrayBuffer.byteLength)} exceeds ${formatBytes(maxBytes)} limit.`);
-
-  const contentType = response.headers.get("content-type") ?? "";
-  const rawBytes = arrayBuffer.byteLength;
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  let output: string;
-  let rawChars = 0;
-  let extractedChars = 0;
-  let title: string | undefined;
-
-  if (!contentLooksText(contentType)) {
-    output = `Fetched binary content (${contentType || "unknown content type"}, ${formatBytes(rawBytes)}). Binary body omitted to save context.`;
-  } else {
-    const body = decoder.decode(arrayBuffer);
-    rawChars = body.length;
-    title = contentLooksHtml(contentType) ? extractTitle(body) : undefined;
-    if (contentLooksHtml(contentType) && format === "markdown") {
-      const result = htmlToMarkdown(body, response.url || fetched.url.toString(), { extract });
-      output = result.text;
-      extractedChars = result.extractedChars;
-    } else if (contentLooksHtml(contentType) && format === "text") {
-      const result = htmlToText(body, { extract });
-      output = result.text;
-      extractedChars = result.extractedChars;
-    } else if (contentLooksHtml(contentType) && format === "html" && extract !== "all") {
-      output = extractHtml(body, extract).trim();
-      extractedChars = output.length;
-    } else {
-      output = body.trim();
-      extractedChars = body.length;
+  try {
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Fetch failed: HTTP ${response.status} ${response.statusText}`.trim());
     }
-  }
+    const responseBytes = await readResponseBytes(response, maxBytes);
 
-  if (title && format === "markdown" && output && !output.startsWith("#")) output = `# ${title}\n\n${output}`;
-  const commonDetails = {
-    url: url.toString(),
-    fetchedUrl: fetched.url.toString(),
-    finalUrl: response.url || fetched.url.toString(),
-    contentType,
-    rawBytes,
-    rawChars,
-    extractedChars,
-    fullOutputChars: output.length,
-    format,
-    extract,
-    title,
-    siteHandler: fetched.rewrite?.handler,
-    outputPolicy: "auto",
-  };
+    const contentType = response.headers.get("content-type") ?? "";
+    const rawBytes = responseBytes.byteLength;
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    let output: string;
+    let rawChars = 0;
+    let extractedChars = 0;
+    let title: string | undefined;
 
-  const explicitSmallLimit = typeof params.maxChars === "number" && Number.isFinite(params.maxChars) && params.maxChars > 0 && maxChars <= AUTO_INLINE_MAX_CHARS;
-  const shouldInline = output.length <= AUTO_INLINE_MAX_CHARS || explicitSmallLimit;
-  if (shouldInline) {
-    const truncated = truncateContent(output, maxChars);
-    return {
-      content: [{ type: "text" as const, text: truncated.text }],
-      details: { ...commonDetails, mode: "inline", outputChars: truncated.text.length, truncated: truncated.truncated },
+    if (!contentLooksText(contentType)) {
+      output = `Fetched binary content (${contentType || "unknown content type"}, ${formatBytes(rawBytes)}). Binary body omitted to save context.`;
+    } else {
+      const body = decoder.decode(responseBytes);
+      rawChars = body.length;
+      title = contentLooksHtml(contentType) ? extractTitle(body) : undefined;
+      if (contentLooksHtml(contentType) && format === "markdown") {
+        const result = htmlToMarkdown(body, fetched.url.toString(), { extract });
+        output = result.text;
+        extractedChars = result.extractedChars;
+      } else if (contentLooksHtml(contentType) && format === "text") {
+        const result = htmlToText(body, { extract });
+        output = result.text;
+        extractedChars = result.extractedChars;
+      } else if (contentLooksHtml(contentType) && format === "html" && extract !== "all") {
+        output = extractHtml(body, extract).trim();
+        extractedChars = output.length;
+      } else {
+        output = body.trim();
+        extractedChars = body.length;
+      }
+    }
+
+    if (title && format === "markdown" && output && !output.startsWith("#")) output = `# ${title}\n\n${output}`;
+    const commonDetails = {
+      url: url.toString(),
+      fetchedUrl: fetched.url.toString(),
+      finalUrl: fetched.url.toString(),
+      contentType,
+      rawBytes,
+      rawChars,
+      extractedChars,
+      fullOutputChars: output.length,
+      format,
+      extract,
+      title,
+      siteHandler: fetched.rewrite?.handler,
+      outputPolicy: "auto",
     };
-  }
 
-  const artifact = writeArtifact({ kind: "webfetch", text: output, ctx, pi, url: url.toString(), title, format });
-  return {
-    content: [{ type: "text" as const, text: artifactSummary(artifact.record, artifact.outline) }],
-    details: { ...commonDetails, mode: "file", outputChars: artifact.record.chars, truncated: false, artifact: artifact.record, outline: artifact.outline },
-  };
+    const explicitSmallLimit = typeof params.maxChars === "number" && Number.isFinite(params.maxChars) && params.maxChars > 0 && maxChars <= AUTO_INLINE_MAX_CHARS;
+    const shouldInline = output.length <= AUTO_INLINE_MAX_CHARS || explicitSmallLimit;
+    if (shouldInline) {
+      const truncated = truncateContent(output, maxChars);
+      return {
+        content: [{ type: "text" as const, text: truncated.text }],
+        details: { ...commonDetails, mode: "inline", outputChars: truncated.text.length, truncated: truncated.truncated },
+      };
+    }
+
+    const artifact = writeArtifact({ kind: "webfetch", text: output, ctx, pi, url: url.toString(), title, format });
+    return {
+      content: [{ type: "text" as const, text: artifactSummary(artifact.record, artifact.outline) }],
+      details: { ...commonDetails, mode: "file", outputChars: artifact.record.chars, truncated: false, artifact: artifact.record, outline: artifact.outline },
+    };
+  } finally {
+    fetched.dispose();
+  }
 }
 
 function hostLabel(raw: unknown): string {
@@ -200,7 +187,7 @@ function hostLabel(raw: unknown): string {
   }
 }
 
-export function registerWebfetchTool(pi: ExtensionAPI): void {
+export function registerWebfetchTool(pi: ExtensionAPI, settings: ScopedSettings, policy?: WebFetchPolicy): void {
   pi.registerTool({
     name: "webfetch",
     label: "Web Fetch",
@@ -216,10 +203,10 @@ export function registerWebfetchTool(pi: ExtensionAPI): void {
     ],
     parameters: WebFetchParams,
     async execute(_toolCallId: string, params: any, signal: AbortSignal | undefined, _onUpdate: any, ctx: any): Promise<any> {
-      return executeWebFetch(params, signal, ctx, pi);
+      return executeWebFetch(params, settings, signal, ctx, pi, policy);
     },
     renderCall(args: any, theme: any) {
-      const format = args.format ?? settingValue<WebFetchFormat>("defaultFormat", "markdown");
+      const format = args.format ?? "markdown";
       return new Text(themeFg(theme, "toolTitle", "webfetch") + themeFg(theme, "muted", ` ${hostLabel(args.url)} ${format}`), 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {

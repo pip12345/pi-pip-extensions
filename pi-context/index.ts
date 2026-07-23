@@ -1,3 +1,4 @@
+import { buildSessionContext } from "@earendil-works/pi-coding-agent";
 import {
   boxLines,
   formatTokenCount,
@@ -43,7 +44,7 @@ interface ContextSnapshot {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   contextWindow: number;
   latestUsage?: TokenUsage;
-  reservedTokens: number;
+  maxOutputTokens: number;
   sections: ContextSection[];
   systemPrompt: string;
   options: any;
@@ -102,6 +103,14 @@ function sessionEntries(ctx: any): any[] {
   return ctx.sessionManager?.getBranch?.() ?? ctx.sessionManager?.getEntries?.() ?? [];
 }
 
+function effectiveContextMessages(ctx: any): any[] {
+  const built = ctx.sessionManager?.buildSessionContext?.();
+  if (Array.isArray(built?.messages)) return built.messages;
+  const entries = ctx.sessionManager?.getEntries?.();
+  if (Array.isArray(entries)) return buildSessionContext(entries, ctx.sessionManager?.getLeafId?.()).messages;
+  return sessionEntries(ctx).flatMap((entry) => entry?.message ? [entry.message] : []);
+}
+
 function latestObservedUsage(ctx: any): TokenUsage | undefined {
   for (const entry of [...sessionEntries(ctx)].reverse()) {
     const msg = entry?.message ?? entry?.messages?.[0];
@@ -113,14 +122,9 @@ function latestObservedUsage(ctx: any): TokenUsage | undefined {
 }
 
 function buildConversationSection(ctx: any): ContextSection {
-  const text = sessionEntries(ctx)
-    .map((entry) => {
-      const msg = entry?.message ?? entry?.messages?.[0];
-      return msg ? `${msg.role}: ${textFromContent(msg.content)}` : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-  return section("conversation", "Conversation", `${sessionEntries(ctx).length} entries`, text);
+  const messages = effectiveContextMessages(ctx);
+  const text = messages.map((message) => `${message.role}: ${textFromContent(message.content)}`).join("\n\n");
+  return section("conversation", "Conversation", `${messages.length} effective messages`, text);
 }
 
 function buildContextSnapshot(ctx: any): ContextSnapshot {
@@ -132,7 +136,7 @@ function buildContextSnapshot(ctx: any): ContextSnapshot {
     contextUsage,
     contextWindow,
     latestUsage: latestObservedUsage(ctx),
-    reservedTokens: Math.max(0, Number(ctx.model?.maxTokens ?? 0) || 0),
+    maxOutputTokens: Math.max(0, Number(ctx.model?.maxTokens ?? 0) || 0),
     sections: [...promptOptionsSections(options, systemPrompt), buildConversationSection(ctx)],
     systemPrompt,
     options,
@@ -182,17 +186,17 @@ function buildAllocationItems(snapshot: ContextSnapshot): AllocationItem[] {
   const skills = sectionTokens(snapshot, "skills");
   const append = sectionTokens(snapshot, "append");
   const effective = sectionTokens(snapshot, "effective");
-  const reserved = snapshot.reservedTokens;
+  const maxOutput = snapshot.maxOutputTokens;
   const system = Math.max(0, effective - tools - files - skills - append);
   const estimatedMessages = sectionTokens(snapshot, "conversation");
-  const nonMessages = system + tools + files + skills + append + reserved;
+  const nonMessages = system + tools + files + skills + append + maxOutput;
   const messages = Math.max(estimatedMessages, (observedUsed ?? 0) - nonMessages);
   const free = Math.max(0, contextWindow - Math.max(observedUsed ?? 0, nonMessages + messages));
 
   return [
     { key: "system", label: "System prompt", glyph: "◉", color: "accent", tokens: system },
     { key: "tools", label: "System tools", glyph: "◎", color: "dim", tokens: tools + append },
-    { key: "reserved", label: "Reserved", glyph: "▧", color: "warning", tokens: reserved },
+    { key: "max-output", label: "Max output cap", glyph: "▧", color: "warning", tokens: maxOutput },
     { key: "files", label: "Context files", glyph: "◍", color: "success", tokens: files },
     { key: "skills", label: "Skills", glyph: "◌", color: "success", tokens: skills },
     { key: "messages", label: "Messages", glyph: "◈", color: "accent", tokens: messages },
@@ -376,13 +380,14 @@ class ContextInspector extends PipCustomComponent<void> {
       lines.push(th.fg("dim", "latest observed unavailable until an assistant response records usage"));
     }
     lines.push("");
-    lines.push(th.fg("accent", "Breakdown") + th.fg("dim", "  full prompt + source sizes; not additive; ~tokens are estimates"));
+    lines.push(th.fg("accent", "Breakdown") + th.fg("dim", "  effective compacted conversation + prompt source sizes; not additive; ~tokens are estimates"));
     const maxTokens = Math.max(1, ...snapshot.sections.map((s) => s.estimatedTokens));
     for (const s of snapshot.sections) {
       const pct = (s.estimatedTokens / maxTokens) * 100;
       lines.push(`${padAnsi(s.label, 18)} ${padLeftAnsi(`~${fmt(s.estimatedTokens)}`, 8)} ${bar(pct, 10, th)}  ${th.fg("dim", `${s.detail} · ${s.chars.toLocaleString()} chars`)}`);
     }
     lines.push(...renderClaudeStylePanel(snapshot, width, th));
+    lines.push(th.fg("dim", "Max output cap is the model's response limit; Pi's compaction reserve is separate and not exposed here."));
     return lines;
   }
 }

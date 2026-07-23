@@ -1,23 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import secretsGuard, { bashPathTokens, isGitIgnored, resolveToolPath, __test } from "./index.ts";
-import { pipSettings } from "../pip-common/index.ts";
+import { getPipSettingsRegistry } from "../pip-common/index.ts";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
-
-function resetGuardSettings() {
-  pipSettings.set("gitignore-guard.enabled", true);
-  pipSettings.set("gitignore-guard.protectCommonSecrets", true);
-  pipSettings.set("gitignore-guard.protectSecretignore", true);
-  pipSettings.set("gitignore-guard.protectGitignore", false);
-  pipSettings.set("gitignore-guard.protectReads", true);
-  pipSettings.set("gitignore-guard.protectWrites", true);
-  pipSettings.set("gitignore-guard.protectSearchTargets", true);
-  pipSettings.set("gitignore-guard.bashGuard", "best-effort");
-  pipSettings.set("gitignore-guard.promptReminder", true);
-}
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), "pi-secrets-guard-"));
@@ -25,18 +13,18 @@ function tempRepo() {
   return dir;
 }
 
-beforeEach(() => {
-  resetGuardSettings();
-});
-
 describe("secrets guard", () => {
   it("registers compatible settings under the Secrets Guard title", () => {
     const pi = createMockPi();
     secretsGuard(pi as any);
 
-    expect(pipSettings.section("gitignore-guard")?.title).toBe("Secrets Guard");
-    expect(pipSettings.definition("gitignore-guard")?.protectGitignore.default).toBe(false);
-    expect(pipSettings.definition("gitignore-guard")?.protectCommonSecrets.description).toContain(".env");
+    const settings = getPipSettingsRegistry(pi);
+    expect(settings.section("gitignore-guard")?.title).toBe("Secrets Guard");
+    expect(settings.definition("gitignore-guard")?.protectGitignore.default).toBe(false);
+    expect(settings.definition("gitignore-guard")?.protectCommonSecrets.description).toContain(".env");
+    for (const removed of ["protectReads", "protectWrites", "protectSearchTargets", "promptReminder"]) {
+      expect(settings.definition("gitignore-guard")?.[removed]).toBeUndefined();
+    }
   });
 
   it("extracts bash argument tokens for best-effort path checks", () => {
@@ -80,9 +68,44 @@ describe("secrets guard", () => {
       const [templateAllowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: ".env.example" }, toolCallId: "example" }, ctx);
       expect(templateAllowed).toBeUndefined();
 
-      pipSettings.set("gitignore-guard.protectCommonSecrets", false);
+      getPipSettingsRegistry(pi).set("gitignore-guard.protectCommonSecrets", false);
       const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: ".env" }, toolCallId: "2" }, ctx);
       expect(allowed).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks reads through symlinks to guarded files", async () => {
+    const dir = tempRepo();
+    try {
+      writeFileSync(join(dir, ".env"), "TOKEN=secret");
+      symlinkSync(join(dir, ".env"), join(dir, "safe-link"));
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir });
+
+      const [blocked] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "safe-link" }, toolCallId: "1" }, ctx);
+      expect(blocked).toMatchObject({ block: true });
+      expect(blocked.reason).toContain(join(dir, ".env"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("canonicalizes the nearest existing parent for writes", async () => {
+    const dir = tempRepo();
+    try {
+      writeFileSync(join(dir, ".secretignore"), "private/\n");
+      mkdirSync(join(dir, "private"));
+      symlinkSync(join(dir, "private"), join(dir, "alias"));
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir });
+
+      const [blocked] = await emitEvent(pi, "tool_call", { toolName: "write", input: { path: "alias/new.txt" }, toolCallId: "1" }, ctx);
+      expect(blocked).toMatchObject({ block: true });
+      expect(blocked.reason).toContain(".secretignore: private/");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -111,6 +134,53 @@ describe("secrets guard", () => {
     }
   });
 
+  it("blocks search and listing roots that contain guarded descendants", async () => {
+    const dir = tempRepo();
+    try {
+      mkdirSync(join(dir, "src"));
+      mkdirSync(join(dir, "src", "nested"));
+      writeFileSync(join(dir, "src", "visible.txt"), "shown");
+      writeFileSync(join(dir, "src", "credentials.json"), "hidden");
+      writeFileSync(join(dir, "src", "nested", "secrets.yaml"), "hidden");
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir });
+
+      const [lsBlocked] = await emitEvent(pi, "tool_call", { toolName: "ls", input: { path: "src" }, toolCallId: "ls" }, ctx);
+      const [grepBlocked] = await emitEvent(pi, "tool_call", { toolName: "grep", input: { path: "src", pattern: "hidden" }, toolCallId: "grep" }, ctx);
+      const [findBlocked] = await emitEvent(pi, "tool_call", { toolName: "find", input: { path: "src", pattern: "*.txt" }, toolCallId: "find" }, ctx);
+
+      expect(lsBlocked).toMatchObject({ block: true });
+      expect(lsBlocked.reason).toContain("credentials.*");
+      expect(grepBlocked).toMatchObject({ block: true });
+      expect(findBlocked).toMatchObject({ block: true });
+
+      rmSync(join(dir, "src", "credentials.json"));
+      rmSync(join(dir, "src", "nested", "secrets.yaml"));
+      const [allowed] = await emitEvent(pi, "tool_call", { toolName: "grep", input: { path: "src", pattern: "shown" }, toolCallId: "allowed" }, ctx);
+      expect(allowed).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores project .secretignore rules when the project is untrusted", async () => {
+    const dir = tempRepo();
+    try {
+      writeFileSync(join(dir, ".secretignore"), "private/\n");
+      mkdirSync(join(dir, "private"));
+      writeFileSync(join(dir, "private", "notes.txt"), "project data");
+      const pi = createMockPi();
+      secretsGuard(pi as any);
+      const ctx = createMockCtx({ cwd: dir, projectTrusted: false });
+
+      const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "private/notes.txt" }, toolCallId: "1" }, ctx);
+      expect(allowed).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not treat .gitignore cache rules as secrets unless legacy protection is enabled", async () => {
     const dir = tempRepo();
     try {
@@ -125,7 +195,7 @@ describe("secrets guard", () => {
       const [allowed] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "cache/data.json" }, toolCallId: "1" }, ctx);
       expect(allowed).toBeUndefined();
 
-      pipSettings.set("gitignore-guard.protectGitignore", true);
+      getPipSettingsRegistry(pi).set("gitignore-guard.protectGitignore", true);
       const [blocked] = await emitEvent(pi, "tool_call", { toolName: "read", input: { path: "cache/data.json" }, toolCallId: "2" }, ctx);
       expect(blocked).toMatchObject({ block: true });
       expect(blocked.reason).toContain(".gitignore");

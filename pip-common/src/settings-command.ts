@@ -3,7 +3,7 @@ import { PipCustomComponent } from "./custom-component.ts";
 import { hasTuiCustom } from "./pi-api.ts";
 import { truncateToWidth } from "./keys.ts";
 import { moveSelection, selectionOffset } from "./scroll.ts";
-import { createSettingsRegistry, pipSettings, type SettingsRegistry, type SettingRow } from "./settings.ts";
+import { createSettingsRegistry, type SettingsRegistry, type SettingRow } from "./settings.ts";
 import { boxLines, padAnsi, themeFg, wrapAnsi } from "./tui.ts";
 
 function valueColor(row: SettingRow, value: string, theme: any, registry: SettingsRegistry): string {
@@ -27,10 +27,8 @@ function settingsEqual(a: Record<string, Record<string, unknown>>, b: Record<str
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function applySettingsValues(registry: SettingsRegistry, values: Record<string, Record<string, unknown>>): void {
-  for (const row of registry.rows()) {
-    if (Object.hasOwn(values[row.section.id] ?? {}, row.key)) registry.set(row.path, values[row.section.id][row.key]);
-  }
+function applySettingsValues(registry: SettingsRegistry, values: Record<string, Record<string, unknown>>) {
+  return registry.apply(values);
 }
 
 const MAX_VISIBLE_SETTING_ROWS = 30;
@@ -68,7 +66,7 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   private readonly originalValues: Record<string, Record<string, unknown>>;
   private readonly searchInput = new Input();
 
-  constructor(tui: any, theme: any, done: (result?: PipSettingsResult) => void, private registry: SettingsRegistry = pipSettings) {
+  constructor(tui: any, theme: any, done: (result?: PipSettingsResult) => void, private registry: SettingsRegistry) {
     super(tui, theme, done, { closeKeys: ["escape", "ctrl+c", "ctrl+d"] });
     this.originalValues = registry.all();
   }
@@ -212,16 +210,21 @@ class PipSettingsComponent extends PipCustomComponent<PipSettingsResult> {
   }
 }
 
-export function createPipSettingsComponent(tui: any, theme: any, done: (result?: PipSettingsResult) => void, registry: SettingsRegistry = pipSettings) {
+export function createPipSettingsComponent(tui: any, theme: any, done: (result?: PipSettingsResult) => void, registry: SettingsRegistry) {
   return new PipSettingsComponent(tui, theme, done, createDraftRegistry(registry));
 }
 
-export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry = pipSettings): void {
+export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry): void {
   pi.registerCommand("pip-settings", {
     description: "Configure pip extension settings",
     handler: async (_args: string, ctx: any) => {
       if (!hasTuiCustom(ctx)) {
         ctx.ui?.notify?.("/pip-settings requires interactive UI", "warning");
+        return;
+      }
+      const loadError = registry.loadError();
+      if (loadError) {
+        ctx.ui?.notify?.(`${loadError.message}. Fix or remove the malformed file before saving settings.`, "error");
         return;
       }
       const result = await (ctx.ui.custom as any)((tui: any, theme: any, _kb: any, done: (result?: PipSettingsResult) => void) => createPipSettingsComponent(tui, theme, done, registry), {
@@ -231,8 +234,20 @@ export function registerPipSettingsCommand(pi: any, registry: SettingsRegistry =
       if (!result?.dirty) return;
       const choice = await ctx.ui.select?.("Save pip settings?", ["No, discard changes", "Yes, save changes"]);
       if (choice === "Yes, save changes") {
-        applySettingsValues(registry, result.values);
-        ctx.ui.notify?.("Saved pip settings", "info");
+        try {
+          const changes = applySettingsValues(registry, result.values);
+          ctx.ui.notify?.("Saved pip settings", "info");
+          const reloadLabels = changes
+            .filter((change) => registry.definition(change.section)?.[change.key]?.requiresReload)
+            .map((change) => {
+              const section = registry.section(change.section);
+              const definition = registry.definition(change.section)?.[change.key];
+              return `${section?.title ?? change.section}: ${definition?.label ?? change.key}`;
+            });
+          if (reloadLabels.length) ctx.ui.notify?.(`Reload required to apply: ${reloadLabels.join(", ")}`, "warning");
+        } catch (error) {
+          ctx.ui.notify?.(`Failed to save pip settings: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
       } else {
         ctx.ui.notify?.("Discarded pip settings changes", "info");
       }

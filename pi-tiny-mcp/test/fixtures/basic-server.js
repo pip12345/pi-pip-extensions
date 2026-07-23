@@ -8,7 +8,7 @@ function handle(msg) {
   if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: msg.params.protocolVersion, capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'basic', version: '1' } } });
   else if (msg.method === 'notifications/initialized') {}
   else if (msg.method === 'tools/list') send({ jsonrpc: '2.0', id: msg.id, result: { tools } });
-  else if (msg.method === 'tools/call') send({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: String(msg.params.arguments.text) }], isError: false } });
+  else if (msg.method === 'tools/call') send({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: msg.params.arguments.fail ? 'requested failure' : String(msg.params.arguments.text) }], isError: Boolean(msg.params.arguments.fail) } });
   else if (msg.method === 'ping') send({ jsonrpc: '2.0', id: msg.id, result: {} });
   else send({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'nope' } });
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +46,7 @@ function fakeOpenAIToken(accountId = "acct_test"): string {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -89,10 +90,12 @@ describe("provider proxy config", () => {
     expect(providerAuthRouteHelp()).toContain("openai-codex  <relay>/openai-auth");
   });
 
-  it("saves and loads normalized config", () => {
+  it("atomically saves and loads normalized private config", () => {
     const path = tempConfigPath();
     saveProviderProxyConfig({ enabled: true, providers: { openai: " http://127.0.0.1:9000/openai/v1 " }, auth: {} }, path);
     expect(loadProviderProxyConfig(path)).toEqual({ enabled: true, providers: { openai: "http://127.0.0.1:9000/openai/v1" }, auth: {} });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readdirSync(join(path, ".."))).toEqual(["provider-proxy.json"]);
   });
 
   it("formats status with API and auth maps plus SSH hint", () => {
@@ -158,6 +161,67 @@ describe("provider proxy registration", () => {
     expect(calls[0].body).toMatchObject({ grant_type: "refresh_token" });
     expect(creds.access).toBe("access_2");
   });
+
+  it("omits OAuth response secrets from validation and HTTP errors", async () => {
+    const oauth = createRelayedOAuthProvider("anthropic", "http://user:password@127.0.0.1:9000/anthropic-auth?secret=query");
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ access_token: "secret-access", unexpected: true }), { status: 200 }));
+    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 })).rejects.not.toThrow(/secret-access/);
+
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ refresh_token: "secret-refresh" }), { status: 400 }));
+    const error = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught: unknown) => caught as Error);
+    expect(error.message).toContain("response body omitted");
+    expect(error.message).not.toMatch(/secret-refresh|password|secret=query/);
+
+    vi.stubGlobal("fetch", async () => new Response("secret-access is not json", { status: 200 }));
+    const parseError = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught: unknown) => caught as Error);
+    expect(parseError.message).toContain("response body omitted");
+    expect(parseError.message).not.toContain("secret-access");
+  });
+
+  it("bounds OAuth relay response bodies and refresh deadlines", async () => {
+    const oauth = createRelayedOAuthProvider("anthropic", "http://127.0.0.1:9000/anthropic-auth");
+    vi.stubGlobal("fetch", async () => new Response("ignored", { status: 200, headers: { "content-length": String(300 * 1024) } }));
+    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 })).rejects.toThrow(/response exceeded .* byte limit/);
+
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", async (_input: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const refresh = oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 });
+    const assertion = expect(refresh).rejects.toThrow(/request timed out/);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await assertion;
+  });
+
+  it("settles a browser callback that reports an OAuth error", async () => {
+    const oauth = createRelayedOAuthProvider("openai-codex", "http://127.0.0.1:9000/openai-auth");
+    await expect(
+      oauth.login({
+        onSelect: async () => "browser",
+        onAuth: () => {
+          void fetch("http://127.0.0.1:1455/auth/callback?error=secret-provider-detail");
+        },
+        onPrompt: async () => {
+          throw new Error("prompt should not run after callback error");
+        },
+      } as any),
+    ).rejects.toThrow("OAuth callback reported an error");
+  });
+
+  it("cancels a browser callback wait through the login signal", async () => {
+    const oauth = createRelayedOAuthProvider("openai-codex", "http://127.0.0.1:9000/openai-auth");
+    const controller = new AbortController();
+    await expect(
+      oauth.login({
+        onSelect: async () => "browser",
+        onAuth: () => controller.abort(),
+        onPrompt: async () => {
+          throw new Error("prompt should not run after cancellation");
+        },
+        signal: controller.signal,
+      } as any),
+    ).rejects.toThrow("Login cancelled");
+  });
 });
 
 describe("provider proxy extension", () => {
@@ -214,6 +278,70 @@ describe("provider proxy extension", () => {
 
     expect(pi.unregisteredProviders).toEqual(["openai"]);
     expect(loadProviderProxyConfig(path).enabled).toBe(false);
+  });
+
+  it("reconciles providers removed by an external config edit", async () => {
+    const path = tempConfigPath();
+    saveProviderProxyConfig({ enabled: true, providers: { openai: "http://127.0.0.1:9000/openai/v1" }, auth: {} }, path);
+    const pi = createProviderPi();
+    registerProviderProxyExtension(pi, { configPath: path });
+    saveProviderProxyConfig({ enabled: true, providers: {}, auth: {} }, path);
+
+    await runCommand(pi, "proxy", "status", createMockCtx());
+
+    expect(pi.providerOverrides.has("openai")).toBe(false);
+    expect(pi.unregisteredProviders).toEqual(["openai"]);
+  });
+
+  it("preserves the last valid routes when an external config cannot be applied", async () => {
+    const path = tempConfigPath();
+    saveProviderProxyConfig({ enabled: true, providers: { openai: "http://127.0.0.1:9000/openai/v1" }, auth: {} }, path);
+    const pi = createProviderPi();
+    registerProviderProxyExtension(pi, { configPath: path });
+    saveProviderProxyConfig({ enabled: true, providers: {}, auth: { unsupported: "http://127.0.0.1:9000/auth" } }, path);
+    const ctx = createMockCtx();
+
+    await runCommand(pi, "proxy", "status", ctx);
+
+    expect(pi.providerOverrides.get("openai")).toEqual({ baseUrl: "http://127.0.0.1:9000/openai/v1" });
+    expect(pi.unregisteredProviders).toEqual([]);
+    expect(ctx.ui.notifications.at(-1).message).toContain("No auth relay support for unsupported");
+  });
+
+  it("keeps runtime and disk config unchanged when a command cannot register its replacement", async () => {
+    const path = tempConfigPath();
+    const oldUrl = "http://127.0.0.1:9000/openai/v1";
+    saveProviderProxyConfig({ enabled: true, providers: { openai: oldUrl }, auth: {} }, path);
+    const pi = createProviderPi();
+    registerProviderProxyExtension(pi, { configPath: path });
+    const register = pi.registerProvider;
+    let rejectNext = true;
+    pi.registerProvider = (provider: string, config: any) => {
+      if (rejectNext && config.baseUrl === "http://127.0.0.1:9001/openai/v1") {
+        rejectNext = false;
+        throw new Error("replacement rejected");
+      }
+      return register(provider, config);
+    };
+    const ctx = createMockCtx();
+
+    await runCommand(pi, "proxy", "add openai http://127.0.0.1:9001/openai/v1", ctx);
+
+    expect(ctx.ui.notifications.at(-1).message).toContain("replacement rejected");
+    expect(pi.providerOverrides.get("openai")).toEqual({ baseUrl: oldUrl });
+    expect(loadProviderProxyConfig(path)).toEqual({ enabled: true, providers: { openai: oldUrl }, auth: {} });
+  });
+
+  it("unregisters owned providers during shutdown", async () => {
+    const path = tempConfigPath();
+    saveProviderProxyConfig({ enabled: true, providers: { openai: "http://127.0.0.1:9000/openai/v1" }, auth: {} }, path);
+    const pi = createProviderPi();
+    registerProviderProxyExtension(pi, { configPath: path });
+
+    await emitEvent(pi, "session_shutdown", {});
+
+    expect(pi.providerOverrides.has("openai")).toBe(false);
+    expect(pi.unregisteredProviders).toEqual(["openai"]);
   });
 
   it("shows bare /proxy help and status", async () => {
