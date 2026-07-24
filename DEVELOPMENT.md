@@ -5,6 +5,7 @@
 This repository is one aggregate Pi package with separately filterable feature entrypoints. Each `pi-*` workspace is also maintained as a standalone package.
 
 - `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers
+- `pi-codex-fast` - session-scoped Codex Fast/Priority request mode
 - `pi-tool-ui` - compact rendering for built-in and Pip tools
 - `pi-stats` - interactive token/session/global usage inspector
 - `pi-pip-footer` - footer with token counter, context gauge, model status, and quota usage

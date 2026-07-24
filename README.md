@@ -49,6 +49,7 @@ Pi reads the top-level `pi.extensions` manifest. `pip-common` loads first for sh
 This collection includes:
 
 - `pi-context` - interactive context usage and prompt inspector
+- `pi-codex-fast` - session-scoped `/fast` mode for supported OpenAI Codex models
 - `pi-secrets-guard` - Secrets Guard: blocks common secret paths and project `.secretignore` rules; legacy `.gitignore` blocking is optional
 - `pi-pip-footer` - richer footer with token/context/model/quota info
 - `pi-prompt-profiles` - switchable prompt profile overlays
