@@ -17,6 +17,7 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 - Do not edit, write, delete, migrate, or reformat files unless the user explicitly asks to apply/implement/make the change.
 - If the user asks for a plan, explanation, review, diagnosis, or proposal: gather/read/search as needed, explain findings, propose changes, and wait for confirmation.
 - Avoid unrelated edits.
+- Do not add backward-compatibility code, legacy fallbacks, shims, aliases, dual-read or dual-write paths, migration code, transitional code, deprecation bridges, or support for old formats or behavior unless the user explicitly approves that compatibility or migration work first.
 
 ## Evidence and implementation discipline
 
