@@ -264,12 +264,8 @@ export function artifactSummary(record: ArtifactRecord, outline: OutlineItem[]):
   return [
     `Saved ${record.kind} result: ${formatChars(record.chars)}, ${record.lines.toLocaleString()} lines`,
     `Path: ${record.path}`,
-    "Use read, grep, or bash/sed on this file for focused inspection.",
+    "Inspect selectively: use an outline range with read(offset/limit), or grep with a specific pattern and low limit; avoid whole-file scans.",
     "",
     formatOutline(outline),
   ].join("\n");
-}
-
-export function artifactPathLabel(path: string): string {
-  return basename(path);
 }
