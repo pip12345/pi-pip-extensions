@@ -40,6 +40,7 @@ Communicate before acting. Prefer architecture-aware changes over quick patches.
 - Do not make failures disappear by removing, bypassing, weakening, or narrowing behavior. Fix the broken interaction at the owning abstraction.
 
 ### Simplicity and behavioral design
+- Follow KISS principles where possible. Prefer the least complex design that fully satisfies the requirements. Added complexity must provide a material benefit proportionate to its conceptual and maintenance cost. Simplicity means lower conceptual and behavioral complexity, not necessarily less code.
 - Treat simple as easy to model correctly, not short. Fewer lines, declarations, functions, files, or syntax are not inherently simpler; additional code can be simpler when it makes ownership, state, ordering, or contracts explicit.
 - Behavioral complexity includes hidden state, lifecycle or ordering dependencies, implicit side effects, coupling between unrelated concerns, duplicated sources of truth, unclear ownership, multiple behavior or contract modes, and exceptions users must memorize.
 - When implementing features or new logic, prefer coherent overarching rules that define behavior within a bounded system, module, or abstraction. A good design lets users and maintainers predict related behavior from a small set of rules instead of memorizing special cases.
