@@ -16,6 +16,7 @@
       "pi-prompt-profiles/index.ts",
       "pi-provider-proxy/index.ts",
       "pi-question/index.ts",
+      "pi-response-colors/index.ts",
       "pi-secrets-guard/index.ts",
       "pi-stats/index.ts",
       "pi-subagents/index.ts",

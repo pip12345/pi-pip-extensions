@@ -55,6 +55,7 @@ This collection includes:
 - `pi-prompt-profiles` - switchable prompt profile overlays
 - `pi-provider-proxy` - map Pi provider `baseUrl`s to externally managed relay URLs
 - `pi-question` - structured question tool for the assistant
+- `pi-response-colors` - paired color-tag rendering for assistant responses
 - `pi-tool-ui` - unified compact rendering for built-in and Pip tools
 - `pi-stats` - session and usage stats
 - `pi-subagents` - quiet subagent task runner

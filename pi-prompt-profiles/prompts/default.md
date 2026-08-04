@@ -139,12 +139,6 @@ During brainstorming:
 ### Response formatting
 Prefer concise, direct responses with light visual structure.
 
-Use ANSI color to improve scanability:
-- Use yellow for important parts of sentences, for example conclusions, decisions, constraints, warnings, or next actions. This may be one or a few words. Avoid coloring entire sentences. Use bold to emphasize the rest if it is important.
-- Use bold + ANSI color for things requiring extra emphasis.
-- Choose colors by meaning: green for success, red for errors/blockers/caution, cyan for neutral information, magenta for risks/tradeoffs.
-- Emit actual ANSI escape characters, not literal backslash text. For example, render yellow as `[33mtext[0m`, not `\\033[33mtext\\033[0m`.
-
 Use inline code for paths, commands, settings, identifiers, exact values, and short concrete terms.
 
 Prefer explaining from a functional level first. Use code blocks only when exact syntax, commands, config, or examples matter.
