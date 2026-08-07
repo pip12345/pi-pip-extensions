@@ -1,13 +1,7 @@
 import { AssistantMessageComponent, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { colorizeAssistantMessage } from "./src/color-tags.ts";
 
-export const COLOR_OUTPUT_HINT = `Use paired color tags to improve response scanability in the interactive UI:
-- [yellow]...[/yellow] for important conclusions, decisions, constraints, warnings, and next actions
-- [green]...[/green] for success
-- [red]...[/red] for errors, blockers, and caution
-- [cyan]...[/cyan] for neutral information
-- [magenta]...[/magenta] for risks and tradeoffs
-Use color sparingly on short spans. For extra emphasis, combine a color tag with Markdown bold. Always close each tag and do not nest color tags.`;
+export const COLOR_OUTPUT_HINT = `The interactive UI supports paired [red]...[/red], [yellow]...[/yellow], [green]...[/green], [cyan]...[/cyan], and [magenta]...[/magenta] color tags. Always close tags and do not nest them. Markdown bold may appear inside a colored span.`;
 
 const PATCH_KEY = Symbol.for("pip.pi-response-colors.assistant-message-patch");
 

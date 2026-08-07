@@ -5,14 +5,14 @@ Renders paired color tags in assistant responses without requiring models to emi
 Supported tags:
 
 ```text
-[red]error or caution[/red]
-[yellow]important information or a next action[/yellow]
-[green]success[/green]
-[cyan]neutral information[/cyan]
-[magenta]risk or tradeoff[/magenta]
+[red]...[/red]
+[yellow]...[/yellow]
+[green]...[/green]
+[cyan]...[/cyan]
+[magenta]...[/magenta]
 ```
 
-The extension adds concise tag guidance to the system prompt in interactive mode. During rendering it converts balanced tags to standard terminal foreground colors. ANSI is never added to the saved assistant message.
+The extension explains the available tag syntax to the model in interactive mode; prompt profiles decide when colors are useful. During rendering it converts balanced tags to standard terminal foreground colors. ANSI is never added to the saved assistant message.
 
 Markdown emphasis can appear inside a colored span:
 

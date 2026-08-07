@@ -112,6 +112,8 @@ describe("pi-response-colors extension", () => {
     expect(tuiResult).toEqual({ systemPrompt: appendColorOutputHint("base") });
     expect(tuiResult.systemPrompt).toContain("[red]...[/red]");
     expect(COLOR_OUTPUT_HINT).not.toContain("ANSI");
+    expect(COLOR_OUTPUT_HINT).not.toContain("errors");
+    expect(COLOR_OUTPUT_HINT).not.toContain("sparingly");
 
     const printCtx = createMockCtx();
     printCtx.mode = "print";
