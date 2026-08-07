@@ -139,7 +139,7 @@ describe("provider proxy registration", () => {
     });
 
     const oauth = createRelayedOAuthProvider("openai-codex", "http://127.0.0.1:9000/openai-auth");
-    const creds = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 });
+    const creds = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal);
 
     expect(calls[0].input).toBe("http://127.0.0.1:9000/openai-auth/oauth/token");
     expect(calls[0].body).toContain("grant_type=refresh_token");
@@ -155,7 +155,7 @@ describe("provider proxy registration", () => {
     });
 
     const oauth = createRelayedOAuthProvider("anthropic", "http://127.0.0.1:9000/anthropic-auth");
-    const creds = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 });
+    const creds = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal);
 
     expect(calls[0].input).toBe("http://127.0.0.1:9000/anthropic-auth/v1/oauth/token");
     expect(calls[0].body).toMatchObject({ grant_type: "refresh_token" });
@@ -165,15 +165,15 @@ describe("provider proxy registration", () => {
   it("omits OAuth response secrets from validation and HTTP errors", async () => {
     const oauth = createRelayedOAuthProvider("anthropic", "http://user:password@127.0.0.1:9000/anthropic-auth?secret=query");
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ access_token: "secret-access", unexpected: true }), { status: 200 }));
-    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 })).rejects.not.toThrow(/secret-access/);
+    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal)).rejects.not.toThrow(/secret-access/);
 
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ refresh_token: "secret-refresh" }), { status: 400 }));
-    const error = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught: unknown) => caught as Error);
+    const error = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal).catch((caught: unknown) => caught as Error);
     expect(error.message).toContain("response body omitted");
     expect(error.message).not.toMatch(/secret-refresh|password|secret=query/);
 
     vi.stubGlobal("fetch", async () => new Response("secret-access is not json", { status: 200 }));
-    const parseError = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }).catch((caught: unknown) => caught as Error);
+    const parseError = await oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal).catch((caught: unknown) => caught as Error);
     expect(parseError.message).toContain("response body omitted");
     expect(parseError.message).not.toContain("secret-access");
   });
@@ -181,16 +181,29 @@ describe("provider proxy registration", () => {
   it("bounds OAuth relay response bodies and refresh deadlines", async () => {
     const oauth = createRelayedOAuthProvider("anthropic", "http://127.0.0.1:9000/anthropic-auth");
     vi.stubGlobal("fetch", async () => new Response("ignored", { status: 200, headers: { "content-length": String(300 * 1024) } }));
-    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 })).rejects.toThrow(/response exceeded .* byte limit/);
+    await expect(oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal)).rejects.toThrow(/response exceeded .* byte limit/);
 
     vi.useFakeTimers();
     vi.stubGlobal("fetch", async (_input: string, init: RequestInit) => new Promise((_resolve, reject) => {
       init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
     }));
-    const refresh = oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 });
+    const refresh = oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, new AbortController().signal);
     const assertion = expect(refresh).rejects.toThrow(/request timed out/);
     await vi.advanceTimersByTimeAsync(15_000);
     await assertion;
+  });
+
+  it("cancels an OAuth token refresh through Pi's signal", async () => {
+    const oauth = createRelayedOAuthProvider("anthropic", "http://127.0.0.1:9000/anthropic-auth");
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", async (_input: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+
+    const refresh = oauth.refreshToken({ access: "old", refresh: "refresh_1", expires: 0 }, controller.signal);
+    controller.abort();
+
+    await expect(refresh).rejects.toThrow("OAuth request cancelled");
   });
 
   it("settles a browser callback that reports an OAuth error", async () => {

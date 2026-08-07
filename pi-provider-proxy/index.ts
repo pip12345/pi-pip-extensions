@@ -21,7 +21,7 @@ interface RelayedOAuthProvider {
   name: string;
   usesCallbackServer: boolean;
   login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
-  refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials>;
+  refreshToken(credentials: OAuthCredentials, signal: AbortSignal): Promise<OAuthCredentials>;
   getApiKey(credentials: OAuthCredentials): string;
 }
 
@@ -564,7 +564,7 @@ async function oauthRequest(input: string, init: RequestInit = {}): Promise<{ re
     const response = await fetch(input, { ...init, signal: controller.signal });
     return { response, responseText: await readOAuthResponseText(response) };
   } catch (error) {
-    if (parentSignal?.aborted) throw new Error("Login cancelled");
+    if (parentSignal?.aborted) throw new Error("OAuth request cancelled");
     if (timedOut) throw new Error(`OAuth request timed out at ${oauthEndpoint(input)}`);
     if (error instanceof Error && error.message.startsWith("OAuth response exceeded")) throw error;
     throw new Error(`OAuth request failed at ${oauthEndpoint(input)}; transport details omitted`);
@@ -659,7 +659,7 @@ async function exchangeOpenAICode(authBaseUrl: string, code: string, verifier: s
   );
 }
 
-async function refreshOpenAIToken(authBaseUrl: string, refreshToken: string): Promise<OAuthCredentials> {
+async function refreshOpenAIToken(authBaseUrl: string, refreshToken: string, signal: AbortSignal): Promise<OAuthCredentials> {
   return readOpenAITokenResponse(
     await postForm(
       joinUrlPath(authBaseUrl, "/oauth/token"),
@@ -668,6 +668,7 @@ async function refreshOpenAIToken(authBaseUrl: string, refreshToken: string): Pr
         refresh_token: refreshToken,
         client_id: OPENAI_CODEX_CLIENT_ID,
       }),
+      signal,
     ),
   );
 }
@@ -841,13 +842,17 @@ async function exchangeAnthropicCode(authBaseUrl: string, code: string, state: s
   );
 }
 
-async function refreshAnthropicWithAuthRelay(authBaseUrl: string, refreshToken: string): Promise<OAuthCredentials> {
+async function refreshAnthropicWithAuthRelay(authBaseUrl: string, refreshToken: string, signal: AbortSignal): Promise<OAuthCredentials> {
   return readAnthropicTokenResponse(
-    await postJson(joinUrlPath(authBaseUrl, "/v1/oauth/token"), {
-      grant_type: "refresh_token",
-      client_id: ANTHROPIC_CLIENT_ID,
-      refresh_token: refreshToken,
-    }),
+    await postJson(
+      joinUrlPath(authBaseUrl, "/v1/oauth/token"),
+      {
+        grant_type: "refresh_token",
+        client_id: ANTHROPIC_CLIENT_ID,
+        refresh_token: refreshToken,
+      },
+      signal,
+    ),
   );
 }
 
@@ -951,7 +956,7 @@ export function createRelayedOAuthProvider(provider: string, authBaseUrl: string
       name: "ChatGPT Plus/Pro (Codex Subscription)",
       usesCallbackServer: true,
       login: (callbacks) => loginOpenAICodexWithAuthRelay(normalizedAuthBaseUrl, callbacks),
-      refreshToken: (credentials) => refreshOpenAIToken(normalizedAuthBaseUrl, credentials.refresh),
+      refreshToken: (credentials, signal) => refreshOpenAIToken(normalizedAuthBaseUrl, credentials.refresh, signal),
       getApiKey: (credentials) => credentials.access,
     };
   }
@@ -961,7 +966,7 @@ export function createRelayedOAuthProvider(provider: string, authBaseUrl: string
       name: "Anthropic (Claude Pro/Max)",
       usesCallbackServer: true,
       login: (callbacks) => loginAnthropicWithAuthRelay(normalizedAuthBaseUrl, callbacks),
-      refreshToken: (credentials) => refreshAnthropicWithAuthRelay(normalizedAuthBaseUrl, credentials.refresh),
+      refreshToken: (credentials, signal) => refreshAnthropicWithAuthRelay(normalizedAuthBaseUrl, credentials.refresh, signal),
       getApiKey: (credentials) => credentials.access,
     };
   }

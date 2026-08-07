@@ -1,11 +1,9 @@
-import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
 import responseColors, {
   COLOR_OUTPUT_HINT,
   appendColorOutputHint,
-  colorizeAssistantMessage,
   renderColorTags,
 } from "./index.ts";
 
@@ -81,30 +79,18 @@ describe("response color tags", () => {
     expect(line).toContain(`\x1b[1m${RED}Bold red emphasis.${RESET}\x1b[22m`);
     expect(line).not.toContain("[red]");
   });
-
-  it("colors assistant text without mutating messages or touching other content", () => {
-    const message = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "[red]stop[/red]" },
-        { type: "thinking", thinking: "[yellow]private[/yellow]" },
-      ],
-    };
-    const transformed = colorizeAssistantMessage(message);
-
-    expect(transformed).not.toBe(message);
-    expect(transformed.content[0]).toEqual({ type: "text", text: `${RED}stop${RESET}` });
-    expect(transformed.content[1]).toBe(message.content[1]);
-    expect(message.content[0].text).toBe("[red]stop[/red]");
-    expect(colorizeAssistantMessage({ role: "user", content: message.content })).toEqual({ role: "user", content: message.content });
-  });
 });
 
 describe("pi-response-colors extension", () => {
-  it("adds its formatting hint only in interactive mode", async () => {
+  it("registers an assistant-only Markdown transformer and adds its hint only in interactive mode", async () => {
     const pi = createMockPi();
-    const originalUpdateContent = AssistantMessageComponent.prototype.updateContent;
     responseColors(pi as any);
+
+    expect(pi.markdownTransformers).toHaveLength(1);
+    const transform = pi.markdownTransformers[0];
+    expect(transform("[red]stop[/red]", { messageType: "assistant", isStreaming: false, availableWidth: 80 })).toBe(`${RED}stop${RESET}`);
+    expect(transform("[red]user[/red]", { messageType: "user", isStreaming: false, availableWidth: 80 })).toBe("[red]user[/red]");
+    expect(transform("[red]thought[/red]", { messageType: "assistant-thinking", isStreaming: false, availableWidth: 80 })).toBe("[red]thought[/red]");
 
     const tuiCtx = createMockCtx();
     tuiCtx.mode = "tui";
@@ -118,9 +104,5 @@ describe("pi-response-colors extension", () => {
     const printCtx = createMockCtx();
     printCtx.mode = "print";
     expect(await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, printCtx)).toEqual([undefined]);
-
-    expect(AssistantMessageComponent.prototype.updateContent).not.toBe(originalUpdateContent);
-    await emitEvent(pi, "session_shutdown", {}, tuiCtx);
-    expect(AssistantMessageComponent.prototype.updateContent).toBe(originalUpdateContent);
   });
 });

@@ -1,6 +1,6 @@
 # pi-response-colors
 
-Renders paired color tags in assistant responses without requiring models to emit terminal escape sequences.
+Renders paired color tags in assistant responses without requiring models to emit terminal escape sequences. Requires Pi 0.84.0 or newer.
 
 Supported tags:
 
@@ -22,4 +22,4 @@ Markdown emphasis can appear inside a colored span:
 
 Tags in inline code and fenced code blocks are left unchanged. Escaped, unknown, mismatched, and unclosed tags are also rendered literally. Color tags are retained in session content and therefore remain visible in copied, exported, print-mode, or JSON text.
 
-The extension patches Pi's exported `AssistantMessageComponent` because Pi does not currently expose an assistant-response rendering hook. If that internal rendering path changes, the extension should fail without modifying stored messages.
+The extension uses Pi's display-only Markdown transformer, so it applies to live and restored assistant messages without modifying stored content.
