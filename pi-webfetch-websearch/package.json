@@ -36,6 +36,7 @@
     "src/mcp.ts",
     "src/settings.ts",
     "src/sites/github.ts",
+    "src/tool-render.ts",
     "src/webfetch.ts",
     "src/websearch-format.ts",
     "src/websearch.ts",

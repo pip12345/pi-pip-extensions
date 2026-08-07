@@ -1,0 +1,37 @@
+{
+  "name": "pi-codex-fast",
+  "version": "0.1.0",
+  "description": "Safe session-scoped /fast mode for Pi's built-in OpenAI Codex provider",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "openai",
+    "codex",
+    "fast-mode",
+    "priority"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "node_modules/pip-common/index.ts",
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  },
+  "bundledDependencies": [
+    "pip-common"
+  ]
+}

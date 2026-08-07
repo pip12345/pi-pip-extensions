@@ -53,6 +53,7 @@ describe("pi package manifests", () => {
   it("declares peer dependencies for imported pi packages", () => {
     const importsByPackage: Record<string, string[]> = {
       "pi-tool-ui": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
+      "pi-response-colors": ["@earendil-works/pi-coding-agent"],
       "pi-stats": ["@earendil-works/pi-tui"],
       "pi-tree-edit": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
     };

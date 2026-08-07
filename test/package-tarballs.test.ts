@@ -77,7 +77,7 @@ afterAll(() => {
 
 describe("standalone package tarballs", () => {
   it("bundle pip-common and contain only runtime TypeScript", () => {
-    expect(featurePacks).toHaveLength(14);
+    expect(featurePacks).toHaveLength(16);
     for (const pack of featurePacks) {
       expect(pack.files.some((file) => file.path === "node_modules/pip-common/index.ts"), `${pack.name} bundles common`).toBe(true);
       expect(pack.files.some((file) => file.path.endsWith(".test.ts")), `${pack.name} excludes tests`).toBe(false);

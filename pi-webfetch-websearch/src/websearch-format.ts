@@ -1,6 +1,7 @@
 export interface FormattedWebSearch {
   text: string;
   source: "json-results" | "raw";
+  resultCount?: number;
 }
 
 function clean(value: unknown): string {
@@ -48,5 +49,5 @@ export function formatWebSearchArtifact(rawText: string, query: string): Formatt
   });
 
   const text = lines.join("\n").replace(/\n{4,}/g, "\n\n\n").trim();
-  return { text, source: "json-results" };
+  return { text, source: "json-results", resultCount: results.length };
 }

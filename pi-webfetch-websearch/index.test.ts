@@ -45,6 +45,10 @@ function createWebPi(overrides: Record<string, unknown> = {}, blockPrivateHosts 
   return pi;
 }
 
+const markedTheme = {
+  fg: (name: string, text: string) => `<${name}>${text}</${name}>`,
+};
+
 afterEach(() => vi.useRealTimers());
 
 beforeEach(() => {
@@ -82,6 +86,7 @@ describe("pi-webfetch-websearch", () => {
     expect(result.text).toContain("## 1. Example");
     expect(result.text).toContain("URL: https://example.com");
     expect(result.text).toContain("First excerpt");
+    expect(result.resultCount).toBe(1);
   });
 
   it("registers the webfetch tool without exposing output mode selection", () => {
@@ -90,6 +95,76 @@ describe("pi-webfetch-websearch", () => {
     expect(tool).toBeTruthy();
     expect((tool.parameters as any).properties.mode).toBeUndefined();
     expect(Object.keys(getPipSettingsRegistry(pi).definition("webfetch-websearch") ?? {})).toEqual(["webfetchEnabled", "websearchEnabled", "searchProvider"]);
+  });
+
+  it("renders descriptive webfetch calls and explicit result outcomes", () => {
+    const tool = getRegisteredTool(createWebPi(), "webfetch");
+    const callArgs = { url: "https://docs.example.com/guide/start", format: "text", extract: "all", maxChars: 2000 };
+    const call = tool.renderCall(callArgs, markedTheme).render(500).join("\n");
+    expect(call).toContain("docs.example.com/guide/start · text/all · max 2K chars");
+    const narrow = tool.renderCall(callArgs, { fg: (_name: string, text: string) => text }).render(30);
+    expect(narrow).toHaveLength(1);
+    expect(narrow[0].length).toBeLessThanOrEqual(30);
+
+    const success = tool.renderResult({ details: {
+      mode: "file",
+      finalUrl: "https://cdn.example.com/docs/final",
+      format: "markdown",
+      extract: "auto",
+      contentType: "text/html; charset=utf-8",
+      rawBytes: 93 * 1024,
+      outputChars: 95_000,
+      fullOutputChars: 95_000,
+      artifact: { path: "/tmp/webfetch_random.md", chars: 95_000, lines: 1234 },
+    } }, {}, markedTheme, { isError: false }).render(500).join("\n");
+    expect(success).toContain("<success>✓ </success>");
+    expect(success).toContain("https://cdn.example.com/docs/final · saved 95K chars");
+    expect(success).not.toContain("webfetch_random.md");
+
+    const truncated = tool.renderResult({ details: {
+      mode: "inline",
+      finalUrl: "https://raw.githubusercontent.com/owner/repo/HEAD/README.md",
+      format: "markdown",
+      extract: "auto",
+      contentType: "text/plain",
+      rawBytes: 6 * 1024,
+      outputChars: 2000,
+      fullOutputChars: 6600,
+      siteHandler: "github-readme",
+      truncated: true,
+    } }, {}, markedTheme, { isError: false }).render(500).join("\n");
+    expect(truncated).toContain("https://raw.githubusercontent.com/owner/repo/HEAD/README.md · inline 2K/6.6K chars · truncated");
+    expect(truncated).not.toContain("markdown/auto");
+    expect(truncated).not.toContain("text/plain");
+    expect(truncated).not.toContain("handler");
+
+    const warning = tool.renderResult({ details: {
+      mode: "inline",
+      format: "markdown",
+      extract: "auto",
+      contentType: "text/html",
+      rawBytes: 137 * 1024,
+      outputChars: 142,
+      fullOutputChars: 0,
+      emptyExtraction: true,
+    } }, {}, markedTheme, { isError: false }).render(500).join("\n");
+    expect(warning).toContain("<warning>⚠ </warning>");
+    expect(warning).toContain("no content extracted");
+    expect(warning).not.toContain("markdown/auto");
+    const expandedWarning = tool.renderResult({ details: {
+      mode: "inline",
+      finalUrl: "https://docs.example.com/app",
+      format: "markdown",
+      extract: "auto",
+      contentType: "text/html",
+      emptyExtraction: true,
+    } }, { expanded: true }, markedTheme, { isError: false }).render(500).join("\n");
+    expect(expandedWarning).toContain("markdown/auto · text/html · try extract=all");
+
+    const failure = tool.renderResult({ content: [{ type: "text", text: "Fetch failed: HTTP 500\nextra" }] }, {}, markedTheme, { isError: true }).render(500).join("\n");
+    expect(failure).toContain("<error>✗ </error>");
+    expect(failure).toContain("Fetch failed: HTTP 500");
+    expect(failure).not.toContain("extra");
   });
 
   it("rejects invalid protocols", async () => {
@@ -157,6 +232,20 @@ describe("pi-webfetch-websearch", () => {
     });
   });
 
+  it("returns an actionable diagnostic when HTML extraction is empty", async () => {
+    await withServer((_req, res) => {
+      res.setHeader("content-type", "text/html");
+      res.end("<html><body><script>renderClientSide()</script></body></html>");
+    }, async (base) => {
+      const result = await exec(getRegisteredTool(createWebPi(), "webfetch"), { url: `${base}/app`, format: "markdown" });
+      expect(result.content[0].text).toContain("No content was extracted");
+      expect(result.content[0].text).toContain("extract=all");
+      expect(result.details.emptyExtraction).toBe(true);
+      expect(result.details.fullOutputChars).toBe(0);
+      expect(result.details.mode).toBe("inline");
+    });
+  });
+
   it("converts common html to markdown-ish output", async () => {
     await withServer((_req, res) => {
       res.setHeader("content-type", "text/html");
@@ -200,6 +289,20 @@ describe("pi-webfetch-websearch", () => {
       expect(result.content[0].text).toBe("small inline fetch");
       expect(result.details.mode).toBe("inline");
       expect(result.details.artifact).toBeUndefined();
+    });
+  });
+
+  it("saves medium webfetch output above the 4K inline threshold", async () => {
+    await withServer((_req, res) => {
+      res.setHeader("content-type", "text/plain");
+      res.end("medium output ".repeat(400));
+    }, async (base) => {
+      const result = await exec(getRegisteredTool(createWebPi(), "webfetch"), { url: `${base}/medium`, format: "text" });
+      expect(result.details.fullOutputChars).toBeGreaterThan(4000);
+      expect(result.details.mode).toBe("file");
+      expect(result.content[0].text).toContain("Saved webfetch result");
+      expect(existsSync(result.details.artifact.path)).toBe(true);
+      rmSync(dirname(dirname(result.details.artifact.path)), { recursive: true, force: true });
     });
   });
 
@@ -401,6 +504,33 @@ describe("pi-webfetch-websearch", () => {
     const tool = getRegisteredTool(pi, "websearch");
     expect(tool).toBeTruthy();
     expect((tool.parameters as any).properties.mode).toBeUndefined();
+  });
+
+  it("renders websearch provider, result count, storage mode, and fallback status", () => {
+    const tool = getRegisteredTool(createWebPi(), "websearch");
+    const query = "site:developers.openai.com/codex custom agents configuration official 2026";
+    const callArgs = { query, provider: "auto", numResults: 4, contextMaxCharacters: 3000, type: "fast" };
+    const call = tool.renderCall(callArgs, markedTheme, {}).render(500).join("\n");
+    expect(call).toContain(`${query} · 4 results · fast`);
+    expect(call).not.toContain(" · auto");
+    expect(call).not.toContain("3K chars context");
+    const wrappedCall = tool.renderCall(callArgs, { fg: (_name: string, text: string) => text }, {}).render(30).join("");
+    expect(wrappedCall.replace(/\s/g, "")).toContain(query.replace(/\s/g, ""));
+    expect(wrappedCall).not.toContain("…");
+
+    const result = tool.renderResult({ details: {
+      provider: "exa",
+      fallbackUsed: true,
+      resultCount: 4,
+      numResults: 4,
+      mode: "file",
+      outputChars: 27_300,
+      artifact: { path: "/tmp/websearch_random.md", chars: 27_300, lines: 830 },
+    } }, {}, markedTheme, { isError: false }).render(500).join("\n");
+    expect(result).toContain("<warning>⚠ </warning>");
+    expect(result).toContain("exa fallback · 4 results saved · 27.3K chars");
+    expect(result).not.toContain("830 lines");
+    expect(result).not.toContain("websearch_random.md");
   });
 
   it("parses plain and SSE MCP responses while rejecting tool-level errors", () => {

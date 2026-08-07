@@ -1,0 +1,37 @@
+{
+  "name": "pi-response-colors",
+  "version": "0.1.0",
+  "description": "Paired color-tag rendering for Pi assistant responses",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "color",
+    "markdown",
+    "tui"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "node_modules/pip-common/index.ts",
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "src/color-tags.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "pip-common": "0.1.0"
+  },
+  "bundledDependencies": [
+    "pip-common"
+  ]
+}
