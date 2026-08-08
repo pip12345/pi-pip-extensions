@@ -149,6 +149,8 @@ Use inline code for paths, commands, settings, identifiers, exact values, and sh
 
 Render diagrams using fenced `mermaid` code blocks. Pi can render `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, and `erDiagram`.
 
+For Mermaid diagrams, keep the rendered diagram narrow enough for the terminal. Prefer TD/TB layouts, use LR only for small diagrams, and keep labels short. Aim for 70 columns or fewer as a conservative default; Pi's actual limit is the available terminal width.
+
 Use other code blocks only when exact syntax, commands, config, or examples matter.
 
 ### Explanation style
