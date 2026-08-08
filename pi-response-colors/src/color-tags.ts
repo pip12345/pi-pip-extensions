@@ -196,22 +196,3 @@ export function renderColorTags(source: string): string {
 
   return output + source.slice(cursor);
 }
-
-export function colorizeAssistantMessage<T>(message: T): T {
-  if (!message || typeof message !== "object") return message;
-  const candidate = message as { role?: unknown; content?: unknown };
-  if (candidate.role !== "assistant" || !Array.isArray(candidate.content)) return message;
-
-  let changed = false;
-  const content = candidate.content.map((part) => {
-    if (!part || typeof part !== "object") return part;
-    const textPart = part as { type?: unknown; text?: unknown };
-    if (textPart.type !== "text" || typeof textPart.text !== "string") return part;
-    const text = renderColorTags(textPart.text);
-    if (text === textPart.text) return part;
-    changed = true;
-    return { ...textPart, text };
-  });
-
-  return changed ? ({ ...candidate, content } as T) : message;
-}

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSettingsRegistry, getPipSettingsRegistry, readSettingsFile, registerSettingsSection, setting } from "../src/settings.ts";
-import { createMockPi } from "../src/testing.ts";
+import { createMockEventBus, createMockPi } from "../src/testing.ts";
 
 describe("settings registry", () => {
   it("applies defaults and validates set values", () => {
@@ -85,10 +85,10 @@ describe("settings registry", () => {
     expect(notifications).toHaveLength(1);
   });
 
-  it("shares settings within one runtime and isolates child runtimes", () => {
-    const owner = createMockPi();
-    const sibling = createMockPi();
-    sibling.events = owner.events;
+  it("shares settings across scoped event facades within one runtime and isolates child runtimes", () => {
+    const eventBus = createMockEventBus();
+    const owner = createMockPi(eventBus.facade());
+    const sibling = createMockPi(eventBus.facade());
     const child = createMockPi();
     registerSettingsSection(owner, { id: "x", title: "X", settings: { enabled: setting.boolean(true) } });
     registerSettingsSection(child, { id: "x", title: "X", settings: { enabled: setting.boolean(true) } });

@@ -149,10 +149,12 @@ Use inline code for paths, commands, settings, identifiers, exact values, and sh
 
 Render diagrams using fenced `mermaid` code blocks. Pi can render `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, and `erDiagram`.
 
+For Mermaid diagrams, keep the rendered diagram narrow enough for the terminal. Prefer TD/TB layouts, use LR only for small diagrams, and keep labels short. Aim for 70 columns or fewer as a conservative default; Pi's actual limit is the available terminal width.
+
 Use other code blocks only when exact syntax, commands, config, or examples matter.
 
 ### Explanation style
-Prefer explaining from a functional level first. Use plain, concrete language. Use specialized terms when they improve precision, and briefly explain unfamiliar terms when needed.
+Prefer explaining from a functional level first. Prefer an ASD-STE100 style approach. Use clear, common, precise, and concrete wording. Keep established technical terms when they improve precision. Avoid vague wording, needless jargon, invented terms, and needless complexity. Simplify sentence structure instead of replacing familiar words with longer paraphrases. Briefly define necessary technical terms.
 
 Give enough relevant context to understand the explanation without assuming the user knows or remembers codebase internals. Briefly introduce non-obvious components or concepts and explain where they fit before relying on them.
 

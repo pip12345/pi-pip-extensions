@@ -1,5 +1,36 @@
 import { createSettingsRegistry, setPipSettingsRegistryForTests } from "./settings.ts";
 
+export interface MockEventBus {
+  emit(channel: string, data: unknown): void;
+  on(channel: string, handler: (data: unknown) => void): () => void;
+}
+
+export interface MockEventBusController {
+  facade(): MockEventBus;
+}
+
+export function createMockEventBus(): MockEventBusController {
+  const handlers = new Map<string, Set<(data: unknown) => void>>();
+  return {
+    facade() {
+      return {
+        emit(channel, data) {
+          for (const handler of handlers.get(channel) ?? []) handler(data);
+        },
+        on(channel, handler) {
+          const listeners = handlers.get(channel) ?? new Set();
+          listeners.add(handler);
+          handlers.set(channel, listeners);
+          return () => {
+            listeners.delete(handler);
+            if (!listeners.size) handlers.delete(channel);
+          };
+        },
+      };
+    },
+  };
+}
+
 export interface MockPi {
   tools: Map<string, any>;
   commands: Map<string, any>;
@@ -8,17 +39,19 @@ export interface MockPi {
   messages: any[];
   userMessages: any[];
   entries: any[];
-  events: object;
+  markdownTransformers: any[];
+  events: MockEventBus;
   registerTool(tool: any): void;
   registerCommand(name: string, command: any): void;
   registerShortcut(shortcut: string, shortcutDef: any): void;
+  registerMarkdownTransformer(transformer: any): void;
   on(event: string, handler: any): void;
   sendMessage(message: any, options?: any): void;
   sendUserMessage(message: any, options?: any): void;
   appendEntry(customType: string, data?: any): void;
 }
 
-export function createMockPi(): MockPi {
+export function createMockPi(events = createMockEventBus().facade()): MockPi {
   const pi: MockPi = {
     tools: new Map(),
     commands: new Map(),
@@ -27,7 +60,8 @@ export function createMockPi(): MockPi {
     messages: [],
     userMessages: [],
     entries: [],
-    events: {},
+    markdownTransformers: [],
+    events,
     registerTool(tool: any) {
       this.tools.set(tool.name, tool);
     },
@@ -36,6 +70,9 @@ export function createMockPi(): MockPi {
     },
     registerShortcut(shortcut: string, shortcutDef: any) {
       this.shortcuts.set(shortcut, shortcutDef);
+    },
+    registerMarkdownTransformer(transformer: any) {
+      this.markdownTransformers.push(transformer);
     },
     on(event: string, handler: any) {
       const handlers = this.handlers.get(event) ?? [];
