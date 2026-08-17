@@ -3,8 +3,10 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 export const FAST_STATE_ENTRY = "pi-codex-fast-state";
 export const FAST_STATUS_KEY = "codex-fast";
 export const FAST_SERVICE_TIER = "priority";
+export const LONG_CONTEXT_WINDOW = 1_050_000;
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
+const LONG_CONTEXT_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 const OPENAI_CODEX_API = "openai-codex-responses";
 const DOCUMENTED_FAST_MODEL_FAMILY = /^gpt-5\.(?:4|5|6)(?:$|-)/;
 
@@ -58,6 +60,11 @@ export function applyFastServiceTier(payload: unknown, model: unknown): unknown 
   return { ...payload, service_tier: FAST_SERVICE_TIER };
 }
 
+export function applyLongContextWindow<T extends { id: string; provider?: unknown; contextWindow: number }>(model: T): T {
+  if (model.provider !== OPENAI_CODEX_PROVIDER || !LONG_CONTEXT_MODEL_IDS.has(model.id) || model.contextWindow === LONG_CONTEXT_WINDOW) return model;
+  return { ...model, contextWindow: LONG_CONTEXT_WINDOW };
+}
+
 export function restoreFastState(entries: readonly unknown[]): boolean {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
@@ -86,8 +93,14 @@ function statusMessage(enabled: boolean, model: unknown): string {
   return `Codex Fast mode: on, but inactive for ${modelLabel(model)}. It applies automatically only to supported OpenAI Codex models.`;
 }
 
-export default function registerCodexFastExtension(pi: ExtensionAPI): void {
+export default function registerCodexExtension(pi: ExtensionAPI): void {
   let enabled = false;
+
+  const activateLongContext = (model: unknown) => {
+    if (!isRecord(model) || typeof model.id !== "string" || typeof model.contextWindow !== "number") return;
+    const nextModel = applyLongContextWindow(model as Record<string, unknown> & { id: string; contextWindow: number });
+    if (nextModel !== model) model.contextWindow = nextModel.contextWindow;
+  };
 
   const updateStatus = (ctx: ExtensionContext, model: unknown = ctx.model) => {
     const value = enabled ? (isFastCapableCodexModel(model) ? "fast: on" : "fast: waiting") : undefined;
@@ -134,7 +147,13 @@ export default function registerCodexFastExtension(pi: ExtensionAPI): void {
     return nextPayload === event.payload ? undefined : nextPayload;
   });
 
-  pi.on("session_start", async (_event, ctx) => restore(ctx));
+  pi.on("session_start", async (_event, ctx) => {
+    activateLongContext(ctx.model);
+    restore(ctx);
+  });
   pi.on("session_tree", async (_event, ctx) => restore(ctx));
-  pi.on("model_select", async (event, ctx) => updateStatus(ctx, event.model));
+  pi.on("model_select", async (event, ctx) => {
+    activateLongContext(event.model);
+    updateStatus(ctx, event.model);
+  });
 }
