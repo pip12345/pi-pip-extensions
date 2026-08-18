@@ -49,6 +49,9 @@ For non-trivial tasks, use only the steps needed to make the result correct:
 - Keep each rule scoped to the system or abstraction whose behavior it defines. Do not force unrelated systems into one rule merely to make them superficially uniform.
 - When the domain genuinely requires an exception, express it as an explicit part of the system's behavioral model rather than scattering special cases.
 - Judge structural changes by whether they make the system easier to model and make ownership, state, and contracts clearer while addressing the request. Adding, preserving, consolidating, or deleting code is not inherently a simplification.
+- Keep the overall design coherent as implementation and review uncover additional requirements or problems. Evaluate each change both on its own and as part of the complete implementation; a sequence of locally correct fixes can still produce a poor overall design.
+- As related changes accumulate, keep the required behavior and invariants, intended owner, and source of truth clear. Determine whether additions belong to the design or compensate for weaknesses created by it.
+- Continue with local fixes when they fit a coherent model and the complexity is necessary. When patches increasingly manage problems caused by the current structure, consider consolidation or redesign instead of continuing to add local fixes.
 
 ### Comment policy
 - Comments should explain the intent or idea behind the code—why it exists or why it works this way—when that meaning is not easily apparent from the implementation. Do not merely narrate what the code does.

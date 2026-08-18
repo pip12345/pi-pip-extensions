@@ -10,7 +10,7 @@
   "pi": {
     "extensions": [
       "pip-common/index.ts",
-      "pi-codex-fast/index.ts",
+      "pi-codex/index.ts",
       "pi-context/index.ts",
       "pi-pip-footer/index.ts",
       "pi-prompt-profiles/index.ts",

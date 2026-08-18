@@ -3,7 +3,9 @@ import { createMockCtx, createMockPi, emitEvent, runCommand } from "../pip-commo
 import registerCodexFastExtension, {
   FAST_SERVICE_TIER,
   FAST_STATE_ENTRY,
+  LONG_CONTEXT_WINDOW,
   applyFastServiceTier,
+  applyLongContextWindow,
   isFastCapableCodexModel,
   restoreFastState,
 } from "./index.ts";
@@ -12,6 +14,7 @@ const codexModel = {
   id: "gpt-5.6-sol",
   provider: "openai-codex",
   api: "openai-codex-responses",
+  contextWindow: 272_000,
 };
 
 function codexPayload(model = codexModel.id) {
@@ -21,6 +24,36 @@ function codexPayload(model = codexModel.id) {
 function stateEntry(enabled: boolean) {
   return { type: "custom", customType: FAST_STATE_ENTRY, data: { enabled } };
 }
+
+function createCodexPi() {
+  return createMockPi();
+}
+
+describe("Codex long context catalog", () => {
+  it("expands all GPT-5.6 Codex variants without changing other models or providers", () => {
+    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      expect(applyLongContextWindow({ id, provider: "openai-codex", contextWindow: 272_000 }).contextWindow).toBe(LONG_CONTEXT_WINDOW);
+    }
+    const older = { id: "gpt-5.5", provider: "openai-codex", contextWindow: 272_000 };
+    const directOpenAI = { id: "gpt-5.6-sol", provider: "openai", contextWindow: 272_000 };
+    expect(applyLongContextWindow(older)).toBe(older);
+    expect(applyLongContextWindow(directOpenAI)).toBe(directOpenAI);
+  });
+
+  it("sets long context when a GPT-5.6 Codex model becomes active", async () => {
+    const pi = createCodexPi();
+    registerCodexFastExtension(pi as any);
+    const activeModel = { ...codexModel };
+    const ctx = createMockCtx({ model: activeModel });
+
+    await emitEvent(pi, "session_start", {}, ctx);
+    expect(activeModel.contextWindow).toBe(LONG_CONTEXT_WINDOW);
+
+    const selectedModel = { ...codexModel };
+    await emitEvent(pi, "model_select", { model: selectedModel }, ctx);
+    expect(selectedModel.contextWindow).toBe(LONG_CONTEXT_WINDOW);
+  });
+});
 
 describe("Codex Fast capability", () => {
   it("accepts documented Codex model families without hardcoding catalog entries", () => {
@@ -74,7 +107,7 @@ describe("Codex request patching", () => {
 
 describe("/fast extension", () => {
   it("toggles with bare /fast, persists state, and patches requests only while enabled", async () => {
-    const pi = createMockPi();
+    const pi = createCodexPi();
     registerCodexFastExtension(pi as any);
     const ctx = createMockCtx({ model: codexModel });
 
@@ -95,7 +128,7 @@ describe("/fast extension", () => {
   });
 
   it("restores the latest branch state on session start and tree navigation", async () => {
-    const pi = createMockPi();
+    const pi = createCodexPi();
     registerCodexFastExtension(pi as any);
     const entries = [stateEntry(true), stateEntry(false), stateEntry(true)];
     const ctx = createMockCtx({ model: codexModel, entries });
@@ -109,7 +142,7 @@ describe("/fast extension", () => {
   });
 
   it("keeps enabled state waiting while the current model is unsupported", async () => {
-    const pi = createMockPi();
+    const pi = createCodexPi();
     registerCodexFastExtension(pi as any);
     const ctx = createMockCtx({ model: { id: "claude", provider: "anthropic", api: "anthropic-messages" } });
 
@@ -122,7 +155,7 @@ describe("/fast extension", () => {
   });
 
   it("reports status without adding duplicate state entries and rejects unknown arguments", async () => {
-    const pi = createMockPi();
+    const pi = createCodexPi();
     registerCodexFastExtension(pi as any);
     const ctx = createMockCtx({ model: codexModel });
 

@@ -1,13 +1,14 @@
 {
-  "name": "pi-codex-fast",
+  "name": "pi-codex",
   "version": "0.1.0",
-  "description": "Safe session-scoped /fast mode for Pi's built-in OpenAI Codex provider",
+  "description": "Long-context and Fast mode features for Pi's built-in OpenAI Codex provider",
   "type": "module",
   "keywords": [
     "pi-package",
     "pi-extension",
     "openai",
     "codex",
+    "long-context",
     "fast-mode",
     "priority"
   ],
