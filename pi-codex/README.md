@@ -35,6 +35,33 @@ The preference is stored in Pi's session branch. It survives resume/fork and fol
 
 Requests are changed only when the active model and wire payload match Pi's Codex Responses shape, the model supports Fast mode, and no other extension or provider has already supplied a `service_tier`.
 
+## Image generation
+
+The package registers `codex_generate_image`, which uses the existing `openai-codex` login to generate a new image or edit up to five local reference images:
+
+```json
+{
+  "prompt": "Draw a pixel-art sword with a blue blade and gold hilt",
+  "path": "assets/generated/sword.png"
+}
+```
+
+For an edit, add `referencedImagePaths`:
+
+```json
+{
+  "prompt": "Keep the composition but change the sky to sunset",
+  "path": "assets/generated/sunset.webp",
+  "referencedImagePaths": ["assets/source.png"]
+}
+```
+
+`path` is required and resolves relative to the current workspace unless it is absolute. Its extension selects PNG (`.png`), JPEG (`.jpg` or `.jpeg`), or WebP (`.webp`). The tool creates parent directories, writes exactly that path with the same overwrite semantics as Pi's `write` tool, and returns the image inline for inspection. It does not create a second copy under Pi's agent directory.
+
+The backend chooses its Codex image model and may revise the prompt; the tool reports the revised prompt when available. It intentionally does not expose size, quality, background, compression, or image-model controls because the ChatGPT-authenticated Codex endpoint is not known to honor them reliably.
+
+Transient rate limits and server failures are retried. Cancellation stops the request, and returned base64 data and file signatures are validated before the output path is written.
+
 ## Accounting limitation
 
 Pi's extension hook can safely change the final provider payload, but it cannot set Pi AI's internal `serviceTier` stream option. The wire request is correct. If OpenAI reports the completed request as `service_tier: "default"` after accepting Priority, Pi may under-report the Fast multiplier in its local estimated cost even though provider-side usage or billing reflects the request.
