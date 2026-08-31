@@ -84,7 +84,7 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } } }, ctx);
     const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
     const component = factory({ requestRender() {} }, theme);
-    expect(component.render(120)[0]).toContain("↓:4k ↑:2k ↻:3k/75% · $0.04");
+    expect(component.render(120)[0]).toContain("↓:1k ↑:2k ↻:3k/75% · $0.04");
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 
@@ -129,7 +129,7 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "message_end", { message: { role: "assistant", usage: { input: 1000, output: 2000, cacheRead: 3000, cost: { total: 0.04 } } } }, ctx);
     const factory = ctx.ui.widgets.get(__test.WIDGET_KEY);
     const component = factory({ requestRender() {} }, theme);
-    expect(component.render(120)[0]).toContain("↓:4k ↑:2k ↻:3k · $0.04");
+    expect(component.render(120)[0]).toContain("↓:1k ↑:2k ↻:3k · $0.04");
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 

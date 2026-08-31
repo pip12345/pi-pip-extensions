@@ -154,6 +154,12 @@ export function promptTokensFromUsage(usage: PromptTokenParts | undefined): numb
   return usage.input + usage.cacheRead + usage.cacheWrite;
 }
 
+/** Prompt tokens processed fresh in this request, including tokens written to cache. */
+export function freshInputTokensFromUsage(usage: PromptTokenParts | undefined): number {
+  if (!usage) return 0;
+  return usage.input + usage.cacheWrite;
+}
+
 export function cacheHitRateFromUsage(usage: PromptTokenParts | undefined): number | undefined {
   const promptTokens = promptTokensFromUsage(usage);
   return usage && promptTokens > 0 ? (usage.cacheRead / promptTokens) * 100 : undefined;
@@ -175,13 +181,17 @@ export function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
-export function formatCompactUsage(usage: TokenUsage | undefined, options: { includeCost?: boolean; inputMode?: "prompt" | "raw" } = {}): string {
+export function formatCompactUsage(usage: TokenUsage | undefined, options: { includeCost?: boolean; inputMode?: "fresh" | "prompt" | "raw" } = {}): string {
   if (!usage) return "";
   const parts: string[] = [];
-  const inputTokens = options.inputMode === "raw" ? usage.input : promptTokensFromUsage(usage);
+  const inputTokens = options.inputMode === "prompt"
+    ? promptTokensFromUsage(usage)
+    : options.inputMode === "raw"
+      ? usage.input
+      : freshInputTokensFromUsage(usage);
   if (inputTokens) parts.push(`↓:${formatTokenCount(inputTokens)}`);
   if (usage.output) parts.push(`↑:${formatTokenCount(usage.output)}`);
-  if (usage.cache) parts.push(`↻:${formatTokenCount(usage.cache)}`);
+  if (usage.cacheRead) parts.push(`↻:${formatTokenCount(usage.cacheRead)}`);
   const text = parts.join(" ");
   if (options.includeCost && usage.cost) return text ? `${text} · ${formatCost(usage.cost)}` : formatCost(usage.cost);
   return text;

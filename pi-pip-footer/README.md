@@ -5,7 +5,7 @@ Pip footer for pi. This is the renamed successor to `pi-token-counter`: it keeps
 ## Shows
 
 - live token burn while the assistant streams, above the input box
-- settled token totals as `↓` input, `↑` output, and `↻`/`c` cache with optional latest cache hit rate, e.g. `↻:28k/75%`, plus short-lived deltas above the input box
+- settled token totals as `↓` fresh input (uncached input plus cache writes), `↑` output, and `↻`/`c` reused cached input (cache reads), with optional latest cache hit rate, e.g. `↻:28k/75%`, plus short-lived deltas above the input box
 - context usage bar in the lower footer, e.g. `gpt-5/high   ctx ━━━━━━━── 184k/272k   ~/proj   main*`
 - model and thinking level as `{model}/{thinking}`
 - Codex, Anthropic/Claude, or Copilot quota windows with reset times, e.g. `codex        5h ━━━━━━━── 74% ↻ 1h22m   7d ━━━────── 31% ↻ 4d`; if quota fetch fails, shows `usage offline`

@@ -5,6 +5,7 @@ import {
   emptyUsage as emptyTokens,
   normalizeUsage,
   promptTokensFromUsage,
+  freshInputTokensFromUsage,
   cacheHitRateFromUsage,
   hasTuiCustom,
   padAnsi,
@@ -65,22 +66,22 @@ const cacheHitRate = cacheHitRateFromUsage;
 
 function formatCacheHit(tokens: Tokens): string {
   const hit = cacheHitRate(tokens);
-  return tokens.cache > 0 && hit !== undefined ? `${Math.round(hit)}%` : "-";
+  return tokens.cacheRead > 0 && hit !== undefined ? `${Math.round(hit)}%` : "-";
 }
 
 function formatCacheWithHit(tokens: Tokens, compact: boolean, theme?: Theme, cacheWidth = 0, hitWidth = 0): string {
-  const cache = fmt(tokens.cache, compact);
+  const cache = fmt(tokens.cacheRead, compact);
   const cacheText = cacheWidth > 0 ? cache.padStart(cacheWidth) : cache;
   const hit = cacheHitRate(tokens);
-  if (tokens.cache <= 0 || hit === undefined) return hitWidth > 0 ? cacheText.padEnd(cacheText.length + hitWidth) : cacheText;
+  if (tokens.cacheRead <= 0 || hit === undefined) return hitWidth > 0 ? cacheText.padEnd(cacheText.length + hitWidth) : cacheText;
   const suffix = `/${Math.round(hit)}%`;
   const suffixText = hitWidth > 0 ? suffix.padEnd(hitWidth) : suffix;
   return `${cacheText}${theme ? theme.fg("dim", suffixText) : suffixText}`;
 }
 
 function cacheColumnWidths(rows: Tokens[], compact: boolean): { value: number; hit: number; text: number } {
-  const value = Math.max(1, ...rows.map((row) => fmt(row.cache, compact).length));
-  const hit = Math.max(0, ...rows.map((row) => (row.cache > 0 ? `/${Math.round(cacheHitRate(row) ?? 0)}%`.length : 0)));
+  const value = Math.max(1, ...rows.map((row) => fmt(row.cacheRead, compact).length));
+  const hit = Math.max(0, ...rows.map((row) => (row.cacheRead > 0 ? `/${Math.round(cacheHitRate(row) ?? 0)}%`.length : 0)));
   return { value, hit, text: value + hit };
 }
 
@@ -112,7 +113,7 @@ function tokenDetailRow(label: string, tokens: Tokens, compact: boolean): string
   const cell = (name: string, value: string, width: number) => padAnsi(`${name}:${value}`, width);
   return [
     padAnsi(label, labelW),
-    cell("prompt", fmt(promptTokensFromUsage(tokens), compact), 14),
+    cell("input", fmt(tokens.input, compact), 14),
     cell("output", fmt(tokens.output, compact), 14),
     cell("cache read", fmt(tokens.cacheRead, compact), 18),
     cell("cache write", fmt(tokens.cacheWrite, compact), 19),
@@ -395,9 +396,9 @@ class TokenInspector extends PipCustomComponent<void> {
     const ctxPct = typeof current?.percent === "number" ? current.percent : null;
     const ctxTokens = typeof current?.tokens === "number" ? current.tokens : 0;
     const ctxWindow = current?.contextWindow || this.ctx.model?.contextWindow || 0;
-    const maxIn = Math.max(1, ...rows.map((r) => promptTokensFromUsage(r)));
+    const maxIn = Math.max(1, ...rows.map((r) => freshInputTokensFromUsage(r)));
     const maxOut = Math.max(1, ...rows.map((r) => r.output));
-    const maxCache = Math.max(1, ...rows.map((r) => r.cache));
+    const maxCache = Math.max(1, ...rows.map((r) => r.cacheRead));
     const lines = this.renderHeader();
     lines.push(`${th.fg("dim", "ctx")} ${fmt(ctxTokens, this.compact)}/${fmt(ctxWindow, this.compact)} ${ctxPct == null ? "?" : `${Math.round(ctxPct)}%`}  ${contextBar(ctxPct, 18, th)}`);
     lines.push("");
@@ -407,11 +408,11 @@ class TokenInspector extends PipCustomComponent<void> {
     const outW = 15;
     const cacheBarW = 7;
     const cacheWidths = cacheColumnWidths(rows, this.compact);
-    const cacheW = Math.max("ΔCache".length, cacheWidths.text + 1 + cacheBarW);
+    const cacheW = Math.max("ΔCached".length, cacheWidths.text + 1 + cacheBarW);
     lines.push(
       th.fg(
         "dim",
-        `${padAnsi("#", 3)} ${padAnsi("User prompt", promptW)} ${padAnsi("Ctx", ctxW)} ${padLeftAnsi("ΔPrompt", inW)} ${padLeftAnsi("ΔOutput", outW)} ${padLeftAnsi("ΔCache", cacheW)}`
+        `${padAnsi("#", 3)} ${padAnsi("User prompt", promptW)} ${padAnsi("Ctx", ctxW)} ${padLeftAnsi("ΔInput", inW)} ${padLeftAnsi("ΔOutput", outW)} ${padLeftAnsi("ΔCached", cacheW)}`
       )
     );
     const visible = rows.slice(this.scroll, this.scroll + 14);
@@ -423,10 +424,10 @@ class TokenInspector extends PipCustomComponent<void> {
       const prompt = truncateToWidth(r.prompt, promptW);
       const ctxText = `${fmt(r.contextTokens, this.compact)} ${r.contextPercent == null ? "?" : `${Math.round(r.contextPercent)}%`}`;
       const ctxCell = `${padAnsi(ctxText, 9)} ${contextBar(r.contextPercent, 10, th)}`;
-      const promptTokens = promptTokensFromUsage(r);
-      const inCell = `${padLeftAnsi(fmt(promptTokens, this.compact), 8)} ${bar(promptTokens, maxIn, 6, th)}`;
+      const freshInput = freshInputTokensFromUsage(r);
+      const inCell = `${padLeftAnsi(fmt(freshInput, this.compact), 8)} ${bar(freshInput, maxIn, 6, th)}`;
       const outCell = `${padLeftAnsi(fmt(r.output, this.compact), 9)} ${bar(r.output, maxOut, 5, th)}`;
-      const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheWidths.value, cacheWidths.hit)} ${bar(r.cache, maxCache, cacheBarW, th)}`;
+      const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheWidths.value, cacheWidths.hit)} ${bar(r.cacheRead, maxCache, cacheBarW, th)}`;
       lines.push(
         `${padAnsi(idx, 3)} ${padAnsi(prompt, promptW)} ${padAnsi(ctxCell, ctxW)} ${padAnsi(inCell, inW)} ${padAnsi(outCell, outW)} ${padAnsi(cacheCell, cacheW)}`
       );
@@ -464,7 +465,7 @@ class TokenInspector extends PipCustomComponent<void> {
     lines.push("");
     const cacheWidths = cacheColumnWidths(rows, this.compact);
     const cacheW = Math.max("Cache".length, cacheWidths.text);
-    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Calls", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Prompt", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cache", cacheW)} ${padLeftAnsi("Cost", 8)}`));
+    lines.push(th.fg("dim", `${padAnsi("Model/Group", 34)} ${padLeftAnsi("Calls", 5)}   ${padAnsi("Total", 22)} ${padLeftAnsi("Input", 9)} ${padLeftAnsi("Output", 9)} ${padLeftAnsi("Cached", cacheW)} ${padLeftAnsi("Cost", 8)}`));
     const visible = rows.slice(this.scroll, this.scroll + 16);
     visible.forEach((r, i) => {
       const realIndex = this.scroll + i;
@@ -473,7 +474,7 @@ class TokenInspector extends PipCustomComponent<void> {
       const key = truncateToWidth(r.key, 33);
       const totalCell = `${padLeftAnsi(fmt(r.total, this.compact), 8)} ${bar(r.total, maxTotal, 12, th)}`;
       lines.push(`${prefix}${padAnsi(key, 34)} ${padLeftAnsi(String(r.turns), 5)}   ${padAnsi(totalCell, 22)} ${padLeftAnsi(
-        fmt(promptTokensFromUsage(r), this.compact),
+        fmt(freshInputTokensFromUsage(r), this.compact),
         9
       )} ${padLeftAnsi(fmt(r.output, this.compact), 9)} ${padLeftAnsi(formatCacheWithHit(r, this.compact, th, cacheWidths.value, cacheWidths.hit), cacheW)} ${padLeftAnsi(money(r.cost), 8)}`);
     });
@@ -482,7 +483,7 @@ class TokenInspector extends PipCustomComponent<void> {
     if (selected) {
       lines.push("");
       lines.push(th.fg("accent", selected.key));
-      lines.push(`calls ${selected.turns}   prompt ${fmt(promptTokensFromUsage(selected), false)}   output ${fmt(selected.output, false)}   cache ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
+      lines.push(`calls ${selected.turns}   input ${fmt(freshInputTokensFromUsage(selected), false)}   output ${fmt(selected.output, false)}   cached ${formatCacheWithHit(selected, false)}   total ${fmt(selected.total, false)}   cost ${money(selected.cost)}`);
     }
     return lines;
   }

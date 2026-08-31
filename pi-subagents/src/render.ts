@@ -54,7 +54,7 @@ export function compactLine(run: SubagentSnapshot, width: number, theme: any): s
   const bg = run.status === "running" && !run.background ? " · Ctrl+Shift+B bg" : "";
   const err = run.status === "error" ? ` · ${run.errorText ?? "error"}` : "";
   const keep = run.keep ? " · kept" : "";
-  const usage = formatCompactUsage(run.usage, { includeCost: true, inputMode: "raw" });
+  const usage = formatCompactUsage(run.usage, { includeCost: true });
   const usagePart = usage ? ` · ${usage}` : "";
   return truncateToWidth(themeFg(theme, "dim", `› subagent ${run.agent} ${run.id}: `) + `${taskSummary(run.prompt, 48)} · ${state} · ${elapsed(run)} · ${tools} tools${usagePart}${keep}${bg}${err}`, width);
 }
@@ -73,7 +73,7 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
   if (!run) return new Text(firstResultText(result), 0, 0);
   const statusColor = run.status === "error" ? "error" : run.status === "completed" ? "success" : run.status === "cancelled" ? "warning" : "accent";
   const toolCount = run.events.filter((event) => event.type === "tool_start").length;
-  const usage = formatCompactUsage(run.usage, { includeCost: true, inputMode: "raw" });
+  const usage = formatCompactUsage(run.usage, { includeCost: true });
   const summary = [
     themeFg(theme, statusColor, run.status === "completed" ? "done" : run.status),
     run.model || undefined,
@@ -110,7 +110,7 @@ export function renderSubagentResult(result: any, options: any, theme: any) {
 }
 
 export function formatRunStatus(run: SubagentSnapshot): string {
-  const usage = formatCompactUsage(run.usage, { includeCost: true, inputMode: "raw" });
+  const usage = formatCompactUsage(run.usage, { includeCost: true });
   const text = run.errorText
     ? `\nError: ${boundSubagentText(run.errorText, MAX_SUBAGENT_ERROR_CHARS, 40)}`
     : run.resultText ? `\n\n<subagent_result>\n${boundSubagentResult(run.resultText, run.sessionFile, MAX_SUBAGENT_STATUS_CHARS - 1000)}\n</subagent_result>` : "";
