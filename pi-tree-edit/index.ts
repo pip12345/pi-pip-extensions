@@ -234,8 +234,8 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     let common = 0;
     while (common < markPath.length && common < selectedPath.length && markPath[common] === selectedPath[common]) common++;
     const mainIds = new Set([...markPath.slice(common - 1), ...selectedPath.slice(common - 1)]);
-    const visibleIds = new Set(this.visibleRangeEntries(rows, selectedKey).map((entry) => entry.id));
-    const out = rows.map((row) => row.entry).filter((entry) => visibleIds.has(entry.id) && mainIds.has(entry.id));
+    const fullRows = visibleRows(this.draft.entries, "all", new Set(), "", this.draft.targetLeafId);
+    const out = fullRows.map((row) => row.entry).filter((entry) => mainIds.has(entry.id));
     return out.length ? out : this.visibleRangeEntries(rows, selectedKey);
   }
 

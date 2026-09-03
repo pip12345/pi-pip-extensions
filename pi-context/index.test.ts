@@ -92,6 +92,7 @@ describe("pi-context", () => {
     const component = new __test.ContextInspector(tui, makeCtx(), theme, () => { result = "closed"; });
     const main = component.render(100).join("\n");
     expect(main).toContain("Context inspector");
+    expect(main).toContain("latest observed input 105 · cached 10 · output 20 · total 135");
     expect(main).toContain("Context Usage");
     expect(main).toContain("System prompt");
     expect(main).toContain("System tools");

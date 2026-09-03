@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cacheHitRateFromUsage, normalizeUsage, pipPath, promptTokensFromUsage, sessionUsageRecords } from "../../../pip-common/index.ts";
+import { cacheHitRateFromUsage, freshInputTokensFromUsage, normalizeUsage, pipPath, sessionUsageRecords } from "../../../pip-common/index.ts";
 import { buildSessionContext } from "../session-context.ts";
 
 export interface TokenBreakdown {
-  /** Human-facing total prompt-side input: uncached input + cache read + cache write. */
+  /** Prompt tokens processed fresh: uncached input plus cache writes. */
   input: number;
   output: number;
   cacheRead: number;
@@ -20,7 +20,9 @@ export const cacheHitRate = cacheHitRateFromUsage;
 
 export function tokenBreakdownFromUsage(usage: any): TokenBreakdown | undefined {
   const tokens = normalizeUsage(usage);
-  return tokens ? { ...tokens, input: promptTokensFromUsage(tokens), latestCacheHitRate: cacheHitRateFromUsage(tokens) } : undefined;
+  return tokens
+    ? { ...tokens, input: freshInputTokensFromUsage(tokens), cache: tokens.cacheRead, latestCacheHitRate: cacheHitRateFromUsage(tokens) }
+    : undefined;
 }
 
 export function addTokenBreakdown(total: TokenBreakdown, next: TokenBreakdown): void {
@@ -181,7 +183,7 @@ export function diffTokenBreakdown(previous: TokenBreakdown | undefined, next: T
   const cacheRead = Math.max(0, next.cacheRead - previous.cacheRead);
   const cacheWrite = Math.max(0, next.cacheWrite - previous.cacheWrite);
   const total = Math.max(0, next.total - previous.total);
-  const cache = cacheRead + cacheWrite;
+  const cache = cacheRead;
   const cost = Math.max(0, (next.cost ?? 0) - (previous.cost ?? 0));
 
   if (input + output + cache + total + cost <= 0) return undefined;

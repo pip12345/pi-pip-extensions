@@ -8,7 +8,7 @@ Interactive token, cache, context, and cost inspector for Pi sessions and aggreg
 /stats
 ```
 
-The **Session** page shows usage by prompt plus explicit compaction and branch-summary overhead rows, including prompt, output, cache, total-token, context, and cost information. Standard billed tool usage is included in its owning prompt row. The **Global** page groups persisted usage calls by model, provider, or day; tool and summary calls without model attribution appear under `pi/tools/summaries`.
+The **Session** page shows usage by prompt plus explicit compaction and branch-summary overhead rows. Summary columns separate fresh input (uncached input plus cache writes), output, and reused cached input (cache reads); selected-row details expose the provider's raw input, cache-read, and cache-write buckets. Context, total-token, and cost information remain separate. Standard billed tool usage is included in its owning prompt row. The **Global** page groups persisted usage calls by model, provider, or day; tool and summary calls without model attribution appear under `pi/tools/summaries`.
 
 Controls:
 

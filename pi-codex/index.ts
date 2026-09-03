@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerCodexImageGeneration } from "./image-gen.ts";
 
 export const FAST_STATE_ENTRY = "pi-codex-fast-state";
 export const FAST_STATUS_KEY = "codex-fast";
@@ -94,6 +95,8 @@ function statusMessage(enabled: boolean, model: unknown): string {
 }
 
 export default function registerCodexExtension(pi: ExtensionAPI): void {
+  registerCodexImageGeneration(pi);
+
   let enabled = false;
 
   const activateLongContext = (model: unknown) => {
