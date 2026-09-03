@@ -27,6 +27,65 @@ describe("pi-tree-edit", () => {
     expect(getPipSettingsRegistry(pi).section("tree-edit")).toBeUndefined();
   });
 
+  it("retains filtered tool entries when cutting and pasting a range", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tree-edit-filtered-cut-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({ type: "session", id: "session-test" }),
+        JSON.stringify({ type: "message", id: "anchor", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "anchor" }] } }),
+        JSON.stringify({ type: "message", id: "start", parentId: "anchor", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "read file" }] } }),
+        JSON.stringify({ type: "message", id: "tool-call", parentId: "start", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "file.txt" } }], stopReason: "toolUse" } }),
+        JSON.stringify({ type: "message", id: "tool-result", parentId: "tool-call", timestamp: "2026-01-01T00:00:03.000Z", message: { role: "toolResult", toolName: "read", toolCallId: "call_1", content: [{ type: "text", text: "file contents" }] } }),
+        JSON.stringify({ type: "message", id: "end", parentId: "tool-result", timestamp: "2026-01-01T00:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "done" }] } }),
+        JSON.stringify({ type: "message", id: "tail", parentId: "end", timestamp: "2026-01-01T00:00:05.000Z", message: { role: "user", content: [{ type: "text", text: "tail" }] } }),
+      ].join("\n") + "\n",
+    );
+
+    try {
+      const pi = createMockPi();
+      treeEdit(pi as any);
+      const ctx: any = {
+        waitForIdle: async () => undefined,
+        switchSession: async (_file: string, opts: any) => opts.withSession({ navigateTree: async () => undefined, ui: { notify: () => undefined } }),
+        sessionManager: { getSessionFile: () => sessionFile, getLeafId: () => "tail" },
+        ui: {
+          custom: async (factory: any) => {
+            let result: any;
+            const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text };
+            const component = factory({ requestRender() {} }, theme, undefined, (value: any) => { result = value; }) as any;
+            component.handleInput("k");
+            component.handleInput("v");
+            component.handleInput("k");
+            component.handleInput("c");
+            expect(component.render(120).join("\n")).toContain("Cut 4 entries");
+            component.handleInput("p");
+            component.handleInput("q");
+            return result;
+          },
+          select: async () => "Save and quit",
+          notify: () => undefined,
+        },
+      };
+
+      await runCommand(pi, "tree-edit", "", ctx);
+
+      const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(entries.some((entry) => entry.id === "tool-call" || entry.id === "tool-result")).toBe(false);
+      const copiedStart = entries.find((entry) => entry.message?.content?.[0]?.text === "read file");
+      const copiedCall = entries.find((entry) => entry.message?.content?.[0]?.type === "toolCall");
+      const copiedResult = entries.find((entry) => entry.message?.role === "toolResult");
+      const copiedEnd = entries.find((entry) => entry.message?.content?.[0]?.text === "done");
+      expect(copiedStart?.parentId).toBe("tail");
+      expect(copiedCall?.parentId).toBe(copiedStart?.id);
+      expect(copiedResult?.parentId).toBe(copiedCall?.id);
+      expect(copiedEnd?.parentId).toBe(copiedResult?.id);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("atomically persists the selected current leaf as the effective final record", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tree-edit-leaf-"));
     const sessionFile = join(dir, "session.jsonl");
