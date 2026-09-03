@@ -6,6 +6,14 @@ import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entry
 
 const DEFAULT_SUMMARY_SETTINGS: SummarySnapshotPolicy = { summarySnapshots: true, snapshotToolResults: "truncated", toolResultTruncation: 20000 };
 
+function summaryStreamThroughModelRegistry(ctx: Ctx): any {
+  // The model runtime owns resolved endpoints, provider-specific auth, environment,
+  // and custom stream handlers. The summary helper only needs the result() contract.
+  return (model: any, context: any, options: any) => ({
+    result: () => ctx.modelRegistry.complete(model, context, options),
+  });
+}
+
 function newId(existing: Set<string>): string {
   for (let i = 0; i < 100; i++) {
     const id = randomUUID().slice(0, 8);
@@ -375,23 +383,18 @@ export class DraftSession {
       this.message = "No active model for compaction";
       return null;
     }
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
-    if (!auth?.ok) {
-      this.message = auth?.error || "No API key for active model";
-      return null;
-    }
-
     ctx.ui.notify(`Compacting ${compactedEntries.length} entries before ${selectedId}...`, "info");
     const generatedResult = await generateSummaryWithUsage(
       messages,
       ctx.model,
       4096,
-      auth.apiKey,
-      auth.headers,
+      undefined,
+      undefined,
       ctx.signal,
       "Summarize the session entries before the selected message as a compaction checkpoint. Preserve user goals, constraints, decisions, file changes, commands run, errors, unresolved tasks, and current state. The selected message and later entries will remain after this summary.",
       undefined,
-      "off"
+      "off",
+      summaryStreamThroughModelRegistry(ctx)
     );
     const generated = generatedResult.text.trim();
     const summary = await ctx.ui.editor("Review compaction summary", generated);
@@ -556,22 +559,18 @@ export class DraftSession {
       this.message = "No messages in selected range to summarize";
       return;
     }
-    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
-    if (!auth?.ok) {
-      this.message = auth?.error || "No API key for active model";
-      return;
-    }
     ctx.ui.notify(`Summarizing ${entries.length} entries...`, "info");
     let generated = await generateSummary(
       messages,
       ctx.model,
       4096,
-      auth.apiKey,
-      auth.headers,
+      undefined,
+      undefined,
       ctx.signal,
       "Summarize the selected session entries so this summary can be injected into another branch as context. Preserve decisions, constraints, file changes, commands run, errors, unresolved tasks, user preferences, and final state.",
       undefined,
-      "off"
+      "off",
+      summaryStreamThroughModelRegistry(ctx)
     );
     generated = generated.trim();
     const summary = await ctx.ui.editor("Review branch/range summary", generated);
