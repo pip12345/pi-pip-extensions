@@ -40,7 +40,9 @@ export interface MockPi {
   userMessages: any[];
   entries: any[];
   markdownTransformers: any[];
+  providerRegistrations: any[];
   events: MockEventBus;
+  registerProvider(providerOrName: any, config?: any): void;
   registerTool(tool: any): void;
   registerCommand(name: string, command: any): void;
   registerShortcut(shortcut: string, shortcutDef: any): void;
@@ -61,7 +63,11 @@ export function createMockPi(events = createMockEventBus().facade()): MockPi {
     userMessages: [],
     entries: [],
     markdownTransformers: [],
+    providerRegistrations: [],
     events,
+    registerProvider(providerOrName: any, config?: any) {
+      this.providerRegistrations.push(config === undefined ? providerOrName : { name: providerOrName, config });
+    },
     registerTool(tool: any) {
       this.tools.set(tool.name, tool);
     },
