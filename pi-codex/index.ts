@@ -7,9 +7,10 @@ export const FAST_SERVICE_TIER = "priority";
 export const LONG_CONTEXT_WINDOW = 1_050_000;
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
-const LONG_CONTEXT_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
 const OPENAI_CODEX_API = "openai-codex-responses";
+const LONG_CONTEXT_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
 const DOCUMENTED_FAST_MODEL_FAMILY = /^gpt-5\.(?:4|5|6)(?:$|-)/;
+const DOCUMENTED_FAST_MODEL_IDS = new Set(["gpt-6-astra"]);
 
 interface FastStateEntryData {
   enabled: boolean;
@@ -50,7 +51,7 @@ export function isFastCapableCodexModel(model: unknown): model is FastModelLike 
   if (model.provider !== OPENAI_CODEX_PROVIDER || model.api !== OPENAI_CODEX_API || typeof model.id !== "string") return false;
 
   const explicitCapability = explicitFastCapability(model);
-  return explicitCapability ?? DOCUMENTED_FAST_MODEL_FAMILY.test(model.id);
+  return explicitCapability ?? (DOCUMENTED_FAST_MODEL_FAMILY.test(model.id) || DOCUMENTED_FAST_MODEL_IDS.has(model.id));
 }
 
 /** Patch only a fully recognizable Codex Responses request and never replace another tier. */
