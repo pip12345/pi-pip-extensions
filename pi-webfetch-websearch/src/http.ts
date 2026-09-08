@@ -165,7 +165,12 @@ async function requestOnce(url: URL, options: WebRequestOptions): Promise<Respon
         : undefined,
     }, (message) => {
       const status = message.statusCode ?? 0;
-      const hasBody = ![101, 204, 205, 304].includes(status);
+      if (status < 200 || status > 599) {
+        message.resume();
+        reject(new Error(`Fetch failed: unsupported HTTP status ${status}.`));
+        return;
+      }
+      const hasBody = ![204, 205, 304].includes(status);
       if (!hasBody) message.resume();
       const body = hasBody ? (Readable.toWeb(message) as ReadableStream<Uint8Array>) : null;
       resolve(new Response(body, { status, statusText: message.statusMessage, headers: responseHeaders(message) }));
