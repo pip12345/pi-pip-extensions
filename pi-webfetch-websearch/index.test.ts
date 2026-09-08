@@ -192,6 +192,17 @@ describe("pi-webfetch-websearch", () => {
     });
   });
 
+  it("rejects unsupported HTTP statuses without crashing", async () => {
+    await withServer((_req, res) => {
+      res.statusCode = 999;
+      res.end("request blocked");
+    }, async (base) => {
+      const pi = createWebPi();
+      await expect(exec(getRegisteredTool(pi, "webfetch"), { url: base, format: "text" }))
+        .rejects.toThrow("Fetch failed: unsupported HTTP status 999.");
+    });
+  });
+
   it("follows validated redirects and reports the final URL", async () => {
     await withServer((req, res) => {
       if (req.url === "/redirect") {
