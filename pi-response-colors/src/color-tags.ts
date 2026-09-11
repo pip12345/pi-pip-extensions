@@ -6,10 +6,11 @@ type ColorTagToken = {
   start: number;
   end: number;
   color: ColorTagName;
+  delimiter: "[" | "<";
   closing: boolean;
 };
 
-const COLOR_TAG_PATTERN = /^\[(\/)?(red|yellow|green|cyan|magenta)\]/i;
+const COLOR_TAG_PATTERN = /^([\[<])(\/)?(red|yellow|green|cyan|magenta)([\]>])/i;
 const ANSI_FOREGROUND: Record<ColorTagName, string> = {
   red: "\x1b[31m",
   yellow: "\x1b[33m",
@@ -45,11 +46,14 @@ function tagAt(source: string, index: number): ColorTagToken | undefined {
   if (isEscaped(source, index)) return undefined;
   const match = COLOR_TAG_PATTERN.exec(source.slice(index));
   if (!match) return undefined;
+  const delimiter = match[1] as ColorTagToken["delimiter"];
+  if (match[4] !== (delimiter === "[" ? "]" : ">")) return undefined;
   return {
     start: index,
     end: index + match[0].length,
-    color: match[2]!.toLowerCase() as ColorTagName,
-    closing: Boolean(match[1]),
+    color: match[3]!.toLowerCase() as ColorTagName,
+    delimiter,
+    closing: Boolean(match[2]),
   };
 }
 
@@ -100,7 +104,7 @@ function collectColorTags(source: string): ColorTagToken[] {
       continue;
     }
 
-    if (char === "[" && inlineTicks === 0) {
+    if ((char === "[" || char === "<") && inlineTicks === 0) {
       const tag = tagAt(source, cursor);
       if (tag) {
         tags.push(tag);
@@ -126,7 +130,7 @@ function pairColorTags(tags: readonly ColorTagToken[]): Map<number, ColorTagToke
     }
 
     const opener = stack.at(-1);
-    if (!opener || opener.color !== tag.color) continue;
+    if (!opener || opener.color !== tag.color || opener.delimiter !== tag.delimiter) continue;
     stack.pop();
     pairs.set(opener.start, tag);
     pairs.set(tag.start, opener);
