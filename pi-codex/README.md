@@ -2,7 +2,13 @@
 
 Codex-specific features for Pi's built-in `openai-codex` provider.
 
-GPT-6 Astra uses Pi's native model catalog (available in Pi `0.85.1` and later). This package does not register models or replace the provider.
+## GPT-6 models
+
+The package adds `gpt-6-sol` and `gpt-6-luna` to Pi's native Codex catalog while preserving the built-in provider's ChatGPT authentication and transport. If a later Pi release supplies either model natively, Pi's definition takes precedence.
+
+Both models support text and image input, 128K output, reasoning levels through `max`, and OpenAI's Codex Responses tool capabilities. Their catalog entries retain the short-context pricing boundary described below.
+
+GPT-6 Astra is native in Pi `0.85.1` and later.
 
 ## Long context
 
@@ -12,10 +18,12 @@ The package always sets a `1,050,000` token context window when any of these mod
 - `gpt-5.6-terra`
 - `gpt-5.6-luna`
 - `gpt-6-astra`
+- `gpt-6-sol`
+- `gpt-6-luna`
 
-Pi intentionally defaults these models to `272,000` tokens so requests stay in OpenAI's short-context pricing tier. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
+Pi and this package intentionally default these models to `272,000` tokens so requests stay in OpenAI's short-context pricing tier. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
 
-Pi's pre-session `--list-models` output still shows the raw built-in `272K` value, including for Astra. After a supported model is selected, the active session, footer, context accounting, and compaction threshold use `1.05M`.
+Pi's pre-session `--list-models` output still shows the raw `272K` value. After a supported model is selected, the active session, footer, context accounting, and compaction threshold use `1.05M`.
 
 ## Fast mode
 
