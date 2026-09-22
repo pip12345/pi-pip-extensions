@@ -1,4 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { registerProviderOverrideContributor } from "../pip-common/index.ts";
 import { registerCodexImageGeneration } from "./image-gen.ts";
 
 export const FAST_STATE_ENTRY = "pi-codex-fast-state";
@@ -8,9 +11,64 @@ export const LONG_CONTEXT_WINDOW = 1_050_000;
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_API = "openai-codex-responses";
-const LONG_CONTEXT_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
+const SHORT_CONTEXT_WINDOW = 272_000;
+const LONG_CONTEXT_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]);
 const DOCUMENTED_FAST_MODEL_FAMILY = /^gpt-5\.(?:4|5|6)(?:$|-)/;
-const DOCUMENTED_FAST_MODEL_IDS = new Set(["gpt-6-astra"]);
+const DOCUMENTED_FAST_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]);
+
+const GPT_6_CODEX_MODELS = [
+  {
+    id: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    api: OPENAI_CODEX_API,
+    provider: OPENAI_CODEX_PROVIDER,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
+      tiers: [{ inputTokensAbove: SHORT_CONTEXT_WINDOW, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
+    },
+    contextWindow: SHORT_CONTEXT_WINDOW,
+    maxTokens: 128_000,
+    thinkingLevelMap: { minimal: "low", xhigh: "xhigh", max: "max" },
+    compat: { supportsOpenAIGrammarTools: true, supportsAdditionalTools: true, supportsToolSearch: true },
+  },
+  {
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    api: OPENAI_CODEX_API,
+    provider: OPENAI_CODEX_PROVIDER,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.1,
+      output: 0.5,
+      cacheRead: 0.01,
+      cacheWrite: 0.125,
+      tiers: [{ inputTokensAbove: SHORT_CONTEXT_WINDOW, input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0.25 }],
+    },
+    contextWindow: SHORT_CONTEXT_WINDOW,
+    maxTokens: 128_000,
+    thinkingLevelMap: { minimal: "low", xhigh: "xhigh", max: "max" },
+    compat: { supportsOpenAIGrammarTools: true, supportsAdditionalTools: true, supportsToolSearch: true },
+  },
+] satisfies Model<"openai-codex-responses">[];
+
+export function extendOpenAICodexModels(models: readonly Model<Api>[]): Model<Api>[] {
+  const existingIds = new Set(models.map((model) => model.id));
+  return [...models, ...GPT_6_CODEX_MODELS.filter((model) => !existingIds.has(model.id))];
+}
+
+export function openAICodexModels(): Model<Api>[] {
+  const provider = builtinProviders().find((candidate) => candidate.id === OPENAI_CODEX_PROVIDER);
+  if (!provider) throw new Error("Pi's built-in openai-codex provider is unavailable");
+  return extendOpenAICodexModels(provider.getModels());
+}
 
 interface FastStateEntryData {
   enabled: boolean;
@@ -97,6 +155,7 @@ function statusMessage(enabled: boolean, model: unknown): string {
 
 export default function registerCodexExtension(pi: ExtensionAPI): void {
   registerCodexImageGeneration(pi);
+  registerProviderOverrideContributor(pi, { id: "pi-codex", role: "catalog" }).set(OPENAI_CODEX_PROVIDER, { models: openAICodexModels() });
 
   let enabled = false;
 
