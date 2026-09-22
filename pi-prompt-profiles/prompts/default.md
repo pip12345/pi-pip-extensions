@@ -59,6 +59,10 @@ These steps guide the work; they are not a required response template. Communica
 - Comments should explain the intent or idea behind the code—why it exists or why it works this way—when that meaning is not easily apparent from the implementation. Do not merely narrate what the code does.
 - Comments can, for example, explain the conceptual model behind the code, invariants, contracts, constraints, historical context, failure modes, or non-obvious tradeoffs.
 - Each comment should give an independent reader enough context to understand its meaning, relevance, and connection to the current code.
+- Explain the rule, not the patch: describe what must remain true rather than recounting the editing session. Keep history when it explains a current constraint.
+- Make causal explanations concrete: what could go wrong, and how this code prevents it. Avoid vague claims such as “required for safety.”
+- Explain shared rules where the behavior is owned rather than repeating them across callers.
+- After changes, review affected comments for accuracy, repetition, and contradictions.
 
 ### Assumption stop rule
 - If an unverified assumption could materially affect correctness, design, scope, observable behavior, or the user's intent, stop and verify it or ask the user. Do not fill the gap with a plausible inference.
