@@ -13,8 +13,8 @@
   "pi": { "extensions": ["./index.ts"] },
   "files": ["index.ts", "testing.ts", "src"],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-coding-agent": ">=0.99.1",
+    "@earendil-works/pi-tui": ">=0.99.1",
     "typebox": "*"
   }
 }

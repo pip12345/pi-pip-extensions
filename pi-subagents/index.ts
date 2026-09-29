@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ModelRuntime, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { hasTuiCustom, registerPipTool } from "../pip-common/index.ts";
+import { hasTuiCustom, registerPipTool, setPromptInstructions } from "../pip-common/index.ts";
 import { discoverAgents, formatAgent, AGENT_TEMPLATE } from "./src/agents.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { RealRunner } from "./src/runner.ts";
@@ -189,7 +189,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
       if (!settings.get("enabled", true)) return;
       const block = agentNamesPrompt(ctx?.cwd ?? process.cwd(), projectTrusted(ctx));
       if (!block) return;
-      return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${block}`.trim() };
+      setPromptInstructions(event.systemPromptOptions, "pip_subagents", block);
     });
     pi.on("session_shutdown", async (event: any, ctx: any) => {
       if (event?.reason === "quit" || event?.reason === "reload") {

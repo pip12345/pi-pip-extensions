@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensurePipSubdir, pipPath, registerSettingsSection, setting, settingsFor } from "../pip-common/index.ts";
+import { ensurePipSubdir, pipPath, registerSettingsSection, setPromptInstructions, setting, settingsFor } from "../pip-common/index.ts";
 
 type Mode = "append" | "prepend" | "replace";
 type ProfileSource = "bundled" | "user";
@@ -105,7 +105,11 @@ export default function promptProfilesExtension(pi: ExtensionAPI) {
     const profileText = readSelectedProfile(profileId);
     if (!profileText) return;
     const mode = settingValue<Mode>("mode", "append");
-    return { systemPrompt: applyPromptProfile(event.systemPrompt ?? "", profileText, mode) };
+    if (mode === "append") {
+      setPromptInstructions(event.systemPromptOptions, "pip_prompt_profile", profileText);
+    } else {
+      event.systemPromptOptions.forceSystemPrompt = applyPromptProfile(event.systemPrompt, profileText, mode);
+    }
   });
 }
 

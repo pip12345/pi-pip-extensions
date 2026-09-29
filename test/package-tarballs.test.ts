@@ -22,7 +22,6 @@ let featurePacks: PackResult[];
 const EXPECTED_STANDALONE_TOOLS: Record<string, string[]> = {
   "pi-question": ["question"],
   "pi-subagents": ["subagent"],
-  "pi-tiny-mcp": ["tiny-mcp"],
   "pi-todo": ["todo_read", "todo_update", "todo_write"],
   "pi-tool-ui": ["edit", "find", "grep", "ls", "read"],
 };
@@ -77,7 +76,7 @@ afterAll(() => {
 
 describe("standalone package tarballs", () => {
   it("bundle pip-common and contain only runtime TypeScript", () => {
-    expect(featurePacks).toHaveLength(16);
+    expect(featurePacks).toHaveLength(15);
     for (const pack of featurePacks) {
       expect(pack.files.some((file) => file.path === "node_modules/pip-common/index.ts"), `${pack.name} bundles common`).toBe(true);
       expect(pack.files.some((file) => file.path.endsWith(".test.ts")), `${pack.name} excludes tests`).toBe(false);

@@ -4,7 +4,7 @@ Interactive opencode-style `question` tool for pi.
 
 ## Tool
 
-`question` asks one or more structured questions and waits for the user to answer.
+`question` asks one or more structured questions and waits for the user to answer. It is exposed directly to the model, not to codemode scripts.
 
 ```ts
 {

@@ -19,7 +19,7 @@ type SlotAdapter = {
 };
 
 const toolCache = new Map<string, BuiltIns>();
-const COMPACT_PIP_TOOLS = new Set(["todo_write", "todo_update", "todo_read", "tiny-mcp"]);
+const COMPACT_PIP_TOOLS = new Set(["todo_write", "todo_update", "todo_read"]);
 
 function createBuiltInTools(cwd: string): BuiltIns {
   return {

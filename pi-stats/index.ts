@@ -42,6 +42,8 @@ interface SessionRow extends Tokens {
   subagentCount: number;
   toolUsageCount: number;
   summaryCount: number;
+  usageCount: number;
+  background: Tokens;
   parent: Tokens;
   subagents: Tokens;
   toolsAndSummaries: Tokens;
@@ -137,6 +139,8 @@ function emptySessionRow(modelWindow: number, prompt: string, timestamp: number)
     subagentCount: 0,
     toolUsageCount: 0,
     summaryCount: 0,
+    usageCount: 0,
+    background: emptyTokens(),
     parent: emptyTokens(),
     subagents: emptyTokens(),
     toolsAndSummaries: emptyTokens(),
@@ -190,7 +194,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
   };
 
   const finishCurrent = () => {
-    if (current && (current.assistantCount > 0 || current.subagentCount > 0 || current.toolUsageCount > 0 || current.summaryCount > 0)) {
+    if (current && (current.assistantCount > 0 || current.subagentCount > 0 || current.toolUsageCount > 0 || current.summaryCount > 0 || current.usageCount > 0)) {
       current.index = ++idx;
       addTokens(cumulative, current);
       current.cumulative = { ...cumulative };
@@ -261,6 +265,16 @@ function buildSessionRows(ctx: any): SessionRow[] {
     }
 
     const summary = sessionUsageRecord(entry);
+    if (summary?.kind === "usage") {
+      finishCurrent();
+      current = emptySessionRow(modelWindow, `(${(summary.operation ?? "usage").replaceAll("_", " ")})`, summary.timestamp ?? Date.now());
+      addTokens(current, summary.usage);
+      addTokens(current.background, summary.usage);
+      current.provider = summary.provider ?? "unknown";
+      current.model = summary.model ?? "unknown";
+      current.usageCount = 1;
+      finishCurrent();
+    }
     if (summary?.kind === "compaction" || summary?.kind === "branch_summary") {
       finishCurrent();
       current = emptySessionRow(modelWindow, summary.kind === "compaction" ? "(compaction)" : "(branch summary)", summary.timestamp ?? Date.now());
@@ -441,6 +455,7 @@ class TokenInspector extends PipCustomComponent<void> {
         selected.subagentCount ? `${selected.subagentCount} subagent(s)` : "",
         selected.toolUsageCount ? `${selected.toolUsageCount} billed tool(s)` : "",
         selected.summaryCount ? `${selected.summaryCount} summary call(s)` : "",
+        selected.usageCount ? `${selected.usageCount} background call(s)` : "",
       ].filter(Boolean).join(" · ");
       lines.push(th.fg("accent", `Prompt ${selected.index} details`) + th.fg("dim", `  ${selected.provider}/${selected.model} · ${detailCounts}`));
       lines.push(tokenDetailRow("delta", selected, this.compact));
@@ -449,6 +464,7 @@ class TokenInspector extends PipCustomComponent<void> {
         lines.push(tokenDetailRow("subagt", selected.subagents, this.compact));
       }
       if (selected.toolUsageCount > 0 || selected.summaryCount > 0) lines.push(tokenDetailRow("tools", selected.toolsAndSummaries, this.compact));
+      if (selected.usageCount > 0) lines.push(tokenDetailRow("bg", selected.background, this.compact));
       lines.push(tokenDetailRow("total", selected.cumulative, this.compact));
       lines.push(`ctx at prompt ${fmt(selected.contextTokens, this.compact)} / ${fmt(selected.contextWindow, this.compact)} (${selected.contextPercent == null ? "?" : `${Math.round(selected.contextPercent)}%`})`);
       lines.push(th.fg("dim", truncateToWidth(selected.prompt, width - 4)));
@@ -509,6 +525,26 @@ export default function (pi: ExtensionAPI) {
     });
   };
 
+  const syncUsageEntries = (ctx: any) => {
+    for (const entry of ctx.sessionManager.getEntries()) {
+      const record = sessionUsageRecord(entry);
+      if (record?.kind !== "usage" || !record.entryId) continue;
+      recordUsage(ctx, { ...record, identity: [record.entryId] });
+    }
+  };
+
+  // Cache warming emits an SDK entry_appended event, not an extension event.
+  // Read new usage entries at observable boundaries; startup seeds existing
+  // entries so resuming does not re-add already compacted global usage.
+  pi.on("session_start", (_event: any, ctx: any) => {
+    for (const entry of ctx.sessionManager.getEntries()) {
+      if (entry.type === "usage") seen.add(hashId([ctx.sessionManager.getSessionFile?.(), "usage", entry.id]));
+    }
+  });
+  pi.on("before_agent_start", (_event: any, ctx: any) => syncUsageEntries(ctx));
+  pi.on("agent_settled", (_event: any, ctx: any) => syncUsageEntries(ctx));
+  pi.on("session_shutdown", (_event: any, ctx: any) => syncUsageEntries(ctx));
+
   pi.on("message_end", (event: any, ctx: any) => {
     const msg = event.message;
     if (msg?.role !== "assistant" && msg?.role !== "toolResult") return;
@@ -525,12 +561,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_compact", (event: any, ctx: any) => {
+    syncUsageEntries(ctx);
     const record = sessionUsageRecord(event.compactionEntry);
     if (!record) return;
     recordUsage(ctx, { kind: record.kind, usage: record.usage, timestamp: record.timestamp, identity: [record.entryId ?? event.compactionEntry?.timestamp] });
   });
 
   pi.on("session_tree", (event: any, ctx: any) => {
+    syncUsageEntries(ctx);
     const record = sessionUsageRecord(event.summaryEntry);
     if (!record) return;
     recordUsage(ctx, { kind: record.kind, usage: record.usage, timestamp: record.timestamp, identity: [record.entryId ?? event.summaryEntry?.timestamp] });
@@ -539,6 +577,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("stats", {
     description: "Open token usage inspector (session and global pages)",
     handler: async (_args: string, ctx: any) => {
+      syncUsageEntries(ctx);
       if (!hasTuiCustom(ctx)) {
         ctx.ui?.notify?.("/stats requires interactive TUI", "warning");
         return;

@@ -57,7 +57,7 @@ export function normalizeUsageEvent(value: any): GlobalUsageEvent | undefined {
   if (hasInvalidStoredUsageField(value)) return undefined;
   const usage = normalizeUsage(value);
   if (!usage || usage.total <= 0) return undefined;
-  const kind = ["assistant", "tool", "compaction", "branch_summary"].includes(value.kind) ? value.kind : undefined;
+  const kind = ["assistant", "tool", "compaction", "branch_summary", "usage"].includes(value.kind) ? value.kind : undefined;
   return {
     ...(typeof value.id === "string" && value.id ? { id: value.id } : {}),
     ...(kind ? { kind } : {}),

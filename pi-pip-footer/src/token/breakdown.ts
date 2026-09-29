@@ -73,6 +73,8 @@ function persistedSessionTokenAggregate(ctx: any): TimedBreakdown {
   for (const record of sessionUsageRecords(entries)) {
     const usage = tokenBreakdownFromUsage(record.usage);
     if (!usage) continue;
+    // A warming replay's cache hit is not the latest conversational request.
+    if (record.kind === "usage") delete usage.latestCacheHitRate;
     addTokenBreakdown(total, usage);
     const ts = record.timestamp ?? -Infinity;
     if (usage.latestCacheHitRate !== undefined && ts >= latestTs) {

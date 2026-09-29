@@ -10,3 +10,5 @@ Settings:
 
 - Profile: selected markdown file or off
 - Mode: append, prepend, or replace
+
+Append mode uses a named prompt section so Pi records profile changes without replacing the whole prompt. Prepend and replace intentionally override the complete prompt; later extension instructions remain visible.

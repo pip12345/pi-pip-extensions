@@ -9,10 +9,9 @@ import subagents from "../pi-subagents/index.ts";
 import treeEdit from "../pi-tree-edit/index.ts";
 import undoRedo from "../pi-undo-redo/index.ts";
 import web from "../pi-webfetch-websearch/index.ts";
-import tinyMcp from "../pi-tiny-mcp/index.ts";
 import { createMockPi } from "../pip-common/testing.ts";
 
-const extensions = [pipFooter, toolUi, promptProfiles, secretsGuard, todo, subagents, treeEdit, undoRedo, web, tinyMcp];
+const extensions = [pipFooter, toolUi, promptProfiles, secretsGuard, todo, subagents, treeEdit, undoRedo, web];
 
 describe("pip settings descriptions", () => {
   it("all registered pip settings have concise descriptions", () => {
@@ -29,6 +28,6 @@ describe("pip settings descriptions", () => {
     }
 
     expect(missing).toEqual([]);
-    expect(getPipSettingsRegistry(owner).rows()).toHaveLength(34);
+    expect(getPipSettingsRegistry(owner).rows()).toHaveLength(33);
   });
 });

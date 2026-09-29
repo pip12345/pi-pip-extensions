@@ -8,7 +8,7 @@ export interface TokenUsage {
   cost: number;
 }
 
-export type SessionUsageKind = "assistant" | "tool" | "compaction" | "branch_summary";
+export type SessionUsageKind = "assistant" | "tool" | "compaction" | "branch_summary" | "usage";
 
 export interface SessionUsageRecord {
   kind: SessionUsageKind;
@@ -18,6 +18,7 @@ export interface SessionUsageRecord {
   provider?: string;
   model?: string;
   toolName?: string;
+  operation?: string;
 }
 
 export function emptyUsage(): TokenUsage {
@@ -108,6 +109,20 @@ export function sessionUsageRecord(entry: any): SessionUsageRecord | undefined {
       entryId,
       timestamp: usageTimestamp(message.timestamp) ?? usageTimestamp(entry.timestamp),
       toolName: typeof message.toolName === "string" ? message.toolName : undefined,
+    };
+  }
+
+  if (entry.type === "usage") {
+    const usage = normalizeUsage(entry.usage);
+    if (!usage) return undefined;
+    return {
+      kind: "usage",
+      operation: typeof entry.kind === "string" ? entry.kind : undefined,
+      usage,
+      entryId,
+      timestamp: usageTimestamp(entry.timestamp),
+      provider: typeof entry.provider === "string" ? entry.provider : undefined,
+      model: typeof entry.model === "string" ? entry.model : undefined,
     };
   }
 

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import promptProfiles, { __test } from "./index.ts";
-import { createMockPi } from "../pip-common/testing.ts";
+import { createMockPi, emitEvent } from "../pip-common/testing.ts";
 import { getPipSettingsRegistry } from "../pip-common/index.ts";
 
 describe("pi-prompt-profiles", () => {
@@ -16,6 +16,24 @@ describe("pi-prompt-profiles", () => {
     expect(settings.definition(__test.SETTINGS_ID)?.enabled).toBeUndefined();
     expect(settings.definition(__test.SETTINGS_ID)?.profile.default).toBe("default.md");
     expect(settings.definition(__test.SETTINGS_ID)?.mode.default).toBe("append");
+  });
+
+  it.each(["append", "prepend", "replace"])("preserves %s profile behavior through structured prompt options", async (mode) => {
+    const pi = createMockPi();
+    promptProfiles(pi as any);
+    getPipSettingsRegistry(pi).set("prompt-profiles.mode", mode);
+    const profile = __test.readSelectedProfile("default.md")!;
+    const event = {
+      systemPrompt: "base",
+      systemPromptOptions: { sections: {} as Record<string, string>, forceSystemPrompt: undefined as string | undefined },
+    };
+    expect(await emitEvent(pi, "before_agent_start", event)).toEqual([undefined]);
+    if (mode === "append") {
+      expect(event.systemPromptOptions.sections.pip_prompt_profile).toBe(profile);
+      expect(event.systemPromptOptions.forceSystemPrompt).toBeUndefined();
+    } else {
+      expect(event.systemPromptOptions.forceSystemPrompt).toBe(__test.applyPromptProfile("base", profile, mode as "prepend" | "replace"));
+    }
   });
 
   it("discovers markdown profiles from a prompt directory", () => {

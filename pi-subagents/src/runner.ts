@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { addUsage, emptyUsage, normalizeUsage, pipPath } from "../../pip-common/index.ts";
+import { addUsage, emptyUsage, pipPath, sessionUsageRecord } from "../../pip-common/index.ts";
 import type { AgentTools, LaunchInput, Runner, SubagentRun } from "./types.ts";
 import { BUILTIN_TOOL_NAMES } from "./agents.ts";
 import { parseModelRef } from "./model-ref.ts";
@@ -162,11 +162,15 @@ export class RealRunner implements Runner {
           const text = textFromMessage(event.message);
           lastAssistantText = text;
           if (text) run.resultText = boundSubagentResult(text, run.sessionFile);
-          const usage = normalizeUsage(event.message.usage);
-          if (usage) {
-            run.usage ??= emptyUsage();
-            addUsage(run.usage, usage);
-          }
+        }
+        const billed = event.type === "message_end"
+          ? sessionUsageRecord({ type: "message", message: event.message })
+          : event.type === "entry_appended" && event.entry?.type === "usage"
+            ? sessionUsageRecord(event.entry)
+            : undefined;
+        if (billed) {
+          run.usage ??= emptyUsage();
+          addUsage(run.usage, billed.usage);
         }
         run.updatedAt = now;
         run.persist?.();

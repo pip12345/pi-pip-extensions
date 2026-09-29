@@ -54,7 +54,7 @@ describe("pi-question", () => {
     const pi = createMockPi();
     extension(pi as any);
     flushPipTools(pi as any);
-    expect(getRegisteredTool(pi, "question")).toBeTruthy();
+    expect(getRegisteredTool(pi, "question").exposure).toBe("model-only");
   });
 
   it("returns answered output", async () => {

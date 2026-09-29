@@ -112,6 +112,37 @@ describe("pi-stats", () => {
     expect(rows[1].cumulative).toMatchObject({ input: 25, output: 8, cost: 0.03 });
   });
 
+  it("shows warming and unknown usage operations as model-attributed overhead rows", async () => {
+    const { __test } = await loadStatsModule();
+    const entries = ["cache_warm", "future_operation"].map((kind, index) => ({
+      type: "usage", id: `usage${index}`, kind, provider: "anthropic", model: "claude-sonnet",
+      timestamp: "2026-06-01T12:00:00.000Z", usage: { cacheRead: 50_000, cost: { total: 0.015 } },
+    }));
+    const rows = __test.buildSessionRows(createMockCtx({ entries }));
+    expect(rows.map((row: any) => row.prompt)).toEqual(["(cache warm)", "(future operation)"]);
+    expect(rows[0]).toMatchObject({ provider: "anthropic", model: "claude-sonnet", usageCount: 1, cacheRead: 50_000, cost: 0.015 });
+    expect(rows[1].cumulative).toMatchObject({ cacheRead: 100_000, cost: 0.03 });
+  });
+
+  it("records newly persisted warming usage once at run boundaries without backfilling old entries", async () => {
+    const stats = await loadStats();
+    const pi = createMockPi();
+    stats(pi as any);
+    const warming = (id: string) => ({
+      type: "usage", id, kind: "cache_warm", provider: "anthropic", model: "claude-sonnet",
+      timestamp: "2026-06-01T12:00:00.000Z", usage: { cacheRead: 50_000, cost: { total: 0.015 } },
+    });
+    const entries = [warming("already-observed")];
+    const ctx = createMockCtx({ entries });
+    await emitEvent(pi, "session_start", {}, ctx);
+    entries.push(warming("new"));
+    await emitEvent(pi, "agent_settled", {}, ctx);
+    await emitEvent(pi, "before_agent_start", {}, ctx);
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+    const { readRollups } = await loadStorage();
+    expect(readRollups().buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({ turns: 1, cacheRead: 50_000, cost: 0.015 });
+  });
+
   it("formats cache hit rate from prompt-side cache reads", async () => {
     const { __test } = await loadStatsModule();
     expect(__test.cacheHitRate({ input: 1000, cacheRead: 3000, cacheWrite: 0 })).toBe(75);
