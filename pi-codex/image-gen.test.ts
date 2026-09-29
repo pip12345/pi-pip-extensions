@@ -121,6 +121,25 @@ describe("Codex image files", () => {
     expect(() => decodeGeneratedImage("not base64", "png")).toThrow("invalid base64");
     expect(() => decodeGeneratedImage(jpegBytes.toString("base64"), "png")).toThrow("does not match");
   });
+
+  it("validates large image payloads without overflowing the stack", () => {
+    const bytes = Buffer.alloc(8 * 1024 * 1024);
+    pngBytes.copy(bytes);
+    expect(decodeGeneratedImage(bytes.toString("base64"), "png").equals(bytes)).toBe(true);
+  });
+
+  it.each([
+    "",
+    "====",
+    "iVBORw0KGgo",
+    "iVBORw0KGgo===",
+    "iVBORw0KGg==AAAA",
+    "iVBORw0KGgo_",
+    "iVBORw0K Ggo",
+    "iVBORw0KGgp=",
+  ])("rejects malformed or noncanonical base64: %j", (base64) => {
+    expect(() => decodeGeneratedImage(base64, "png")).toThrow("invalid base64");
+  });
 });
 
 describe("Codex image rendering", () => {
