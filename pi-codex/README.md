@@ -20,6 +20,9 @@ The package always sets a `1,050,000` token context window when any of these mod
 - `gpt-6-astra`
 - `gpt-6-sol`
 - `gpt-6-luna`
+- `gpt-6.1-sol`
+
+OpenAI documents [GPT-6.1 Sol's 1,050,000-token context window](https://developers.openai.com/api/docs/models/gpt-6.1-sol). The model is supplied by Pi's native catalog; this package enables its long context when active.
 
 Pi and this package intentionally default these models to `272,000` tokens so requests stay in OpenAI's short-context pricing tier. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
 
@@ -39,6 +42,8 @@ When enabled, recognized Codex Responses requests receive:
 ```json
 { "service_tier": "priority" }
 ```
+
+GPT-6.1 Sol supports Fast mode alongside the existing supported models, as documented in [Codex speed](https://developers.openai.com/codex/speed). This enables standard Fast mode, not Ultrafast.
 
 OpenAI calls this Fast mode for ChatGPT-authenticated Codex use and Priority processing for API-key use. It increases speed by using more credits or higher-priced API processing. Availability and billing depend on the account, model, and authentication method.
 

@@ -91,14 +91,16 @@ describe("Codex model catalog", () => {
 });
 
 describe("Codex long context catalog", () => {
-  it("expands GPT-5.6 and GPT-6 long-context variants without changing other models or providers", () => {
-    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]) {
+  it("expands documented long-context variants without changing other models or providers", () => {
+    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
       expect(applyLongContextWindow({ id, provider: "openai-codex", contextWindow: 272_000 }).contextWindow).toBe(LONG_CONTEXT_WINDOW);
     }
     const older = { id: "gpt-5.5", provider: "openai-codex", contextWindow: 272_000 };
     const directOpenAI = { id: "gpt-5.6-sol", provider: "openai", contextWindow: 272_000 };
     expect(applyLongContextWindow(older)).toBe(older);
     expect(applyLongContextWindow(directOpenAI)).toBe(directOpenAI);
+    const unknown = { id: "gpt-6.2-sol", provider: "openai-codex", contextWindow: 272_000 };
+    expect(applyLongContextWindow(unknown)).toBe(unknown);
   });
 
   it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])("sets only the context window when %s becomes active", async (id) => {
@@ -127,6 +129,8 @@ describe("Codex Fast capability", () => {
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6-astra" })).toBe(true);
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6-sol" })).toBe(true);
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6-luna" })).toBe(true);
+    expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6.1-sol" })).toBe(true);
+    expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6.2-sol" })).toBe(false);
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6-unknown" })).toBe(false);
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-5.3-codex-spark" })).toBe(false);
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-5.2-codex" })).toBe(false);
@@ -135,6 +139,7 @@ describe("Codex Fast capability", () => {
   it("prefers explicit catalog service-tier capability metadata", () => {
     expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6", serviceTiers: [{ id: "priority", name: "Fast" }] })).toBe(true);
     expect(isFastCapableCodexModel({ ...codexModel, service_tiers: [] })).toBe(false);
+    expect(isFastCapableCodexModel({ ...codexModel, id: "gpt-6.1-sol", service_tiers: [] })).toBe(false);
     expect(isFastCapableCodexModel({ ...codexModel, serviceTiers: [{ id: "flex", name: "Slow" }] })).toBe(false);
   });
 
@@ -175,6 +180,36 @@ describe("Codex request patching", () => {
 });
 
 describe("/fast extension", () => {
+  it.each(["session_start", "model_select"])("enables GPT-6.1 Sol long context and Fast mode after %s", async (event) => {
+    const pi = createCodexPi();
+    registerCodexFastExtension(pi as any);
+    const model = {
+      ...codexModel,
+      id: "gpt-6.1-sol",
+      cost: {
+        input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+      },
+    };
+    const expectedModel = { ...structuredClone(model), contextWindow: LONG_CONTEXT_WINDOW };
+    const ctx = createMockCtx({ model });
+
+    await emitEvent(pi, event, { model }, ctx);
+    expect(model).toEqual(expectedModel);
+
+    await runCommand(pi, "fast", "on", ctx);
+    expect(ctx.ui.statuses.get("codex-fast")).toBe("fast: on");
+    const payload = codexPayload(model.id);
+    const [patched] = await emitEvent(pi, "before_provider_request", { payload }, ctx);
+    expect(patched).toEqual({ ...payload, service_tier: FAST_SERVICE_TIER });
+    expect(payload).not.toHaveProperty("service_tier");
+
+    await runCommand(pi, "fast", "off", ctx);
+    const [unchanged] = await emitEvent(pi, "before_provider_request", { payload }, ctx);
+    expect(unchanged).toBeUndefined();
+    expect(model).toEqual(expectedModel);
+  });
+
   it.each(["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])("toggles /fast and patches %s requests only while enabled", async (id) => {
     const pi = createCodexPi();
     registerCodexFastExtension(pi as any);
