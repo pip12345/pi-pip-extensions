@@ -8,7 +8,7 @@ Interactive token, cache, context, and cost inspector for Pi sessions and aggreg
 /stats
 ```
 
-The **Session** page shows usage by prompt plus explicit compaction and branch-summary overhead rows. Summary columns separate fresh input (uncached input plus cache writes), output, and reused cached input (cache reads); selected-row details expose the provider's raw input, cache-read, and cache-write buckets. Context, total-token, and cost information remain separate. Standard billed tool usage is included in its owning prompt row. The **Global** page groups persisted usage calls by model, provider, or day; tool and summary calls without model attribution appear under `pi/tools/summaries`.
+The **Session** page shows usage by prompt plus explicit compaction, branch-summary, and background-usage overhead rows. Background usage includes cache warming and preserves Pi's model attribution. Summary columns separate fresh input (uncached input plus cache writes), output, and reused cached input (cache reads); selected-row details expose the provider's raw input, cache-read, and cache-write buckets. Context, total-token, and cost information remain separate. Standard billed tool usage is included in its owning prompt row. The **Global** page groups persisted usage calls by model, provider, or day; tool and summary calls without model attribution appear under `pi/tools/summaries`.
 
 Controls:
 
@@ -30,5 +30,7 @@ Assistant, billed tool, compaction, and branch-summary usage events are appended
 ```text
 ~/.pi/agent/pip/usage/
 ```
+
+New persisted background usage is collected at session/run boundaries and when `/stats` opens. Idle warming therefore reaches Global on the next boundary or command; Session reads the persisted entries directly. Existing background entries are not backfilled into Global on resume.
 
 Events are stored per session/day and compacted into daily rollups. Writes use per-session event files so concurrent Pi processes do not rewrite one shared usage document.

@@ -1,3 +1,4 @@
+import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent } from "../pip-common/index.ts";
 import { EXT, SUMMARY_CUSTOM_TYPE, type Clipboard, type Entry, type FilterMode, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
 
@@ -13,6 +14,7 @@ export function textFromContent(content: any): string {
 export function entryText(entry: Entry): string {
   if (entry.type === "message") {
     const msg = entry.message;
+    if (msg?.role === "system") return getSystemMessageText(msg);
     if (msg?.role === "toolResult") return `${msg.toolName || "tool"}: ${textFromContent(msg.content)}`;
     if (msg?.role === "bashExecution") return `${msg.command || "bash"}: ${msg.output || ""}`;
     return textFromContent(msg?.content);
@@ -20,6 +22,8 @@ export function entryText(entry: Entry): string {
   if (entry.type === "custom_message") return textFromContent(entry.content);
   if (entry.type === "compaction") return entry.summary || "";
   if (entry.type === "branch_summary") return entry.summary || "";
+  if (entry.type === "context_edit") return `context ${entry.replacement === null ? "omit" : "replace"}: ${entry.targetId}`;
+  if (entry.type === "usage") return `${entry.kind}: ${entry.provider}/${entry.model}`;
   if (entry.type === "label") return `label ${entry.targetId}: ${entry.label || "(clear)"}`;
   if (entry.type === "model_change") return `${entry.provider}/${entry.modelId}`;
   if (entry.type === "thinking_level_change") return entry.thinkingLevel || "";
@@ -43,7 +47,7 @@ export function isVisibleEntry(entry: Entry, mode: FilterMode, labels: Map<strin
     if (!hasTextContent(msg.content) && !isErrorOrAborted) return false;
   }
 
-  const isSettingsEntry = entry.type === "label" || entry.type === "custom" || entry.type === "model_change" || entry.type === "thinking_level_change" || entry.type === "session_info";
+  const isSettingsEntry = entry.type === "label" || entry.type === "context_edit" || entry.type === "usage" || entry.type === "custom" || entry.type === "model_change" || entry.type === "thinking_level_change" || entry.type === "session_info";
   if (mode === "show-tools") return !isSettingsEntry;
   return !isSettingsEntry && !(entry.type === "message" && entry.message?.role === "toolResult");
 }

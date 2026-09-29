@@ -39,6 +39,18 @@ describe("usage helpers", () => {
     expect(sumSessionUsage(entries)).toMatchObject({ input: 38, output: 8, cacheRead: 2, total: 48, cost: 0.1 });
   });
 
+  it.each(["cache_warm", "future_operation"])("counts %s usage without adding it to conversation context", (kind) => {
+    const entry = {
+      type: "usage", id: "warm1", kind, provider: "anthropic", model: "claude-sonnet",
+      timestamp: "2026-09-29T10:00:00.000Z", usage: { cacheRead: 50_000, cost: { total: 0.015 } },
+    };
+    expect(sessionUsageRecords([entry])[0]).toMatchObject({
+      kind: "usage", operation: kind, entryId: "warm1", provider: "anthropic", model: "claude-sonnet",
+      timestamp: Date.parse(entry.timestamp),
+    });
+    expect(sumSessionUsage([entry])).toMatchObject({ cacheRead: 50_000, total: 50_000, cost: 0.015 });
+  });
+
   it("formats compact token counts", () => {
     expect(formatTokenCount(999)).toBe("999");
     expect(formatTokenCount(1_200)).toBe("1k");

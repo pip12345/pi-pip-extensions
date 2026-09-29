@@ -159,10 +159,11 @@ export function extractChatGptAccountId(token: string): string {
 
 export function decodeGeneratedImage(value: string, outputFormat: OutputFormat): Buffer {
   const base64 = value.trim();
-  if (!base64 || base64.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
+  if (!base64 || base64.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(base64)) {
     throw new Error("Codex returned invalid base64 image data.");
   }
   const bytes = Buffer.from(base64, "base64");
+  // Require canonical encoding: Node's decoder alone accepts malformed padding and discarded characters.
   if (bytes.length === 0 || bytes.toString("base64") !== base64) throw new Error("Codex returned invalid base64 image data.");
   if (mimeTypeFromBytes(bytes, "generated image") !== mimeTypeForFormat(outputFormat)) {
     throw new Error(`Codex returned image data that does not match the requested ${outputFormat} output.`);

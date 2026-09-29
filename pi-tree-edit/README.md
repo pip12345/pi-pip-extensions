@@ -35,4 +35,6 @@ By default, the view uses the `no-tools` filter: the normal tree view without to
 - `b` - set current location to selected entry
 - `q` / `Esc` - exit prompt
 
+Manual compaction checkpoints preserve the draft's prompt and tool state, including tools loaded by Pi's `tool_search`, so those declarations survive compaction and resume.
+
 There is intentionally no save shortcut. All persistence happens through the exit prompt.

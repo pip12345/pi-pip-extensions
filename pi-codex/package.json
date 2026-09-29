@@ -1,7 +1,7 @@
 {
   "name": "pi-codex",
   "version": "0.1.0",
-  "description": "Long context, Fast mode, and image generation for Pi's built-in OpenAI Codex provider",
+  "description": "Long context and Fast mode for native OpenAI models, plus Codex image generation",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -16,10 +16,10 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": ">=0.99.1",
     "typebox": "*"
   },
   "pi": {

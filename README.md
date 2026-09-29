@@ -4,6 +4,8 @@ One aggregate Pi package containing separately filterable extension features. Ea
 
 ## Dependencies
 
+Requires Pi `0.99.1` or newer and Node.js `22.19` or newer.
+
 The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Aggregate source checkouts load `pip-common` directly from this repository without installed workspace links. Standalone feature packages bundle their own copy.
 
 ## Install
@@ -49,7 +51,7 @@ Pi reads the top-level `pi.extensions` manifest. `pip-common` loads first for sh
 This collection includes:
 
 - `pi-context` - interactive context usage and prompt inspector
-- `pi-codex` - 1.05M context for GPT-5.6 and GPT-6 Astra Codex models, session-scoped `/fast` mode, and explicit-path image generation/editing
+- `pi-codex` - 1.05M context and session-scoped `/fast` for supported OpenAI and Codex models, plus explicit-path Codex image generation/editing
 - `pi-secrets-guard` - Secrets Guard: blocks common secret paths and project `.secretignore` rules; legacy `.gitignore` blocking is optional
 - `pi-pip-footer` - richer footer with token/context/model/quota info
 - `pi-prompt-profiles` - switchable prompt profile overlays
@@ -59,7 +61,6 @@ This collection includes:
 - `pi-tool-ui` - unified compact rendering for built-in and Pip tools
 - `pi-stats` - session and usage stats
 - `pi-subagents` - quiet subagent task runner
-- `pi-tiny-mcp` - tiny stdio/HTTP MCP bridge
 - `pi-todo` - todo tools and `/todo`
 - `pi-tree-edit` - session tree editor
 - `pi-undo-redo` - undo/redo recent prompts

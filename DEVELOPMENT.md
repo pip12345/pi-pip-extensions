@@ -5,7 +5,7 @@
 This repository is one aggregate Pi package with separately filterable feature entrypoints. Each `pi-*` workspace is also maintained as a standalone package.
 
 - `pip-common` - shared utilities, `/pip-settings`, and unit-test helpers
-- `pi-codex` - long-context Codex override for GPT-5.6 and GPT-6 Astra, and session-scoped Fast/Priority request mode
+- `pi-codex` - long context and session-scoped Fast/Priority mode for native OpenAI and Codex models, plus Codex image generation
 - `pi-tool-ui` - compact rendering for built-in and Pip tools
 - `pi-stats` - interactive token/session/global usage inspector
 - `pi-pip-footer` - footer with token counter, context gauge, model status, and quota usage
@@ -15,7 +15,6 @@ This repository is one aggregate Pi package with separately filterable feature e
 - `pi-todo` - session-scoped todo tools, compact widget, and `/todo`
 - `pi-question` - interactive question tool
 - `pi-subagents` - quiet subagent task runs
-- `pi-tiny-mcp` - tiny stdio/HTTP MCP adapter
 - `pi-webfetch-websearch` - cleaned web fetching and no-key web search
 
 Shared code lives in `pip-common`. Feature sources import it directly by relative source path, so the aggregate package loads from a clean checkout without workspace links. The standalone packaging script builds isolated staging trees, rewrites those staged imports to the `pip-common` package name, and bundles the common runtime under each feature's `node_modules`.
@@ -54,7 +53,7 @@ Only needed when changing code or running tests:
 npm install
 ```
 
-This installs TypeScript, Vitest, and Pi type packages for local development. Runtime use through Pi does not require this step.
+This installs TypeScript, Vitest, and Pi `0.99.1` packages for local development. Runtime use through Pi does not require this step.
 
 ## Run tests
 
@@ -143,7 +142,7 @@ Minimal `package.json`:
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=0.99.1"
   },
   "dependencies": {
     "pip-common": "0.1.0"

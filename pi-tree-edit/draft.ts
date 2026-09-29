@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { generateSummary, generateSummaryWithUsage } from "@earendil-works/pi-coding-agent";
+import { buildSessionContext, generateSummary, generateSummaryWithUsage, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import { setTextContent } from "../pip-common/index.ts";
 import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header, type SummarySnapshotPolicy } from "./types.ts";
 import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entryMap, estimateContextTokensForEntry, flattenEntries, isNormalMessageEntry, messagesFromEntries, nearestExistingParent, pathBetween, pathToRoot, snapshotEntries, textFromContent } from "./tree.ts";
@@ -318,6 +319,9 @@ export class DraftSession {
           copy.parentId = original?.parentId && idMap.has(original.parentId) ? idMap.get(original.parentId)! : parentId;
         }
       }
+      for (const copy of added) {
+        if (copy.type === "context_edit" && idMap.has(copy.targetId)) copy.targetId = idMap.get(copy.targetId)!;
+      }
       lastParent = added[added.length - 1]?.id ?? parentId;
       for (const src of this.clipboard.entries) {
         if (src.type !== "label" || !idMap.has(src.targetId)) continue;
@@ -406,6 +410,9 @@ export class DraftSession {
     const existing = this.ids();
     const id = newId(existing);
     const continuationChild = this.childOnContinuation(selectedId);
+    // Replaying the draft honors earlier compactions and resolves all prompt/tool
+    // deltas at the retained boundary, including tools loaded by tool_search.
+    const systemMessage = getCurrentSystemMessage(buildSessionContext(this.entries as SessionEntry[], selectedId).messages);
     const entry: Entry = {
       type: "compaction",
       id,
@@ -415,6 +422,7 @@ export class DraftSession {
       firstKeptEntryId: selectedId,
       tokensBefore: compactedEntries.reduce((sum, entry) => sum + estimateContextTokensForEntry(entry), 0),
       usage: generatedResult.usage,
+      ...(systemMessage ? { systemMessage: clone(systemMessage) } : {}),
       details: { from: EXT, kind: "manual", compactedBeforeEntryId: selectedId, sourceEntryIds: compactedEntries.map((entry) => entry.id) },
     };
     if (continuationChild) continuationChild.parentId = id;

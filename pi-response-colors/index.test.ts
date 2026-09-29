@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
 import responseColors, {
   COLOR_OUTPUT_HINT,
-  appendColorOutputHint,
   renderColorTags,
 } from "./index.ts";
 
@@ -144,10 +143,11 @@ describe("pi-response-colors extension", () => {
 
     const tuiCtx = createMockCtx();
     tuiCtx.mode = "tui";
-    const [tuiResult] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, tuiCtx);
-    expect(tuiResult).toEqual({ systemPrompt: appendColorOutputHint("base") });
+    const event = { systemPrompt: "base", systemPromptOptions: { sections: {} as Record<string, string> } };
+    expect(await emitEvent(pi, "before_agent_start", event, tuiCtx)).toEqual([undefined]);
+    expect(event.systemPrompt).toBe("base");
     for (const color of ["red", "yellow", "green", "cyan", "magenta"]) {
-      expect(tuiResult.systemPrompt).toContain(`<${color}>...</${color}>`);
+      expect(event.systemPromptOptions.sections.pip_response_colors).toContain(`<${color}>...</${color}>`);
       expect(COLOR_OUTPUT_HINT).not.toContain(`[${color}]`);
     }
     expect(COLOR_OUTPUT_HINT).not.toContain("ANSI");

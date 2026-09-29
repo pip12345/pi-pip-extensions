@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { buildSessionContext, SessionManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { DraftSession } from "./draft.ts";
 import treeEdit from "./index.ts";
+import { entryText, isVisibleEntry } from "./tree.ts";
 import { getPipSettingsRegistry } from "../pip-common/index.ts";
 import { createMockPi, runCommand } from "../pip-common/testing.ts";
 
@@ -19,6 +21,25 @@ describe("pi-tree-edit", () => {
     const pi = createMockPi();
     treeEdit(pi as any);
     expect(pi.commands.has("tree-edit")).toBe(true);
+  });
+
+  it("labels new bookkeeping entries and keeps context edits attached to copied messages", () => {
+    const entries: any[] = [
+      { type: "message", id: "u", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "original" } },
+      { type: "context_edit", id: "edit", parentId: "u", timestamp: "2026-01-01T00:00:01.000Z", targetId: "u", replacement: { content: "edited" } },
+    ];
+    expect(entryText(entries[1])).toBe("context replace: u");
+    expect(isVisibleEntry(entries[1], "default", new Map())).toBe(false);
+    expect(isVisibleEntry(entries[1], "all", new Map())).toBe(true);
+    expect(entryText({ type: "usage", id: "warm", parentId: null, timestamp: "", kind: "cache_warm", provider: "anthropic", model: "claude" })).toBe("cache_warm: anthropic/claude");
+    const draft = new DraftSession({ type: "session", id: "test" }, entries, "edit");
+    draft.markId = "u";
+    draft.copyRange("edit");
+    const pastedLeaf = draft.pasteAfter("edit", true)!;
+    const pastedEdit = draft.entries.find((entry) => entry.id === pastedLeaf)!;
+    expect(pastedEdit.targetId).not.toBe("u");
+    expect(draft.entries.find((entry) => entry.id === pastedEdit.targetId)!.message.content).toBe("original");
+    expect(buildSessionContext(draft.entries as SessionEntry[], pastedLeaf).messages.filter((message) => message.role === "user").map((message: any) => message.content)).toEqual(["edited", "edited"]);
   });
 
   it("does not expose fixed snapshot policy as settings", () => {
@@ -250,7 +271,7 @@ describe("pi-tree-edit", () => {
       };
 
       await runCommand(pi, "tree-edit", "", ctx);
-      const summaryPrompt = complete.mock.calls[0][1].messages[0].content[0].text;
+      const summaryPrompt = complete.mock.calls[0][1].messages.find((message: any) => message.role === "user").content[0].text;
       expect(summaryPrompt).toContain("new user");
       expect(summaryPrompt).toContain("new assistant");
       expect(summaryPrompt).not.toContain("old user");
@@ -286,10 +307,38 @@ describe("pi-tree-edit", () => {
       expect.objectContaining({ messages: expect.any(Array) }),
       expect.objectContaining({ cacheRetention: "none", sessionId: expect.any(String) }),
     );
-    const summaryPrompt = complete.mock.calls[0][1].messages[0].content[0].text;
+    const summaryPrompt = complete.mock.calls[0][1].messages.find((message: any) => message.role === "user").content[0].text;
     expect(summaryPrompt).toContain("range user");
     expect(summaryPrompt).toContain("range assistant");
     expect(draft.clipboard).toMatchObject({ kind: "summary", summary: "reviewed range summary", sourceEntryIds: ["u1", "a1"] });
+  });
+
+  it("checkpoints draft prompt and deferred-tool state across repeated compactions", async () => {
+    const entries: any[] = [
+      { type: "message", id: "system", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "system", content: "Base prompt", sections: { rules: "old rules" }, toolsAdded: [{ name: "read", description: "Read", parameters: { type: "object" } }], timestamp: 0 } },
+      { type: "message", id: "user", parentId: "system", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: "work", timestamp: 1 } },
+      { type: "message", id: "delta", parentId: "user", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "system", content: "", sections: { rules: "new rules" }, toolsAdded: [{ name: "mcp__docs__search", description: "Search", parameters: { type: "object" } }], timestamp: 2 } },
+      { type: "message", id: "selected", parentId: "delta", timestamp: "2026-01-01T00:00:03.000Z", message: { role: "user", content: "next", timestamp: 3 } },
+    ];
+    const draft = new DraftSession({ type: "session", id: "test" }, entries, "selected");
+    const ctx: any = {
+      model: { provider: "test", id: "test" },
+      modelRegistry: { complete: async () => summaryResponse("summary") },
+      ui: { notify() {}, editor: async () => "summary" },
+    };
+    const compactId = await draft.compactBefore("selected", ctx);
+    const checkpoint = draft.entries.find((entry) => entry.id === compactId)!.systemMessage;
+    expect(checkpoint.sections.rules).toBe("new rules");
+    const messages = buildSessionContext(draft.entries as SessionEntry[], compactId).messages;
+    expect(getCurrentSystemPrompt(messages)).toContain("Base prompt");
+    expect(getCurrentSystemPrompt(messages)).toContain("new rules");
+    expect(getCurrentTools(messages).map((tool) => tool.name)).toEqual(["read", "mcp__docs__search"]);
+    draft.entries.push(
+      { type: "message", id: "middle", parentId: compactId, timestamp: "2026-01-01T00:00:04.000Z", message: { role: "user", content: "middle", timestamp: 4 } },
+      { type: "message", id: "later", parentId: "middle", timestamp: "2026-01-01T00:00:05.000Z", message: { role: "user", content: "later", timestamp: 5 } },
+    );
+    const nextId = await draft.compactBefore("later", ctx);
+    expect(draft.entries.find((entry) => entry.id === nextId)!.systemMessage).toEqual(checkpoint);
   });
 
   it("does not compact when selected entry is not a normal message", async () => {

@@ -4,7 +4,6 @@ import toolUi from "./index.ts";
 import { parseEditDisplayDiff, renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
-import tinyMcp from "../pi-tiny-mcp/index.ts";
 import subagents from "../pi-subagents/index.ts";
 import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
@@ -349,21 +348,6 @@ describe("pi-tool-ui", () => {
     expect(update.renderShell).toBe("self");
     expect(update.renderCall({ updates: [{ match: "x", status: "done" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_update: 1 updates");
     expect(update.renderResult({ content: [{ type: "text", text: "Updated 1 todo" }], details: { todos: [] } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-  });
-
-  it("renders tiny-mcp through display metadata", () => {
-    const pi = createMockPi();
-    tinyMcp(pi as any);
-    toolUi(pi as any);
-    flushPipTools(pi as any);
-    const mcp = getRegisteredTool(pi, "tiny-mcp");
-
-    expect(mcp.renderShell).toBe("self");
-    expect(mcp.renderCall({ search: "files" }, theme, {}).render(80).join("\n")).toContain("› tiny-mcp: search files");
-    expect(mcp.renderResult({ content: [{ type: "text", text: "Connected ghidra." }] }, { expanded: false }, theme, {}).render(80)).toEqual([]);
-    const error = mcp.renderResult({ content: [{ type: "text", text: "ENOENT: nope\nmore" }] }, { expanded: false }, theme, { isError: true }).render(80).join("\n");
-    expect(error).toContain("ENOENT: nope");
-    expect(error).not.toContain("⚠");
   });
 
   it("does not compact-render subagent just because it has display metadata", () => {

@@ -241,14 +241,16 @@ describe("secrets guard", () => {
     const pi = createMockPi();
     secretsGuard(pi as any);
 
-    const [result] = await emitEvent(pi, "before_agent_start", { systemPrompt: "base" }, createMockCtx());
-    expect(result.systemPrompt).toContain("base");
-    expect(result.systemPrompt).toContain("Secrets Guard is active");
-    expect(result.systemPrompt).toContain("project .secretignore files");
-    expect(result.systemPrompt).toContain("including copying or moving files");
-    expect(result.systemPrompt).toContain("those facts alone do not mean it matches a guard rule");
-    expect(result.systemPrompt).toContain("If Secrets Guard blocks a tool call");
-    expect(result.systemPrompt).toContain("Do not retry a blocked operation");
-    expect(result.systemPrompt).not.toContain("Gitignore guard");
+    const event = { systemPrompt: "base", systemPromptOptions: { sections: {} as Record<string, string> } };
+    expect(await emitEvent(pi, "before_agent_start", event, createMockCtx())).toEqual([undefined]);
+    expect(event.systemPrompt).toBe("base");
+    const reminder = event.systemPromptOptions.sections.pip_secrets_guard;
+    expect(reminder).toContain("Secrets Guard is active");
+    expect(reminder).toContain("project .secretignore files");
+    expect(reminder).toContain("including copying or moving files");
+    expect(reminder).toContain("those facts alone do not mean it matches a guard rule");
+    expect(reminder).toContain("If Secrets Guard blocks a tool call");
+    expect(reminder).toContain("Do not retry a blocked operation");
+    expect(reminder).not.toContain("Gitignore guard");
   });
 });

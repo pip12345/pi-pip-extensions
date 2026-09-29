@@ -4,6 +4,8 @@ Minimal quiet subagent task runs for pi.
 
 A subagent is a child task run with isolated context. The caller must put all needed context in the prompt. Subagents are persisted locally to their parent session and anchored to the parent branch entry that created them.
 
+Usage includes child assistant responses, billed tool results, and persisted background calls such as cache warming.
+
 ## Tool
 
 ```text

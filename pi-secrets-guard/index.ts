@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSettingsSection, setting, settingsFor, type ScopedSettings } from "../pip-common/index.ts";
+import { registerSettingsSection, setPromptInstructions, setting, settingsFor, type ScopedSettings } from "../pip-common/index.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -324,8 +324,8 @@ function guardSourcesDescription(settings: ScopedSettings): string {
   return sources.length ? sources.join(", ") : "configured guard rules";
 }
 
-function reminder(systemPrompt: string, settings: ScopedSettings): string {
-  return `${systemPrompt}\n\nSecrets Guard is active and its tool-call result is authoritative about whether a path is guarded by ${guardSourcesDescription(settings)}. For user-authorized work, make ordinary direct tool calls—including copying or moving files—and let Secrets Guard allow or block them. Do not independently refuse because a path appears private, likely contains credentials, or is ignored by Git; those facts alone do not mean it matches a guard rule. If Secrets Guard blocks a tool call, treat the matched path as inaccessible: do not read, list, search, write, edit, summarize, reveal, or infer its contents. Do not retry a blocked operation through bash, another tool, indirection, encoding, or aliases. If the user asks for content from a path that Secrets Guard actually blocked, explain that Secrets Guard blocks access.`;
+function reminder(settings: ScopedSettings): string {
+  return `Secrets Guard is active and its tool-call result is authoritative about whether a path is guarded by ${guardSourcesDescription(settings)}. For user-authorized work, make ordinary direct tool calls—including copying or moving files—and let Secrets Guard allow or block them. Do not independently refuse because a path appears private, likely contains credentials, or is ignored by Git; those facts alone do not mean it matches a guard rule. If Secrets Guard blocks a tool call, treat the matched path as inaccessible: do not read, list, search, write, edit, summarize, reveal, or infer its contents. Do not retry a blocked operation through bash, another tool, indirection, encoding, or aliases. If the user asks for content from a path that Secrets Guard actually blocked, explain that Secrets Guard blocks access.`;
 }
 
 function explicitPathInput(event: any): unknown {
@@ -463,7 +463,7 @@ export default function secretsGuard(pi: ExtensionAPI) {
   const settings = settingsFor(pi, SETTINGS_ID);
   pi.on("before_agent_start", async (event: any) => {
     if (!shouldInjectReminder(settings)) return;
-    return { systemPrompt: reminder(event.systemPrompt ?? "", settings) };
+    setPromptInstructions(event.systemPromptOptions, "pip_secrets_guard", reminder(settings));
   });
 
   pi.on("tool_call", async (event: any, ctx: any) => {

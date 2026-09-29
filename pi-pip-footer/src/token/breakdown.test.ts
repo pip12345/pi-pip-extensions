@@ -63,6 +63,15 @@ describe("pi-pip-footer token breakdown", () => {
     expect(tokens?.latestCacheHitRate).toBe(0);
   });
 
+  it("counts persisted cache warming without changing the last assistant cache hit rate", async () => {
+    const { getPersistedSessionTokens } = await loadBreakdown();
+    const entries = [
+      { type: "message", id: "assistant", timestamp: "2026-06-01T12:00:00.000Z", message: { role: "assistant", usage: { input: 1000, cacheRead: 3000, output: 10, cost: { total: 0.01 } } } },
+      { type: "usage", id: "warm", timestamp: "2026-06-01T12:01:00.000Z", kind: "cache_warm", provider: "anthropic", model: "claude", usage: { cacheRead: 50_000, cost: { total: 0.015 } } },
+    ];
+    expect(getPersistedSessionTokens(createMockCtx({ entries }))).toMatchObject({ input: 1000, cacheRead: 53_000, output: 10, cost: 0.025, latestCacheHitRate: 75 });
+  });
+
   it("keeps fresh input and cache reads in separate display buckets", async () => {
     const { cacheHitRate, tokenBreakdownFromUsage } = await loadBreakdown();
     expect(cacheHitRate({ input: 1000, cacheRead: 3000, cacheWrite: 0 })).toBe(75);

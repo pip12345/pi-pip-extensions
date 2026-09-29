@@ -1,18 +1,12 @@
 # pi-codex
 
-Codex-specific features for Pi's built-in `openai-codex` provider.
+Long context and Fast mode for Pi's built-in `openai` and `openai-codex` providers, plus Codex image generation. Requires Pi `0.99.1` or newer.
 
-## GPT-6 models
-
-The package adds `gpt-6-sol` and `gpt-6-luna` to Pi's native Codex catalog while preserving the built-in provider's ChatGPT authentication and transport. If a later Pi release supplies either model natively, Pi's definition takes precedence.
-
-Both models support text and image input, 128K output, reasoning levels through `max`, and OpenAI's Codex Responses tool capabilities. Their catalog entries retain the short-context pricing boundary described below.
-
-GPT-6 Astra is native in Pi `0.85.1` and later.
+Pi owns the model catalog, authentication, and transport. This package does not register or replace a provider. Fast mode and long context also apply to the OpenAI provider's new Sign in with ChatGPT path.
 
 ## Long context
 
-The package always sets a `1,050,000` token context window when any of these models becomes active:
+The package always sets a `1,050,000` token context window when any of these models becomes active on `openai` or `openai-codex`:
 
 - `gpt-5.6-sol`
 - `gpt-5.6-terra`
@@ -20,8 +14,11 @@ The package always sets a `1,050,000` token context window when any of these mod
 - `gpt-6-astra`
 - `gpt-6-sol`
 - `gpt-6-luna`
+- `gpt-6.1-sol`
 
-Pi and this package intentionally default these models to `272,000` tokens so requests stay in OpenAI's short-context pricing tier. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
+OpenAI documents [GPT-6.1 Sol's 1,050,000-token context window](https://developers.openai.com/api/docs/models/gpt-6.1-sol). The model is supplied by Pi's native catalog; this package enables its long context when active.
+
+Pi's native catalog defaults these models to `272,000` tokens so requests stay in OpenAI's short-context pricing tier. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
 
 Pi's pre-session `--list-models` output still shows the raw `272K` value. After a supported model is selected, the active session, footer, context accounting, and compaction threshold use `1.05M`.
 
@@ -34,21 +31,23 @@ Pi's pre-session `--list-models` output still shows the raw `272K` value. After 
 /fast status       Show whether Fast mode applies to the current model
 ```
 
-When enabled, recognized Codex Responses requests receive:
+When enabled, recognized OpenAI or Codex Responses requests receive:
 
 ```json
 { "service_tier": "priority" }
 ```
 
-OpenAI calls this Fast mode for ChatGPT-authenticated Codex use and Priority processing for API-key use. It increases speed by using more credits or higher-priced API processing. Availability and billing depend on the account, model, and authentication method.
+GPT-6.1 Sol supports Fast mode alongside the existing supported models, as documented in [Codex speed](https://developers.openai.com/codex/speed). This enables standard Fast mode, not Ultrafast.
 
-The preference is stored in Pi's session branch. It survives resume/fork and follows tree navigation. On unsupported or non-Codex models the footer shows `fast: waiting`; returning to a supported Codex model activates it automatically.
+OpenAI documents `priority` and `fast` as equivalent Fast mode request values for supported API models. It increases speed by using more credits or higher-priced API processing. Availability and billing depend on the account, model, and authentication method.
 
-Requests are changed only when the active model and wire payload match Pi's Codex Responses shape, the model supports Fast mode, and no other extension or provider has already supplied a `service_tier`.
+The preference is stored in Pi's session branch. It survives resume/fork and follows tree navigation. On unsupported models the footer shows `fast: waiting`; returning to a supported OpenAI or Codex model activates it automatically.
+
+Requests are changed only when the active model and wire payload match Pi's OpenAI or Codex Responses shape, the model supports Fast mode, and no other extension or provider has already supplied a `service_tier`.
 
 ## Image generation
 
-The package registers `codex_generate_image`, which uses the existing `openai-codex` login to generate a new image or edit up to five local reference images:
+The package registers `codex_generate_image`, which currently uses an `openai-codex` login to generate a new image or edit up to five local reference images:
 
 ```json
 {
@@ -68,6 +67,8 @@ For an edit, add `referencedImagePaths`:
 ```
 
 `path` is required and resolves relative to the current workspace unless it is absolute. Its extension selects PNG (`.png`), JPEG (`.jpg` or `.jpeg`), or WebP (`.webp`). The tool creates parent directories, writes exactly that path with the same overwrite semantics as Pi's `write` tool, and returns the image inline for inspection. It does not create a second copy under Pi's agent directory.
+
+The image tool still resolves credentials from `openai-codex`, independently of the active chat provider. Access to the Codex image endpoint with the new `openai` subscription token has not been verified; the tool does not substitute that token.
 
 The backend chooses its Codex image model and may revise the prompt; the tool reports the revised prompt when available. It intentionally does not expose size, quality, background, compression, or image-model controls because the ChatGPT-authenticated Codex endpoint is not known to honor them reliably.
 

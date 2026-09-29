@@ -12,6 +12,10 @@ Pip footer for pi. This is the renamed successor to `pi-token-counter`: it keeps
 - optional project/CWD and git branch
 - additional lines registered by other pip plugins via `pip-common`'s footer line registry
 
+Token totals include Pi's persisted background usage, including cache warming. Warming does not replace the displayed cache hit rate of the latest ordinary request.
+
+Automatic quota detection still covers the listed subscription providers. Quota endpoint access using the new `/login openai` token has not been verified, so it is not mapped to the Codex quota adapter.
+
 Quota state is isolated by provider, account credential, and effective base URL. Switching models clears old quota immediately, and disabled/headless sessions start no footer timers or quota requests.
 
 ## Settings

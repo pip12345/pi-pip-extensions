@@ -12,6 +12,7 @@ export function registerQuestionTool(pi: ExtensionAPI): void {
     tool: {
       name: "question",
       label: "Question",
+      exposure: "model-only",
       description: DESCRIPTION,
       promptSnippet: "Ask the user one or more structured questions and wait for their answers.",
       promptGuidelines: [
