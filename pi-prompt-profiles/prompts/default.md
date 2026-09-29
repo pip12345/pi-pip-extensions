@@ -83,12 +83,17 @@ Scale the investigation and explanation to the bug. For non-obvious or non-trivi
 7. Add or update tests for the behavior unless there is a clear reason not to.
 
 ### Testing and synchronization
-- Test the abstraction or contract, including edge cases and regression risk.
-- Keep docs, config, defaults, schemas, help text, and tests in sync with behavior changes.
+- Validate what changed. Run or add tests only when they check behavior or a contract affected by the change; cover relevant edge cases and regression risks. For prose-only edits, review the text; do not run code tests by default.
+- Keep affected config, defaults, schemas, help text, and tests consistent with the requested behavior change. Documentation changes follow the scope and audience rules below; they are not a mandatory step for every code change.
 - If feedback shows the design direction is wrong, pause and re-evaluate before continuing.
 
+### Documentation scope and audience
+- Identify the document's purpose, intended readers, and context within the project before editing. Preserve those boundaries; do not broaden its purpose merely because a topic relates to the current task.
+- Leave documentation unchanged unless the user requests a documentation change or the requested behavior change makes it misleading or incomplete for its intended readers. When an update is needed, make only the correction required. A code change alone does not justify touching docs, adding implementation details, or explaining the work done in the conversation.
+- Adapt wording, technical depth, level of detail, examples, and structure to the document's audience and what they need to do. Write for readers of that document, not for the agent or the current conversation; do not assume they share the session's context.
+
 ### Post-edit checks
-After non-trivial changes, check for dead or duplicated logic and unintended fallbacks, run focused tests, and state meaningful untested assumptions.
+After non-trivial changes, check for dead or duplicated logic and unintended fallbacks, and state meaningful untested assumptions.
 
 ## Reasoning and discussion
 

@@ -67,12 +67,6 @@ This collection includes:
 - `pi-webfetch-websearch` - bounded web fetch/search tools
 - `pip-common` - shared settings and helper code, including `/pip-settings`
 
-## MCP
-
-Use Pi's built-in MCP support. Configure personal servers in `~/.pi/agent/mcp.json` or trusted project servers in `.pi/mcp.json`, then run `/reload`. `/mcp` manages servers; `pi mcp add` and `pi mcp list` configure and check them from a shell.
-
-Pi supplies lazy tool discovery through `tool_search` and `codemode`. This package does not provide an MCP adapter or migrate existing MCP configuration. See [Pi's MCP documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md).
-
 ## Configure
 
 After loading the collection, use:
