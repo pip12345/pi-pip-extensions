@@ -7,8 +7,9 @@ import { firstResultText, themeBold, themeFg, truncateToWidth, wrapAnsi } from "
 export const CODEX_IMAGE_TOOL_NAME = "codex_generate_image";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
-const DEFAULT_ROUTING_MODEL = "gpt-5.5";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
+// Codex requires a client_version and gates catalog entries by it. Pi's version is unrelated.
+const CODEX_CATALOG_CLIENT_VERSION = "0.165.0";
 const CHATGPT_AUTH_CLAIM = "https://api.openai.com/auth";
 const MAX_REFERENCE_IMAGES = 5;
 const MAX_RETRIES = 3;
@@ -99,14 +100,32 @@ export async function resolveReferenceImages(paths: readonly string[], cwd: stri
   );
 }
 
+export function selectCodexImageRoutingModel(catalog: unknown): string {
+  if (!isRecord(catalog) || !Array.isArray(catalog.models)) {
+    throw new Error("Codex model discovery returned an invalid model catalog.");
+  }
+  const visible = catalog.models.filter((model): model is Record<string, unknown> => isRecord(model) && model.visibility === "list");
+  if (visible.length === 0) throw new Error("Codex model discovery returned no visible models.");
+  const candidates = visible.map((model) => {
+    if (typeof model.slug !== "string" || !model.slug.trim() || typeof model.priority !== "number" || !Number.isFinite(model.priority)) {
+      throw new Error("Codex model discovery returned invalid model selection metadata.");
+    }
+    return { slug: model.slug, priority: model.priority };
+  });
+  // Codex marks the first picker-visible model in ascending priority order as its default.
+  candidates.sort((a, b) => a.priority - b.priority);
+  return candidates[0].slug;
+}
+
 export function buildCodexImageRequest(
+  routingModel: string,
   prompt: string,
   outputFormat: OutputFormat,
   sessionId: string,
   inputImages: readonly InputImage[],
 ) {
   return {
-    model: DEFAULT_ROUTING_MODEL,
+    model: routingModel,
     store: false,
     stream: true,
     prompt_cache_key: sessionId,
@@ -291,14 +310,11 @@ function retryableStatus(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-async function requestCodexImage(
-  body: unknown,
+function codexRequestHeaders(
   token: string,
   accountId: string,
-  baseUrl: string,
   providerHeaders: Record<string, string | null | undefined>,
-  signal?: AbortSignal,
-): Promise<ParsedImageResponse> {
+): Headers {
   const headers = new Headers();
   for (const [name, value] of Object.entries(providerHeaders)) {
     if (typeof value === "string") headers.set(name, value);
@@ -307,34 +323,35 @@ async function requestCodexImage(
   headers.set("chatgpt-account-id", accountId);
   headers.set("originator", "pi");
   headers.set("OpenAI-Beta", "responses=experimental");
-  headers.set("accept", "text/event-stream");
-  headers.set("content-type", "application/json");
+  return headers;
+}
 
+async function requestCodex(
+  url: string,
+  init: RequestInit,
+  operation: "model discovery" | "image generation",
+  signal?: AbortSignal,
+): Promise<Response> {
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     if (signal?.aborted) throw new Error("Image generation was cancelled.");
     let response: Response;
     try {
-      response = await fetch(`${baseUrl.replace(/\/$/, "")}/codex/responses`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal,
-      });
+      response = await fetch(url, { ...init, signal });
     } catch (error) {
       if (signal?.aborted) throw new Error("Image generation was cancelled.");
       if (attempt > MAX_RETRIES) throw error;
       await delay(retryDelayMs(attempt, null), signal);
       continue;
     }
-    if (response.ok) return parseCodexImageResponse(response, signal);
+    if (response.ok) return response;
 
     const errorText = (await response.text()).slice(0, 4000);
     if (attempt > MAX_RETRIES || !retryableStatus(response.status)) {
-      throw new Error(`Codex image generation request failed (${response.status}): ${errorText}`);
+      throw new Error(`Codex ${operation} request failed (${response.status}): ${errorText}`);
     }
     await delay(retryDelayMs(attempt, response.headers.get("retry-after")), signal);
   }
-  throw new Error("Codex image generation request failed after retries.");
+  throw new Error(`Codex ${operation} request failed after retries.`);
 }
 
 function sessionId(ctx: ExtensionContext): string {
@@ -430,7 +447,8 @@ export function registerCodexImageGeneration(pi: ExtensionAPI): void {
       const token = auth?.auth.apiKey;
       if (!token) throw new Error(`Missing ${OPENAI_CODEX_PROVIDER} credentials. Run /login and select OpenAI Codex.`);
       const accountId = extractChatGptAccountId(token);
-      const body = buildCodexImageRequest(params.prompt, outputFormat, sessionId(ctx), inputImages);
+      const baseUrl = (auth.auth.baseUrl ?? DEFAULT_CODEX_BASE_URL).replace(/\/$/, "");
+      const headers = codexRequestHeaders(token, accountId, auth.auth.headers ?? {});
       const operation = inputImages.length > 0 ? "edit" : "generation";
 
       onUpdate?.({
@@ -438,14 +456,24 @@ export function registerCodexImageGeneration(pi: ExtensionAPI): void {
         details: { path: absolutePath, outputFormat, inputImageCount: inputImages.length },
       });
 
-      const parsed = await requestCodexImage(
-        body,
-        token,
-        accountId,
-        auth.auth.baseUrl ?? DEFAULT_CODEX_BASE_URL,
-        auth.auth.headers ?? {},
+      headers.set("accept", "application/json");
+      const catalog = await requestCodex(
+        `${baseUrl}/codex/models?client_version=${CODEX_CATALOG_CLIENT_VERSION}`,
+        { method: "GET", headers },
+        "model discovery",
         signal,
       );
+      const routingModel = selectCodexImageRoutingModel(await catalog.json());
+      const body = buildCodexImageRequest(routingModel, params.prompt, outputFormat, sessionId(ctx), inputImages);
+      headers.set("accept", "text/event-stream");
+      headers.set("content-type", "application/json");
+      const response = await requestCodex(
+        `${baseUrl}/codex/responses`,
+        { method: "POST", headers, body: JSON.stringify(body) },
+        "image generation",
+        signal,
+      );
+      const parsed = await parseCodexImageResponse(response, signal);
       if (!parsed.image) {
         const responseText = parsed.text.join("").trim();
         throw new Error(responseText ? `Codex did not return an image: ${responseText}` : "Codex did not return an image.");
@@ -470,6 +498,7 @@ export function registerCodexImageGeneration(pi: ExtensionAPI): void {
           inputImageCount: inputImages.length,
           responseId: parsed.responseId,
           imageGenerationId: parsed.image.id,
+          routingModel,
           revisedPrompt: parsed.image.revisedPrompt,
           usage: parsed.usage,
         },
