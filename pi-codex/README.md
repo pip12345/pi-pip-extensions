@@ -70,6 +70,8 @@ For an edit, add `referencedImagePaths`:
 
 The image tool still resolves credentials from `openai-codex`, independently of the active chat provider. Access to the Codex image endpoint with the new `openai` subscription token has not been verified; the tool does not substitute that token.
 
+The tool discovers Codex's current default routing model before each image request, independently of the active chat model. If discovery fails, it reports the failure rather than falling back to a fixed model.
+
 The backend chooses its Codex image model and may revise the prompt; the tool reports the revised prompt when available. It intentionally does not expose size, quality, background, compression, or image-model controls because the ChatGPT-authenticated Codex endpoint is not known to honor them reliably.
 
 Transient rate limits and server failures are retried. Cancellation stops the request, and returned base64 data and file signatures are validated before the output path is written.

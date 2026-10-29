@@ -13,6 +13,7 @@ import {
   renderCodexImageCall,
   renderCodexImageResult,
   resolveReferenceImages,
+  selectCodexImageRoutingModel,
 } from "./image-gen.ts";
 
 const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -24,6 +25,24 @@ function codexToken(accountId = "account-123") {
     JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } }),
   ).toString("base64url");
   return `header.${payload}.signature`;
+}
+
+function modelCatalog(slug = "recommended-codex-model") {
+  return {
+    models: [
+      { slug: "hidden-model", visibility: "hide", priority: 0 },
+      { slug: "other-model", visibility: "list", priority: 2 },
+      { slug, visibility: "list", priority: 1 },
+    ],
+  };
+}
+
+function codexCtx(cwd: string) {
+  const ctx = createMockCtx({ cwd });
+  ctx.modelRegistry = {
+    getProviderAuth: async () => ({ auth: { apiKey: codexToken() }, source: "OAuth" }),
+  };
+  return ctx;
 }
 
 function imageSse(imageBase64: string, revisedPrompt = "A revised image prompt") {
@@ -70,11 +89,50 @@ describe("Codex image tool contract", () => {
   });
 });
 
+describe("Codex image model selection", () => {
+  it("uses Codex's lowest-priority-number visible model, not catalog order or hidden models", () => {
+    const catalog = modelCatalog("account-default");
+    expect(selectCodexImageRoutingModel(catalog)).toBe("account-default");
+    expect(catalog.models[0].slug).toBe("hidden-model");
+    expect(catalog.models[1].slug).toBe("other-model");
+  });
+
+  it("preserves catalog order for equal priorities and does not filter ChatGPT models by API-key support", () => {
+    expect(selectCodexImageRoutingModel({ models: [
+      { slug: "first", visibility: "list", priority: 1, supported_in_api: false },
+      { slug: "second", visibility: "list", priority: 1, supported_in_api: true },
+    ] })).toBe("first");
+  });
+
+  it.each([null, {}, { models: {} }])("rejects an invalid catalog: %j", (catalog) => {
+    expect(() => selectCodexImageRoutingModel(catalog)).toThrow("invalid model catalog");
+  });
+
+  it.each([
+    { models: [] },
+    { models: [{ slug: "hidden", visibility: "hide", priority: 0 }] },
+  ])("does not fall back when no models are visible: %j", (catalog) => {
+    expect(() => selectCodexImageRoutingModel(catalog)).toThrow("no visible models");
+  });
+
+  it.each([
+    { priority: 1 },
+    { slug: "", priority: 1 },
+    { slug: "  ", priority: 1 },
+    { slug: "model" },
+    { slug: "model", priority: "1" },
+    { slug: "model", priority: NaN },
+    { slug: "model", priority: Infinity },
+  ])("rejects invalid visible-model metadata: %j", (model) => {
+    expect(() => selectCodexImageRoutingModel({ models: [{ ...model, visibility: "list" }] })).toThrow("invalid model selection metadata");
+  });
+});
+
 describe("Codex image request", () => {
   it("forces generation without references and editing with references", () => {
-    const generation = buildCodexImageRequest("draw a cat", "png", "session-1", []);
+    const generation = buildCodexImageRequest("discovered-model", "draw a cat", "png", "session-1", []);
     expect(generation).toMatchObject({
-      model: "gpt-5.5",
+      model: "discovered-model",
       store: false,
       stream: true,
       prompt_cache_key: "session-1",
@@ -82,9 +140,10 @@ describe("Codex image request", () => {
       tools: [{ type: "image_generation", action: "generate", output_format: "png" }],
     });
 
-    const edit = buildCodexImageRequest("add a scarf", "webp", "session-1", [
+    const edit = buildCodexImageRequest("discovered-model", "add a scarf", "webp", "session-1", [
       { mimeType: "image/png", data: pngBytes.toString("base64") },
     ]);
+    expect(edit.model).toBe("discovered-model");
     expect(edit.tools).toEqual([{ type: "image_generation", action: "edit", output_format: "webp" }]);
     expect(edit.input[0].content[1]).toEqual({
       type: "input_image",
@@ -210,16 +269,24 @@ describe("Codex image generation execution", () => {
   it("uses Codex OAuth, writes only the requested path, and returns an inline preview", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "pi-codex-image-output-"));
     try {
+      let catalogUrl: string | URL | Request | undefined;
+      let catalogInit: RequestInit | undefined;
       let requestUrl: string | URL | Request | undefined;
       let requestInit: RequestInit | undefined;
-      vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "GET") {
+          catalogUrl = url;
+          catalogInit = { ...init, headers: new Headers(init.headers) };
+          return Response.json(modelCatalog());
+        }
         requestUrl = url;
         requestInit = init;
         return new Response(imageSse(pngBytes.toString("base64")), {
           status: 200,
           headers: { "content-type": "text/event-stream" },
         });
-      }));
+      });
+      vi.stubGlobal("fetch", fetchMock);
 
       const pi = createMockPi();
       registerCodexImageGeneration(pi as any);
@@ -246,13 +313,23 @@ describe("Codex image generation execution", () => {
         ctx,
       );
 
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(catalogUrl).toBe("https://chatgpt.example/backend-api/codex/models?client_version=0.165.0");
+      const catalogHeaders = new Headers(catalogInit?.headers);
+      expect(catalogHeaders.get("authorization")).toBe(`Bearer ${codexToken()}`);
+      expect(catalogHeaders.get("chatgpt-account-id")).toBe("account-123");
+      expect(catalogHeaders.get("x-provider-header")).toBe("present");
+      expect(catalogHeaders.get("accept")).toBe("application/json");
+      expect(catalogInit?.body).toBeUndefined();
       expect(requestUrl).toBe("https://chatgpt.example/backend-api/codex/responses");
+      expect(requestInit?.method).toBe("POST");
       const headers = new Headers(requestInit?.headers);
       expect(headers.get("authorization")).toBe(`Bearer ${codexToken()}`);
       expect(headers.get("chatgpt-account-id")).toBe("account-123");
       expect(headers.get("x-provider-header")).toBe("present");
+      expect(headers.get("accept")).toBe("text/event-stream");
       expect(JSON.parse(String(requestInit?.body))).toMatchObject({
-        model: "gpt-5.5",
+        model: "recommended-codex-model",
         prompt_cache_key: "session-123",
         tools: [{ type: "image_generation", action: "generate", output_format: "png" }],
       });
@@ -267,11 +344,104 @@ describe("Codex image generation execution", () => {
         outputFormat: "png",
         revisedPrompt: "A revised image prompt",
         responseId: "response-1",
+        routingModel: "recommended-codex-model",
       });
       expect(updates[0].content[0].text).toContain("assets/cat.png");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+
+  it("discovers the current default on every call rather than retaining an obsolete model", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-codex-image-refresh-"));
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(Response.json(modelCatalog("first-default")))
+        .mockResolvedValueOnce(new Response(imageSse(pngBytes.toString("base64"))))
+        .mockResolvedValueOnce(Response.json(modelCatalog("new-default")))
+        .mockResolvedValueOnce(new Response(imageSse(pngBytes.toString("base64"))));
+      vi.stubGlobal("fetch", fetchMock);
+      const pi = createMockPi();
+      registerCodexImageGeneration(pi as any);
+      const tool = getRegisteredTool(pi, CODEX_IMAGE_TOOL_NAME);
+      const ctx = codexCtx(cwd);
+
+      for (const expectedModel of ["first-default", "new-default"]) {
+        const result = await tool.execute("call", { prompt: "draw", path: "out.png" }, undefined, undefined, ctx);
+        expect(result.details.routingModel).toBe(expectedModel);
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body).model).toBe("first-default");
+      expect(JSON.parse(fetchMock.mock.calls[3][1].body).model).toBe("new-default");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("retries transient failures during both discovery and generation", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-codex-image-retry-"));
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response("unavailable", { status: 503, headers: { "retry-after": "0" } }))
+        .mockResolvedValueOnce(Response.json(modelCatalog()))
+        .mockResolvedValueOnce(new Response("rate limited", { status: 429, headers: { "retry-after": "0" } }))
+        .mockResolvedValueOnce(new Response(imageSse(pngBytes.toString("base64"))));
+      vi.stubGlobal("fetch", fetchMock);
+      const pi = createMockPi();
+      registerCodexImageGeneration(pi as any);
+      const tool = getRegisteredTool(pi, CODEX_IMAGE_TOOL_NAME);
+      const result = await tool.execute("call", { prompt: "draw", path: "out.png" }, undefined, undefined, codexCtx(cwd));
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(fetchMock.mock.calls.map((call) => call[1].method)).toEqual(["GET", "GET", "POST", "POST"]);
+      expect(result.details.routingModel).toBe("recommended-codex-model");
+      expect(await readFile(join(cwd, "out.png"))).toEqual(pngBytes);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { responses: [new Response("unauthorized", { status: 401 })], error: "Codex model discovery request failed (401)", requests: 1 },
+    { responses: [Response.json({ models: [] })], error: "no visible models", requests: 1 },
+    { responses: [Response.json({})], error: "invalid model catalog", requests: 1 },
+    { responses: [new Response("not json")], error: "JSON", requests: 1 },
+    {
+      responses: [Response.json(modelCatalog()), new Response("image tool not supported", { status: 400 })],
+      error: "Codex image generation request failed (400)",
+      requests: 2,
+    },
+  ])("leaves existing output untouched and does not guess another model on failure: $error", async ({ responses, error, requests }) => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-codex-image-failure-"));
+    try {
+      const output = join(cwd, "out.png");
+      await writeFile(output, "existing image");
+      const fetchMock = vi.fn();
+      for (const response of responses) fetchMock.mockResolvedValueOnce(response);
+      vi.stubGlobal("fetch", fetchMock);
+      const pi = createMockPi();
+      registerCodexImageGeneration(pi as any);
+      const tool = getRegisteredTool(pi, CODEX_IMAGE_TOOL_NAME);
+
+      await expect(tool.execute("call", { prompt: "draw", path: "out.png" }, undefined, undefined, codexCtx(cwd))).rejects.toThrow(error);
+      expect(fetchMock).toHaveBeenCalledTimes(requests);
+      expect(await readFile(output, "utf8")).toBe("existing image");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("honors cancellation before discovery without sending an HTTP request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    controller.abort();
+    const pi = createMockPi();
+    registerCodexImageGeneration(pi as any);
+    const tool = getRegisteredTool(pi, CODEX_IMAGE_TOOL_NAME);
+
+    await expect(tool.execute("call", { prompt: "draw", path: "out.png" }, controller.signal, undefined, codexCtx(tmpdir()))).rejects.toThrow("cancelled");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fails before requesting when Codex credentials are missing", async () => {
