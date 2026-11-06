@@ -1,0 +1,23 @@
+{
+  "name": "pi-claude-agent",
+  "version": "0.1.0",
+  "description": "Claude Agent SDK provider with Pi-owned tools and permissions",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "claude", "provider"],
+  "license": "MIT",
+  "engines": { "node": ">=22.19.0" },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=0.99.1",
+    "@earendil-works/pi-coding-agent": ">=0.99.1"
+  },
+  "pi": {
+    "extensions": ["node_modules/pip-common/index.ts", "./index.ts"]
+  },
+  "files": ["index.ts", "src", "README.md", "THIRD_PARTY_NOTICES"],
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.301",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "pip-common": "0.1.0"
+  },
+  "bundledDependencies": ["pip-common"]
+}
