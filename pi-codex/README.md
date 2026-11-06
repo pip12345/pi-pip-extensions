@@ -47,12 +47,13 @@ Requests are changed only when the active model and wire payload match Pi's Open
 
 ## Image generation
 
-The package registers `codex_generate_image`, which currently uses an `openai-codex` login to generate a new image or edit up to five local reference images:
+The package registers `codex_generate_image`, which uses an `openai-codex` login to generate a PNG image or edit up to five local PNG, JPEG, or WebP reference images:
 
 ```json
 {
   "prompt": "Draw a pixel-art sword with a blue blade and gold hilt",
-  "path": "assets/generated/sword.png"
+  "path": "assets/generated/sword.png",
+  "quality": "medium"
 }
 ```
 
@@ -61,18 +62,24 @@ For an edit, add `referencedImagePaths`:
 ```json
 {
   "prompt": "Keep the composition but change the sky to sunset",
-  "path": "assets/generated/sunset.webp",
+  "path": "assets/generated/sunset.png",
   "referencedImagePaths": ["assets/source.png"]
 }
 ```
 
-`path` is required and resolves relative to the current workspace unless it is absolute. Its extension selects PNG (`.png`), JPEG (`.jpg` or `.jpeg`), or WebP (`.webp`). The tool creates parent directories, writes exactly that path with the same overwrite semantics as Pi's `write` tool, and returns the image inline for inspection. It does not create a second copy under Pi's agent directory.
+`path` is required and resolves relative to the current workspace unless it is absolute. Output is PNG-only (`.png`). JPEG, WebP, GIF, and other output extensions are rejected before authentication or HTTP requests. The native endpoint can return PNG even when another format is requested, so the tool does not offer those output formats or perform local conversion. JPEG and WebP remain supported as reference inputs.
+
+The tool creates parent directories, writes exactly the requested path with the same overwrite semantics as Pi's `write` tool, and returns the PNG inline for inspection. It does not create a second copy under Pi's agent directory.
+
+Optional `quality` requests `low`, `medium`, `high`, or `auto` rendering quality. Omit it to leave the backend's default unchanged. The backend may override the request, so compare requested and returned quality rather than assuming they match. This is not image-model selection or reasoning complexity.
 
 The image tool still resolves credentials from `openai-codex`, independently of the active chat provider. Access to the Codex image endpoint with the new `openai` subscription token has not been verified; the tool does not substitute that token.
 
-The tool discovers Codex's current default routing model before each image request, independently of the active chat model. If discovery fails, it reports the failure rather than falling back to a fixed model.
+Requests go directly to Codex's native `/codex/images/generations` or `/codex/images/edits` endpoint, without a chat-model request or model-catalog lookup. The tool sends the native Codex client's `gpt-image-2` alias. The backend chooses the serving image model; that alias is not a guarantee of a particular model version. There is no fallback to Responses, browser automation, or the paid Image API.
 
-The backend chooses its Codex image model and may revise the prompt; the tool reports the revised prompt when available. It intentionally does not expose size, quality, background, compression, or image-model controls because the ChatGPT-authenticated Codex endpoint is not known to honor them reliably.
+Results report actual PNG dimensions from the image header and, when supplied by the backend, quality, size, background, generation/request IDs, usage, and a revised prompt. Requested quality is recorded separately from returned quality. A missing returned quality is left unknown, not copied from the request. The compact result shows dimensions and returned quality; expanded results also show token usage.
+
+Size, background, compression, image-model selectors, and `complexity` controls are not exposed. In particular, this tool does not claim explicit GPT Image 2.6 Sunburst/Flare selection or API-style complexity support.
 
 Transient rate limits and server failures are retried. Cancellation stops the request, and returned base64 data and file signatures are validated before the output path is written.
 
