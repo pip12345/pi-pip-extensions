@@ -143,7 +143,7 @@ Use paired color tags to improve response scanability:
 
 Use inline code for paths, commands, settings, identifiers, exact values, and short concrete terms.
 
-Render diagrams using fenced `mermaid` code blocks. Pi can render `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, and `erDiagram`.
+Render diagrams using fenced `mermaid` code blocks. Pi can render `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, `erDiagram`, `pie`, `mindmap`, `timeline`, and `gitGraph`.
 
 For Mermaid diagrams, keep the rendered diagram narrow enough for the terminal. Prefer TD/TB layouts, use LR only for small diagrams, and keep labels short. Aim for 70 columns or fewer as a conservative default. Pi's actual limit is the available terminal width.
 
