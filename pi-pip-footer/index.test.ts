@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import pipFooter, { __test } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
-import { getPipSettingsRegistry } from "../pip-common/index.ts";
+import { getPipSettingsRegistry, registerFooterItem } from "../pip-common/index.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
 
@@ -60,6 +60,33 @@ describe("pi-pip-footer", () => {
     await emitEvent(pi, "turn_start", {}, ctx);
     expect(component.render(80)[0]).toMatch(/^↓:0 ↑:0 ↻:0 · \$0  [◐◓◑◒]$/);
 
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("renders token-region metrics beside cache counts, not in the lower footer", async () => {
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    let metric = "15.0s · 60 t/s";
+    registerFooterItem(pi, { id: "prompt-performance", region: "tokens", render: () => metric });
+    const ctx = createMockCtx({ model: { contextWindow: 272_000 } });
+    const getFooter = captureFooter(ctx);
+    await emitEvent(pi, "session_start", {}, ctx);
+    const component = ctx.ui.widgets.get(__test.WIDGET_KEY)({ requestRender() {} }, theme);
+    const footer = getFooter();
+    expect(component.render(120)).toEqual(["↓:0 ↑:0 ↻:0 · $0 · 15.0s · 60 t/s"]);
+    expect(footer.render(120).join("\n")).not.toContain(metric);
+
+    await emitEvent(pi, "agent_start", {}, ctx);
+    await emitEvent(pi, "turn_start", {}, ctx);
+    expect(component.render(120)[0]).toContain(metric);
+    await emitEvent(pi, "message_update", { assistantMessageEvent: { type: "text_delta", delta: "Working" } }, ctx);
+    expect(component.render(120)[0]).toContain(metric);
+    expect(component.render(120)[0]).toContain("out");
+
+    metric = "9.0s · 42 t/s";
+    expect(component.render(120)[0]).toContain(metric);
+    expect(component.render(120)[0]).not.toContain("15.0s");
+    expect(component.render(16)[0].length).toBeLessThanOrEqual(16);
     await emitEvent(pi, "session_shutdown", {}, ctx);
   });
 

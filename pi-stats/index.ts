@@ -20,6 +20,7 @@ import {
   type SessionUsageKind,
   type TokenUsage as Tokens,
 } from "../pip-common/index.ts";
+import { formatDuration, formatPromptPerformance, promptPerformanceById, promptTokensPerSecond, registerPromptPerformance, type PromptPerformance } from "./src/prompt-performance.ts";
 import { groupGlobal } from "./src/usage/rollups.ts";
 import { initializeUsageStorage, readRollups, updateRollups } from "./src/usage/storage.ts";
 import type { GroupBy, RangeKey } from "./src/usage/types.ts";
@@ -48,6 +49,7 @@ interface SessionRow extends Tokens {
   subagents: Tokens;
   toolsAndSummaries: Tokens;
   cumulative: Tokens;
+  performance?: PromptPerformance;
 }
 
 const RANGE_LABELS: Record<RangeKey, string> = { today: "today", "7d": "last 7d", "30d": "last 30d", all: "all time" };
@@ -181,6 +183,7 @@ function hasUsage(usage: Tokens): boolean {
 function buildSessionRows(ctx: any): SessionRow[] {
   const modelWindow = ctx.model?.contextWindow ?? 0;
   const entries = ctx.sessionManager.getBranch?.() ?? ctx.sessionManager.getEntries?.() ?? [];
+  const performances = promptPerformanceById(entries);
   let idx = 0;
   const rows: SessionRow[] = [];
   let current: SessionRow | null = null;
@@ -194,7 +197,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
   };
 
   const finishCurrent = () => {
-    if (current && (current.assistantCount > 0 || current.subagentCount > 0 || current.toolUsageCount > 0 || current.summaryCount > 0 || current.usageCount > 0)) {
+    if (current && (current.assistantCount > 0 || current.subagentCount > 0 || current.toolUsageCount > 0 || current.summaryCount > 0 || current.usageCount > 0 || current.performance)) {
       current.index = ++idx;
       addTokens(cumulative, current);
       current.cumulative = { ...cumulative };
@@ -208,6 +211,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
     if (entry?.type === "message" && msg?.role === "user") {
       finishCurrent();
       current = emptySessionRow(modelWindow, textFromContent(msg.content).replace(/\s+/g, " ").trim() || "(empty prompt)", msg.timestamp || Date.parse(entry.timestamp) || Date.now());
+      current.performance = performances.get(entry.id);
       continue;
     }
 
@@ -417,6 +421,8 @@ class TokenInspector extends PipCustomComponent<void> {
     lines.push(`${th.fg("dim", "ctx")} ${fmt(ctxTokens, this.compact)}/${fmt(ctxWindow, this.compact)} ${ctxPct == null ? "?" : `${Math.round(ctxPct)}%`}  ${contextBar(ctxPct, 18, th)}`);
     lines.push("");
     const promptW = 30;
+    const timeW = 8;
+    const speedW = 6;
     const ctxW = 20;
     const inW = 15;
     const outW = 15;
@@ -426,7 +432,7 @@ class TokenInspector extends PipCustomComponent<void> {
     lines.push(
       th.fg(
         "dim",
-        `${padAnsi("#", 3)} ${padAnsi("User prompt", promptW)} ${padAnsi("Ctx", ctxW)} ${padLeftAnsi("ΔInput", inW)} ${padLeftAnsi("ΔOutput", outW)} ${padLeftAnsi("ΔCached", cacheW)}`
+        `${padAnsi("#", 3)} ${padAnsi("User prompt", promptW)} ${padLeftAnsi("Time", timeW)} ${padLeftAnsi("t/s", speedW)} ${padAnsi("Ctx", ctxW)} ${padLeftAnsi("ΔInput", inW)} ${padLeftAnsi("ΔOutput", outW)} ${padLeftAnsi("ΔCached", cacheW)}`
       )
     );
     const visible = rows.slice(this.scroll, this.scroll + 14);
@@ -436,6 +442,9 @@ class TokenInspector extends PipCustomComponent<void> {
       const mark = sel ? th.fg("accent", "›") : " ";
       const idx = `${mark}${String(r.index).padStart(2)}`;
       const prompt = truncateToWidth(r.prompt, promptW);
+      const time = r.performance ? formatDuration(r.performance.durationMs) : "-";
+      const speed = promptTokensPerSecond(r.performance);
+      const speedText = speed === undefined ? "-" : String(Math.round(speed));
       const ctxText = `${fmt(r.contextTokens, this.compact)} ${r.contextPercent == null ? "?" : `${Math.round(r.contextPercent)}%`}`;
       const ctxCell = `${padAnsi(ctxText, 9)} ${contextBar(r.contextPercent, 10, th)}`;
       const freshInput = freshInputTokensFromUsage(r);
@@ -443,7 +452,7 @@ class TokenInspector extends PipCustomComponent<void> {
       const outCell = `${padLeftAnsi(fmt(r.output, this.compact), 9)} ${bar(r.output, maxOut, 5, th)}`;
       const cacheCell = `${formatCacheWithHit(r, this.compact, th, cacheWidths.value, cacheWidths.hit)} ${bar(r.cacheRead, maxCache, cacheBarW, th)}`;
       lines.push(
-        `${padAnsi(idx, 3)} ${padAnsi(prompt, promptW)} ${padAnsi(ctxCell, ctxW)} ${padAnsi(inCell, inW)} ${padAnsi(outCell, outW)} ${padAnsi(cacheCell, cacheW)}`
+        `${padAnsi(idx, 3)} ${padAnsi(prompt, promptW)} ${padLeftAnsi(time, timeW)} ${padLeftAnsi(speedText, speedW)} ${padAnsi(ctxCell, ctxW)} ${padAnsi(inCell, inW)} ${padAnsi(outCell, outW)} ${padAnsi(cacheCell, cacheW)}`
       );
     });
     if (rows.length > 0) lines.push(scrollIndicator(this.selected, rows.length, 24, th));
@@ -458,6 +467,7 @@ class TokenInspector extends PipCustomComponent<void> {
         selected.usageCount ? `${selected.usageCount} background call(s)` : "",
       ].filter(Boolean).join(" · ");
       lines.push(th.fg("accent", `Prompt ${selected.index} details`) + th.fg("dim", `  ${selected.provider}/${selected.model} · ${detailCounts}`));
+      if (selected.performance) lines.push(`elapsed ${formatPromptPerformance(selected.performance)} · model time ${formatDuration(selected.performance.generationMs)}`);
       lines.push(tokenDetailRow("delta", selected, this.compact));
       if (selected.subagentCount > 0) {
         lines.push(tokenDetailRow("parent", selected.parent, this.compact));
@@ -506,6 +516,7 @@ class TokenInspector extends PipCustomComponent<void> {
 }
 
 export default function (pi: ExtensionAPI) {
+  registerPromptPerformance(pi);
   initializeUsageStorage();
   const seen = new Set<string>();
 
@@ -575,7 +586,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("stats", {
-    description: "Open token usage inspector (session and global pages)",
+    description: "Open usage and prompt timing inspector (session and global pages)",
     handler: async (_args: string, ctx: any) => {
       syncUsageEntries(ctx);
       if (!hasTuiCustom(ctx)) {

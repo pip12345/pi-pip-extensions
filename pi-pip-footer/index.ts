@@ -56,6 +56,7 @@ export default function (pi: ExtensionAPI) {
 
   const tokenController = createTokenController({
     requestRender: requestTokenRender,
+    renderItems: (ctx, width, theme) => renderRegisteredFooterItems(pi, { ctx, width, theme, region: "tokens" }),
     setTui: (tui) => {
       tuiRef = tui;
     },

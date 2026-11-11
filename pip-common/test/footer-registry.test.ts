@@ -5,16 +5,19 @@ import { createMockPi } from "../src/testing.ts";
 const theme = { fg: (_name: string, text: string) => text };
 
 describe("footer registry", () => {
-  it("renders right and below regions separately", () => {
+  it("renders token, right, and below regions separately", () => {
     const pi = createMockPi();
     const disposeRight = registerFooterItem(pi, { id: "right", region: "right", render: () => ["r1", "r2"] });
     const disposeBelow = registerFooterItem(pi, { id: "below", region: "below", render: () => "b1" });
+    const disposeTokens = registerFooterItem(pi, { id: "tokens", region: "tokens", render: () => "t1" });
 
     expect(renderRegisteredFooterItems(pi, { width: 80, theme, ctx: {}, region: "right" })).toEqual(["r1", "r2"]);
     expect(renderRegisteredFooterItems(pi, { width: 80, theme, ctx: {}, region: "below" })).toEqual(["b1"]);
+    expect(renderRegisteredFooterItems(pi, { width: 80, theme, ctx: {}, region: "tokens" })).toEqual(["t1"]);
 
     disposeRight();
     disposeBelow();
+    disposeTokens();
   });
 
   it("keeps registerFooterLine as a below-region alias", () => {

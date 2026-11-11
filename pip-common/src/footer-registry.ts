@@ -1,6 +1,6 @@
 import { piRuntimeKey, type PiRuntimeOwner } from "./runtime.ts";
 
-export type PipFooterRegion = "right" | "below";
+export type PipFooterRegion = "tokens" | "right" | "below";
 
 export interface PipFooterItemContext {
   width: number;
