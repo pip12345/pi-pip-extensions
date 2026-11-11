@@ -2,6 +2,14 @@
 
 Interactive token, cache, context, and cost inspector for Pi sessions and aggregate usage.
 
+## Prompt performance
+
+Pip Footer shows the latest completed reply's result, such as `42.4s · 48 t/s`, beside the token and cache counts above the editor. It updates when Pi finishes the full reply, including tool calls, retries, and continuations. The previous result stays visible while the next reply is running. No timing lines are added to the transcript.
+
+Elapsed time includes tools, waiting, thinking, and compaction. Token speed uses the combined provider-reported output tokens divided by model-request time, excluding tool execution and pauses between requests. It is not text-only decoding speed. Speed is omitted if output usage is unavailable or zero. Interrupted and failed replies are labeled `aborted` or `error`.
+
+`/stats` shows **Time** and **t/s** per user prompt. Prompt details also show model-request time. Timings are saved with the session, stay out of model context, and follow the active branch when resuming or navigating the tree. Prompts without recorded timings show `-`.
+
 ## Command
 
 ```text

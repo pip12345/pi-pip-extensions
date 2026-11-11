@@ -1,7 +1,7 @@
 {
   "name": "pi-stats",
   "version": "0.1.0",
-  "description": "Interactive /stats inspector with session and global usage views",
+  "description": "Completed-reply footer timing and /stats session and global usage views",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -25,6 +25,7 @@
   },
   "files": [
     "index.ts",
+    "src/prompt-performance.ts",
     "src/usage/compaction.ts",
     "src/usage/compatibility.ts",
     "src/usage/daily.ts",

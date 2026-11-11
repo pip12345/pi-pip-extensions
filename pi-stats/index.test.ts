@@ -39,6 +39,10 @@ describe("pi-stats", () => {
     const pi = createMockPi();
     stats(pi as any);
     expect(pi.commands.has("stats")).toBe(true);
+    expect(pi.handlers.has("message_start")).toBe(true);
+    expect(pi.handlers.has("context")).toBe(true);
+    expect(pi.handlers.has("agent_settled")).toBe(true);
+    expect(pi.handlers.has("turn_end")).toBe(false);
     expect(pi.handlers.has("message_end")).toBe(true);
     expect(pi.handlers.has("session_compact")).toBe(true);
     expect(pi.handlers.has("session_tree")).toBe(true);
@@ -141,6 +145,61 @@ describe("pi-stats", () => {
     await emitEvent(pi, "session_shutdown", {}, ctx);
     const { readRollups } = await loadStorage();
     expect(readRollups().buckets["2026-06-01|anthropic|claude-sonnet"]).toMatchObject({ turns: 1, cacheRead: 50_000, cost: 0.015 });
+  });
+
+  it("attaches timing to its user prompt instead of compaction, continuation, or later prompt rows", async () => {
+    const { __test } = await loadStatsModule();
+    const performance = { promptEntryId: "u1", durationMs: 6000, generationMs: 2000, outputTokens: 100, outcome: "completed" };
+    const entries = [
+      { type: "message", id: "u1", message: { role: "user", content: "First" } },
+      { type: "message", id: "a1", message: { role: "assistant", usage: { input: 10, output: 50 } } },
+      { type: "compaction", id: "c1", usage: { input: 20, output: 4 } },
+      { type: "message", id: "a2", message: { role: "assistant", usage: { input: 15, output: 50 } } },
+      { type: "message", id: "u2", message: { role: "user", content: "Second" } },
+      { type: "message", id: "a3", message: { role: "assistant", usage: { input: 5, output: 5 } } },
+      { type: "custom", customType: "pip-prompt-performance", data: performance },
+    ];
+    const rows = __test.buildSessionRows(createMockCtx({ entries }));
+    expect(rows.map((row: any) => row.prompt)).toEqual(["First", "(compaction)", "(no prompt)", "Second"]);
+    expect(rows[0].performance).toEqual(performance);
+    expect(rows.slice(1).every((row: any) => row.performance === undefined)).toBe(true);
+    expect(rows.at(-1)!.cumulative).toMatchObject({ input: 50, output: 109 });
+  });
+
+  it("keeps timings for failed prompts and ignores abandoned-branch timings", async () => {
+    const { __test } = await loadStatsModule();
+    const entries = [
+      { type: "message", id: "u1", message: { role: "user", content: "Failed task" } },
+      { type: "message", id: "a1", message: { role: "assistant", stopReason: "error", usage: { input: 0, output: 0 } } },
+    ];
+    const receipt = { type: "custom", customType: "pip-prompt-performance", data: { promptEntryId: "u1", durationMs: 4000, generationMs: 1000, outputTokens: 0, outcome: "error" } };
+    const abandoned = createMockCtx({ sessionManager: { getEntries: () => [...entries, receipt], getBranch: () => entries } });
+    expect(__test.buildSessionRows(abandoned)).toEqual([]);
+    const rows = __test.buildSessionRows(createMockCtx({ entries: [...entries, receipt] }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ prompt: "Failed task", performance: receipt.data });
+  });
+
+  it("displays prompt time and average speed in the stats inspector", async () => {
+    const stats = await loadStats();
+    const pi = createMockPi();
+    stats(pi as any);
+    let rendered = "";
+    const theme = { fg: (_color: string, text: string) => text };
+    const ctx = createMockCtx({
+      entries: [
+        { type: "message", id: "u1", message: { role: "user", content: "Timed task" } },
+        { type: "message", id: "a1", message: { role: "assistant", usage: { input: 10, output: 100 } } },
+        { type: "custom", customType: "pip-prompt-performance", data: { promptEntryId: "u1", durationMs: 6000, generationMs: 2000, outputTokens: 100, outcome: "completed" } },
+      ],
+      custom: async (factory: any) => {
+        rendered = factory({ requestRender() {} }, theme, {}, () => {}).render(160).join("\n");
+      },
+    });
+    await pi.commands.get("stats").handler("", ctx);
+    expect(rendered).toContain("Time");
+    expect(rendered).toContain("t/s");
+    expect(rendered).toContain("elapsed 6.0s · 50 t/s · model time 2.0s");
   });
 
   it("formats cache hit rate from prompt-side cache reads", async () => {

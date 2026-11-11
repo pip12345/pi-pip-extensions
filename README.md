@@ -6,7 +6,7 @@ One aggregate Pi package containing separately filterable extension features. Ea
 
 Requires Pi `0.99.1` or newer and Node.js `22.19` or newer.
 
-The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Aggregate source checkouts load `pip-common` directly from this repository without installed workspace links. Standalone feature packages bundle their own copy.
+The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Aggregate source checkouts load `pip-common` directly from this repository without installed workspace links. Standalone feature packages bundle their own copy. `pi-claude-agent` additionally uses the Anthropic Agent SDK and MCP SDK, installed as package dependencies, and requires a local Claude Code installation. For local source checkouts, run `npm ci --ignore-scripts` before using that provider.
 
 ## Install
 
@@ -50,6 +50,7 @@ Pi reads the top-level `pi.extensions` manifest. `pip-common` loads first for sh
 
 This collection includes:
 
+- [`pi-claude-agent`](pi-claude-agent/README.md) - Claude Agent SDK provider with Pi-owned tools and permissions. Subscription use requires applicable Anthropic approval.
 - `pi-context` - interactive context usage and prompt inspector
 - `pi-codex` - 1.05M context and session-scoped `/fast` for supported OpenAI and Codex models, plus explicit-path Codex image generation/editing
 - `pi-secrets-guard` - Secrets Guard: blocks common secret paths and project `.secretignore` rules; legacy `.gitignore` blocking is optional

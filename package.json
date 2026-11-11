@@ -11,6 +11,7 @@
   "pi": {
     "extensions": [
       "pip-common/index.ts",
+      "pi-claude-agent/index.ts",
       "pi-codex/index.ts",
       "pi-context/index.ts",
       "pi-pip-footer/index.ts",

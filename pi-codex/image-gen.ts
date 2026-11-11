@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve } from "node:path";
-import { type ExtensionAPI, type ExtensionContext, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { firstResultText, themeBold, themeFg, truncateToWidth, wrapAnsi } from "../pip-common/index.ts";
 
@@ -8,23 +9,24 @@ export const CODEX_IMAGE_TOOL_NAME = "codex_generate_image";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
-// Codex requires a client_version and gates catalog entries by it. Pi's version is unrelated.
-const CODEX_CATALOG_CLIENT_VERSION = "0.165.0";
+// This is the native Codex client's image alias, not a guarantee of the serving model's version.
+const CODEX_IMAGE_MODEL = "gpt-image-2";
 const CHATGPT_AUTH_CLAIM = "https://api.openai.com/auth";
 const MAX_REFERENCE_IMAGES = 5;
 const MAX_RETRIES = 3;
 const MAX_RETRY_DELAY_MS = 30_000;
-const OUTPUT_FORMATS = ["png", "jpeg", "webp"] as const;
-
-type OutputFormat = (typeof OUTPUT_FORMATS)[number];
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const IMAGE_TOOL_PARAMETERS = Type.Object({
   prompt: Type.String({
     description: "A specific description of the image to generate or the changes to make to referenced images.",
   }),
   path: Type.String({
-    description: "Output path, relative to the current workspace or absolute. The extension must be .png, .jpg, .jpeg, or .webp.",
+    description: "PNG output path, relative to the current workspace or absolute. The extension must be .png.",
   }),
+  quality: Type.Optional(Type.Union([
+    Type.Literal("low"), Type.Literal("medium"), Type.Literal("high"), Type.Literal("auto"),
+  ], { description: "Requested rendering quality. The backend may override it; results report returned quality separately. Omit to leave the backend default unchanged. This is not an image-model or complexity selector." })),
   referencedImagePaths: Type.Optional(
     Type.Array(Type.String(), {
       maxItems: MAX_REFERENCE_IMAGES,
@@ -40,17 +42,18 @@ interface InputImage {
   mimeType: string;
 }
 
-interface GeneratedImage {
-  id: string;
-  result: string;
-  revisedPrompt?: string;
+interface ParsedImageResponse {
+  image: { id?: string; result: string; revisedPrompt?: string };
+  quality?: string;
+  size?: string;
+  background?: string;
+  usage?: unknown;
 }
 
-interface ParsedImageResponse {
-  image?: GeneratedImage;
-  responseId?: string;
-  text: string[];
-  usage?: unknown;
+interface DecodedImage {
+  bytes: Buffer;
+  width: number;
+  height: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -62,9 +65,7 @@ function stripAtPrefix(path: string): string {
 }
 
 function mimeTypeFromBytes(bytes: Buffer, path: string): string {
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return "image/png";
-  }
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return "image/png";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") {
     return "image/webp";
@@ -72,16 +73,9 @@ function mimeTypeFromBytes(bytes: Buffer, path: string): string {
   throw new Error(`Referenced image is not a supported PNG, JPEG, or WebP file: ${path}`);
 }
 
-export function imageOutputFormatForPath(path: string): OutputFormat {
-  const extension = extname(path).toLowerCase();
-  if (extension === ".png") return "png";
-  if (extension === ".jpg" || extension === ".jpeg") return "jpeg";
-  if (extension === ".webp") return "webp";
-  throw new Error("Image output path must end in .png, .jpg, .jpeg, or .webp.");
-}
-
-function mimeTypeForFormat(format: OutputFormat): string {
-  return format === "jpeg" ? "image/jpeg" : `image/${format}`;
+export function imageOutputFormatForPath(path: string): "png" {
+  if (extname(path).toLowerCase() === ".png") return "png";
+  throw new Error("Image output path must end in .png. Native Codex image generation only supports PNG output.");
 }
 
 export async function resolveReferenceImages(paths: readonly string[], cwd: string): Promise<InputImage[]> {
@@ -100,58 +94,20 @@ export async function resolveReferenceImages(paths: readonly string[], cwd: stri
   );
 }
 
-export function selectCodexImageRoutingModel(catalog: unknown): string {
-  if (!isRecord(catalog) || !Array.isArray(catalog.models)) {
-    throw new Error("Codex model discovery returned an invalid model catalog.");
-  }
-  const visible = catalog.models.filter((model): model is Record<string, unknown> => isRecord(model) && model.visibility === "list");
-  if (visible.length === 0) throw new Error("Codex model discovery returned no visible models.");
-  const candidates = visible.map((model) => {
-    if (typeof model.slug !== "string" || !model.slug.trim() || typeof model.priority !== "number" || !Number.isFinite(model.priority)) {
-      throw new Error("Codex model discovery returned invalid model selection metadata.");
-    }
-    return { slug: model.slug, priority: model.priority };
-  });
-  // Codex marks the first picker-visible model in ascending priority order as its default.
-  candidates.sort((a, b) => a.priority - b.priority);
-  return candidates[0].slug;
-}
-
 export function buildCodexImageRequest(
-  routingModel: string,
   prompt: string,
-  outputFormat: OutputFormat,
-  sessionId: string,
   inputImages: readonly InputImage[],
+  quality?: CodexImageToolParams["quality"],
 ) {
   return {
-    model: routingModel,
-    store: false,
-    stream: true,
-    prompt_cache_key: sessionId,
-    instructions: "Call the image_generation tool exactly once. Generate or edit the requested bitmap image; do not answer with text instead.",
-    input: [
-      {
-        role: "user",
-        content: [
-          { type: "input_text", text: prompt },
-          ...inputImages.map((image) => ({
-            type: "input_image",
-            image_url: `data:${image.mimeType};base64,${image.data}`,
-          })),
-        ],
-      },
-    ],
-    tools: [
-      {
-        type: "image_generation",
-        action: inputImages.length > 0 ? "edit" : "generate",
-        output_format: outputFormat,
-      },
-    ],
-    tool_choice: { type: "image_generation" },
-    parallel_tool_calls: false,
-    text: { verbosity: "low" },
+    model: CODEX_IMAGE_MODEL,
+    prompt,
+    output_format: "png",
+    n: 1,
+    ...(quality === undefined ? {} : { quality }),
+    ...(inputImages.length === 0 ? {} : {
+      images: inputImages.map((image) => ({ image_url: `data:${image.mimeType};base64,${image.data}` })),
+    }),
   };
 }
 
@@ -176,109 +132,65 @@ export function extractChatGptAccountId(token: string): string {
   return accountId;
 }
 
-export function decodeGeneratedImage(value: string, outputFormat: OutputFormat): Buffer {
+export function decodeGeneratedImage(value: string): DecodedImage {
   const base64 = value.trim();
   if (!base64 || base64.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(base64)) {
     throw new Error("Codex returned invalid base64 image data.");
   }
   const bytes = Buffer.from(base64, "base64");
-  // Require canonical encoding: Node's decoder alone accepts malformed padding and discarded characters.
+  // Require canonical base64 because Node's decoder accepts malformed padding and discarded characters.
   if (bytes.length === 0 || bytes.toString("base64") !== base64) throw new Error("Codex returned invalid base64 image data.");
-  if (mimeTypeFromBytes(bytes, "generated image") !== mimeTypeForFormat(outputFormat)) {
-    throw new Error(`Codex returned image data that does not match the requested ${outputFormat} output.`);
+  if (bytes.length < 8 || !bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    throw new Error("Codex returned image data that does not match the requested PNG output.");
   }
-  return bytes;
-}
-
-function responseImage(item: unknown): GeneratedImage | undefined {
-  if (!isRecord(item) || item.type !== "image_generation_call" || typeof item.result !== "string" || item.result.length === 0) {
-    return undefined;
+  if (bytes.length < 33 || bytes.readUInt32BE(8) !== 13 || bytes.toString("ascii", 12, 16) !== "IHDR") {
+    throw new Error("Codex returned an invalid PNG header.");
   }
-  return {
-    id: typeof item.id === "string" ? item.id : "image_generation",
-    result: item.result,
-    revisedPrompt: typeof item.revised_prompt === "string" ? item.revised_prompt : undefined,
-  };
-}
-
-function processResponseOutput(output: unknown, parsed: ParsedImageResponse): void {
-  if (!Array.isArray(output)) return;
-  for (const item of output) {
-    const image = responseImage(item);
-    if (image) parsed.image = image;
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (width === 0 || height === 0 || width > 0x7fffffff || height > 0x7fffffff) {
+    throw new Error("Codex returned invalid PNG dimensions.");
   }
-}
-
-function handleSseEvent(event: unknown, parsed: ParsedImageResponse): void {
-  if (!isRecord(event) || typeof event.type !== "string") return;
-  if (event.type === "error") {
-    const message = typeof event.message === "string" ? event.message : typeof event.code === "string" ? event.code : JSON.stringify(event);
-    throw new Error(`Codex image generation error: ${message}`);
-  }
-  if (event.type === "response.failed") {
-    const response = isRecord(event.response) ? event.response : undefined;
-    const error = response && isRecord(response.error) ? response.error : undefined;
-    throw new Error(error && typeof error.message === "string" ? error.message : "Codex image generation failed.");
-  }
-  if (event.type === "response.created" && isRecord(event.response) && typeof event.response.id === "string") {
-    parsed.responseId = event.response.id;
-    return;
-  }
-  if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
-    parsed.text.push(event.delta);
-    return;
-  }
-  if (event.type === "response.output_item.done") {
-    const image = responseImage(event.item);
-    if (image) parsed.image = image;
-    return;
-  }
-  if (event.type === "response.completed" && isRecord(event.response)) {
-    if (typeof event.response.id === "string") parsed.responseId = event.response.id;
-    if (event.response.usage !== undefined) parsed.usage = event.response.usage;
-    processResponseOutput(event.response.output, parsed);
-  }
-}
-
-function sseData(block: string): string | undefined {
-  const data = block
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n")
-    .trim();
-  return data && data !== "[DONE]" ? data : undefined;
+  return { bytes, width, height };
 }
 
 export async function parseCodexImageResponse(response: Response, signal?: AbortSignal): Promise<ParsedImageResponse> {
-  if (!response.body) throw new Error("Codex image generation response did not include a body.");
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const parsed: ParsedImageResponse = { text: [] };
-  let buffer = "";
-
+  if (signal?.aborted) throw new Error("Image generation was cancelled.");
+  let value: unknown;
   try {
-    while (true) {
-      if (signal?.aborted) throw new Error("Image generation was cancelled.");
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer = (buffer + decoder.decode(value, { stream: true })).replaceAll("\r\n", "\n");
-      let separator = buffer.indexOf("\n\n");
-      while (separator >= 0) {
-        const data = sseData(buffer.slice(0, separator));
-        buffer = buffer.slice(separator + 2);
-        if (data) handleSseEvent(JSON.parse(data) as unknown, parsed);
-        separator = buffer.indexOf("\n\n");
-      }
-    }
-    buffer = (buffer + decoder.decode()).replaceAll("\r\n", "\n");
-    const data = sseData(buffer);
-    if (data) handleSseEvent(JSON.parse(data) as unknown, parsed);
-  } finally {
-    reader.releaseLock();
+    value = await response.json();
+  } catch {
+    if (signal?.aborted) throw new Error("Image generation was cancelled.");
+    throw new Error("Codex returned an invalid image response JSON body.");
   }
-
-  return parsed;
+  if (signal?.aborted) throw new Error("Image generation was cancelled.");
+  if (!isRecord(value)) throw new Error("Codex returned an invalid image response.");
+  const error = value.error ?? value.detail;
+  if (error !== undefined && error !== null) {
+    const message = isRecord(error) && typeof error.message === "string" ? error.message
+      : typeof error === "string" ? error : JSON.stringify(error);
+    throw new Error(`Codex image generation failed: ${message}`);
+  }
+  if (!Array.isArray(value.data) || value.data.length === 0) throw new Error("Codex did not return an image.");
+  if (value.data.length !== 1) throw new Error("Codex returned multiple images; expected exactly one.");
+  const item = value.data[0];
+  if (!isRecord(item) || typeof item.b64_json !== "string" || !item.b64_json.trim()) {
+    throw new Error("Codex did not return base64 image data.");
+  }
+  if (value.output_format != null && value.output_format !== "png") {
+    throw new Error("Codex reported an output format other than PNG.");
+  }
+  return {
+    image: {
+      id: typeof item.generation_id === "string" ? item.generation_id : undefined,
+      result: item.b64_json.trim(),
+      revisedPrompt: typeof item.revised_prompt === "string" ? item.revised_prompt : undefined,
+    },
+    quality: typeof value.quality === "string" ? value.quality : undefined,
+    size: typeof value.size === "string" ? value.size : undefined,
+    background: typeof value.background === "string" ? value.background : undefined,
+    usage: value.usage,
+  };
 }
 
 function retryDelayMs(attempt: number, retryAfter: string | null): number {
@@ -322,16 +234,13 @@ function codexRequestHeaders(
   headers.set("Authorization", `Bearer ${token}`);
   headers.set("chatgpt-account-id", accountId);
   headers.set("originator", "pi");
-  headers.set("OpenAI-Beta", "responses=experimental");
+  headers.set("x-codex-image-turn-id", randomUUID());
+  headers.set("accept", "application/json");
+  headers.set("content-type", "application/json");
   return headers;
 }
 
-async function requestCodex(
-  url: string,
-  init: RequestInit,
-  operation: "model discovery" | "image generation",
-  signal?: AbortSignal,
-): Promise<Response> {
+async function requestCodex(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     if (signal?.aborted) throw new Error("Image generation was cancelled.");
     let response: Response;
@@ -345,17 +254,20 @@ async function requestCodex(
     }
     if (response.ok) return response;
 
-    const errorText = (await response.text()).slice(0, 4000);
+    let errorText: string;
+    try {
+      errorText = (await response.text()).slice(0, 4000);
+    } catch (error) {
+      if (signal?.aborted) throw new Error("Image generation was cancelled.");
+      throw error;
+    }
+    if (signal?.aborted) throw new Error("Image generation was cancelled.");
     if (attempt > MAX_RETRIES || !retryableStatus(response.status)) {
-      throw new Error(`Codex ${operation} request failed (${response.status}): ${errorText}`);
+      throw new Error(`Codex image generation request failed (${response.status}): ${errorText}`);
     }
     await delay(retryDelayMs(attempt, response.headers.get("retry-after")), signal);
   }
-  throw new Error(`Codex ${operation} request failed after retries.`);
-}
-
-function sessionId(ctx: ExtensionContext): string {
-  return ctx.sessionManager.getSessionId?.() ?? "pi-codex-image";
+  throw new Error("Codex image generation request failed after retries.");
 }
 
 function imageOperation(args: Partial<CodexImageToolParams> | undefined): "edit" | "generate" {
@@ -388,6 +300,7 @@ export function renderCodexImageCall(args: Partial<CodexImageToolParams>, theme:
       imageOperation(args),
       path,
       count > 0 ? `${count} reference${count === 1 ? "" : "s"}` : undefined,
+      args.quality ? `${args.quality} quality` : undefined,
     ].filter(Boolean).join(" · ");
     const header = themeFg(theme, "toolTitle", themeBold(theme, "Codex image"))
       + (details ? themeFg(theme, "muted", `  ${details}`) : "");
@@ -403,20 +316,32 @@ export function renderCodexImageResult(result: any, options: any, theme: any, co
       const message = firstResultText(result).trim().split(/\r?\n/, 1)[0] || "Codex image generation failed.";
       return wrapAnsi(themeFg(theme, "error", `✗ ${message}`), width);
     }
-
-    const operation = imageOperation(context?.args);
     if (options?.isPartial) {
-      return [truncateToWidth(themeFg(theme, "warning", operation === "edit" ? "Editing image…" : "Generating image…"), width)];
+      const editing = imageOperation(context?.args) === "edit";
+      return [truncateToWidth(themeFg(theme, "warning", editing ? "Editing image…" : "Generating image…"), width)];
     }
-
     const format = typeof result?.details?.outputFormat === "string" ? result.details.outputFormat.toUpperCase() : undefined;
-    const summary = `✓ Saved${format ? ` · ${format}` : ""}`;
+    const dimensions = typeof result?.details?.width === "number" && typeof result?.details?.height === "number"
+      ? `${result.details.width}×${result.details.height}` : undefined;
+    const quality = typeof result?.details?.quality === "string" ? `${result.details.quality} quality` : undefined;
+    const summary = ["✓ Saved", format, dimensions, quality].filter(Boolean).join(" · ");
     const lines = [truncateToWidth(themeFg(theme, "success", summary), width)];
     if (!options?.expanded) return lines;
 
     const absolutePath = result?.details?.path;
     if (typeof absolutePath === "string" && absolutePath) {
       lines.push(truncateToWidth(themeFg(theme, "muted", absolutePath), width));
+    }
+    const requestedQuality = result?.details?.requestedQuality;
+    if (typeof requestedQuality === "string" && requestedQuality !== result?.details?.quality) {
+      lines.push(...wrappedSection(theme, "Requested quality", requestedQuality, width));
+    }
+    const usage = result?.details?.usage;
+    if (isRecord(usage)) {
+      const counts = [["input_tokens", "input"], ["output_tokens", "output"], ["total_tokens", "total"]]
+        .filter(([key]) => typeof usage[key] === "number" && Number.isSafeInteger(usage[key]) && (usage[key] as number) >= 0)
+        .map(([key, label]) => `${usage[key]} ${label}`);
+      if (counts.length) lines.push(...wrappedSection(theme, "Usage (tokens)", counts.join(" · "), width));
     }
     lines.push(...wrappedSection(theme, "Revised prompt", result?.details?.revisedPrompt, width));
     return lines;
@@ -428,17 +353,19 @@ export function registerCodexImageGeneration(pi: ExtensionAPI): void {
     name: CODEX_IMAGE_TOOL_NAME,
     label: "Codex Image",
     description:
-      "Generate a new raster image or edit/composite up to five local reference images with Codex image generation. Writes exactly one explicit PNG, JPEG, or WebP output path and returns an inline preview.",
-    promptSnippet: "Generate or edit a raster image with Codex and write it to an explicit workspace path.",
+      "Generate a new PNG image or edit/composite up to five local PNG, JPEG, or WebP reference images with native Codex image generation. Writes exactly one explicit .png output path and returns an inline preview, actual dimensions, reported quality, and usage.",
+    promptSnippet: "Generate or edit a PNG image with Codex and write it to an explicit workspace path.",
     promptGuidelines: [
       "Use codex_generate_image when the user asks to generate a raster image or make a generative edit to existing raster images.",
       "Always choose the codex_generate_image output path deliberately; it writes to that exact path and may overwrite an existing file like write.",
+      "Choose a .png output path. JPEG and WebP are supported only as reference inputs.",
     ],
     parameters: IMAGE_TOOL_PARAMETERS,
     executionMode: "parallel",
     renderCall: renderCodexImageCall,
     renderResult: renderCodexImageResult,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      if (signal?.aborted) throw new Error("Image generation was cancelled.");
       const requestedPath = stripAtPrefix(params.path);
       const absolutePath = resolve(ctx.cwd, requestedPath);
       const outputFormat = imageOutputFormatForPath(absolutePath);
@@ -449,56 +376,42 @@ export function registerCodexImageGeneration(pi: ExtensionAPI): void {
       const accountId = extractChatGptAccountId(token);
       const baseUrl = (auth.auth.baseUrl ?? DEFAULT_CODEX_BASE_URL).replace(/\/$/, "");
       const headers = codexRequestHeaders(token, accountId, auth.auth.headers ?? {});
-      const operation = inputImages.length > 0 ? "edit" : "generation";
-
+      const editing = inputImages.length > 0;
       onUpdate?.({
-        content: [{ type: "text", text: `Requesting Codex image ${operation} for ${requestedPath}...` }],
-        details: { path: absolutePath, outputFormat, inputImageCount: inputImages.length },
+        content: [{ type: "text", text: `Requesting Codex image ${editing ? "edit" : "generation"} for ${requestedPath}...` }],
+        details: { path: absolutePath, outputFormat, inputImageCount: inputImages.length, requestedQuality: params.quality },
       });
-
-      headers.set("accept", "application/json");
-      const catalog = await requestCodex(
-        `${baseUrl}/codex/models?client_version=${CODEX_CATALOG_CLIENT_VERSION}`,
-        { method: "GET", headers },
-        "model discovery",
-        signal,
-      );
-      const routingModel = selectCodexImageRoutingModel(await catalog.json());
-      const body = buildCodexImageRequest(routingModel, params.prompt, outputFormat, sessionId(ctx), inputImages);
-      headers.set("accept", "text/event-stream");
-      headers.set("content-type", "application/json");
       const response = await requestCodex(
-        `${baseUrl}/codex/responses`,
-        { method: "POST", headers, body: JSON.stringify(body) },
-        "image generation",
+        `${baseUrl}/codex/images/${editing ? "edits" : "generations"}`,
+        { method: "POST", headers, body: JSON.stringify(buildCodexImageRequest(params.prompt, inputImages, params.quality)) },
         signal,
       );
       const parsed = await parseCodexImageResponse(response, signal);
-      if (!parsed.image) {
-        const responseText = parsed.text.join("").trim();
-        throw new Error(responseText ? `Codex did not return an image: ${responseText}` : "Codex did not return an image.");
-      }
-      const bytes = decodeGeneratedImage(parsed.image.result, outputFormat);
+      const image = decodeGeneratedImage(parsed.image.result);
       await withFileMutationQueue(absolutePath, async () => {
+        if (signal?.aborted) throw new Error("Image generation was cancelled.");
         await mkdir(dirname(absolutePath), { recursive: true });
-        await writeFile(absolutePath, bytes);
+        await writeFile(absolutePath, image.bytes);
       });
-
-      const summary = parsed.image.revisedPrompt
-        ? `Wrote generated image to ${absolutePath}. Revised prompt: ${parsed.image.revisedPrompt}`
-        : `Wrote generated image to ${absolutePath}.`;
+      const summary = `Wrote generated image to ${absolutePath} (${image.width}×${image.height}${parsed.quality ? `, ${parsed.quality} quality` : ""}).`
+        + (parsed.image.revisedPrompt ? ` Revised prompt: ${parsed.image.revisedPrompt}` : "");
       return {
         content: [
           { type: "text", text: summary },
-          { type: "image", data: parsed.image.result, mimeType: mimeTypeForFormat(outputFormat) },
+          { type: "image", data: parsed.image.result, mimeType: "image/png" },
         ],
         details: {
           path: absolutePath,
           outputFormat,
+          width: image.width,
+          height: image.height,
           inputImageCount: inputImages.length,
-          responseId: parsed.responseId,
+          requestedQuality: params.quality,
+          quality: parsed.quality,
+          size: parsed.size,
+          background: parsed.background,
+          requestId: response.headers.get("x-codex-imagegen-request-id") ?? undefined,
           imageGenerationId: parsed.image.id,
-          routingModel,
           revisedPrompt: parsed.image.revisedPrompt,
           usage: parsed.usage,
         },

@@ -6,6 +6,7 @@ import { renderTokenMetric } from "./render.ts";
 
 export interface TokenControllerDeps {
   requestRender(): void;
+  renderItems(ctx: any, width: number, theme: any): string[];
   setTui(tui: { requestRender: () => void } | null): void;
   settings: ScopedSettings;
 }
@@ -157,10 +158,13 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
     return "";
   }
 
-  function renderTokenLine(tokens: TokenBreakdown | undefined, theme: any): string[] {
+  function renderTokenLine(tokens: TokenBreakdown | undefined, theme: any, items: string): string[] {
     const base = renderTokenBase(tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 }, theme);
     const suffix = renderTokenSuffix(theme);
-    return suffix ? [`${base}  ${suffix}`, base] : [base];
+    const variants = suffix ? [`${base}  ${suffix}`, base] : [base];
+    if (!items) return variants;
+    const withItems = `${base} ${theme.fg("dim", "·")} ${items}`;
+    return suffix ? [`${withItems}  ${suffix}`, withItems, ...variants] : [withItems, base];
   }
 
   function installWidget(originalSetWidget: any, ctx: any): void {
@@ -175,7 +179,8 @@ export function createTokenController(deps: TokenControllerDeps): TokenControlle
           invalidate() {},
           render(width: number): string[] {
             const tokens = getHistoricalSessionTokens(ctx) ?? pendingSettledTokens ?? previousSettledTokens;
-            const tokenBlock = fitSegment(width, renderTokenLine(tokens, theme));
+            const items = deps.renderItems(ctx, width, theme).join(" ");
+            const tokenBlock = fitSegment(width, renderTokenLine(tokens, theme, items));
             return [tokenBlock ? truncateToWidth(tokenBlock, width) : " "];
           },
         };
