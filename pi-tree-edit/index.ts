@@ -3,7 +3,7 @@ import { backupSessionFile, boxLines, clampSelectedIndex, cleanupBackups, ensure
 import { HELP_ITEMS, type Ctx, type Entry, type ExitResult, type ExtensionAPI, type FilterMode, type Theme, type TreeRow } from "./types.ts";
 import { DraftSession } from "./draft.ts";
 import { parseSessionFile, validateDraft } from "./session.ts";
-import { buildLabels, clone, compactLine, contextPercentByEntry, descendantsOf, entryKind, entryMap, entryText, expandSummaryRows, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
+import { buildLabels, childrenMap, clone, compactLine, contextPercentByEntry, entryKind, entryMap, entryText, expandSummaryRows, isNormalMessageEntry, isSummaryEntry, rowKey, summarySourceIds, textFromContent, visibleRows } from "./tree.ts";
 
 function wrapHelp(items: string[], width: number, theme: Theme): string[] {
   const sep = theme.fg("dim", " · ");
@@ -42,16 +42,20 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   private flashSeenNonce = 0;
   private flashOn = false;
   private flashTimer: ReturnType<typeof setInterval> | null = null;
+  // The overlay owns all draft mutations while open. External edit/compaction
+  // dialogs create a fresh component, so these caches never outlive its draft view.
+  private rowsCache?: TreeRow[];
+  private allRowsCache?: TreeRow[];
+  private dataCache?: { byId: Map<string, Entry>; children: Map<string | null, Entry[]>; labels: Map<string, string> };
+  private contextCache?: { window: number; percentages: Map<string, number> };
+  private renderedPageSize?: number;
+  private centerOnFirstRender = true;
 
   constructor(draft: DraftSession, ctx: Ctx, tui: any, theme: Theme, done: (result?: ExitResult) => void) {
     super(tui, theme, done, { closeKeys: [] });
     this.draft = draft;
     this.ctx = ctx;
-    const rows = this.visibleRows();
-    const wantedId = this.draft.viewSelectedId ?? this.draft.targetLeafId;
-    const idx = rows.findIndex((r) => r.entry.id === wantedId);
-    if (idx >= 0) this.selected = idx;
-    this.clampSelection();
+    this.selectId(this.draft.viewSelectedId ?? this.draft.targetLeafId);
   }
 
   private ensureFlashAnimation(): void {
@@ -96,9 +100,9 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
 
     if (this.searchMode) {
       if (key === "escape" || key === "return") this.searchMode = false;
-      else if (key === "backspace" || key === "delete" || key === "ctrl+h") { this.searchQuery = this.searchQuery.slice(0, -1); this.clampSelection(); }
-      else if (key === "space") { this.searchQuery += " "; this.clampSelection(); }
-      else if (key.length === 1 && key.charCodeAt(0) >= 32) { this.searchQuery += key; this.clampSelection(); }
+      else if (key === "backspace" || key === "delete" || key === "ctrl+h") { this.searchQuery = this.searchQuery.slice(0, -1); this.invalidateRows(); this.selectId(selectedRowKey ?? null); }
+      else if (key === "space") { this.searchQuery += " "; this.invalidateRows(); this.selectId(selectedRowKey ?? null); }
+      else if (key.length === 1 && key.charCodeAt(0) >= 32) { this.searchQuery += key; this.invalidateRows(); this.selectId(selectedRowKey ?? null); }
       this.requestRender();
       return;
     }
@@ -114,49 +118,50 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       this.close({ action: "quit" });
       return;
     }
-    if (key === "u") { this.draft.undo(); this.clampSelection(); changed = true; }
-    else if (key === "U") { this.draft.redo(); this.clampSelection(); changed = true; }
+    if (key === "u") { this.draft.undo(); this.invalidateDraft(); this.selectId(this.draft.viewSelectedId); changed = true; }
+    else if (key === "U") { this.draft.redo(); this.invalidateDraft(); this.selectId(this.draft.viewSelectedId); changed = true; }
     else if (key === "up" || key === "k") { this.move(-1); changed = true; }
     else if (key === "down" || key === "j") { this.move(1); changed = true; }
     else if (key === "pageup") { this.move(-10); changed = true; }
     else if (key === "pagedown") { this.move(10); changed = true; }
     else if (selectedId && key === "ctrl+left") {
-      if (!isVirtual && selectedRow?.foldable) { this.foldedIds.add(selectedId); this.clampSelection(); changed = true; }
+      if (!isVirtual && selectedRow?.foldable) { this.foldedIds.add(selectedId); this.invalidateRows(); this.selectId(selectedId); changed = true; }
     }
     else if (selectedId && key === "ctrl+right") {
-      if (!isVirtual && this.foldedIds.delete(selectedId)) { this.clampSelection(); changed = true; }
+      if (!isVirtual && this.foldedIds.delete(selectedId)) { this.invalidateRows(); this.selectId(selectedId); changed = true; }
     }
     else if (key === "/") { this.searchMode = true; this.draft.message = "Search: type to filter, Enter to keep, Esc to stop editing search"; changed = true; }
     else if (key === "i") { this.includeSubbranches = !this.includeSubbranches; this.draft.message = this.includeSubbranches ? "Range operations include subbranches" : "Range operations use main path only"; changed = true; }
-    else if (key === "f") { this.filterMode = this.filterMode === "default" ? "show-tools" : this.filterMode === "show-tools" ? "user-only" : this.filterMode === "user-only" ? "labeled-only" : this.filterMode === "labeled-only" ? "all" : "default"; this.draft.message = `Filter: ${this.filterLabel(this.filterMode)}`; this.clampSelection(); changed = true; }
+    else if (key === "f") { this.filterMode = this.filterMode === "default" ? "show-tools" : this.filterMode === "show-tools" ? "user-only" : this.filterMode === "user-only" ? "labeled-only" : this.filterMode === "labeled-only" ? "all" : "default"; this.draft.message = `Filter: ${this.filterLabel(this.filterMode)}`; this.invalidateRows(); this.selectId(selectedRowKey ?? this.draft.targetLeafId); changed = true; }
     else if (selectedRow && key === "o") {
       const summaryId = selectedRow.virtual?.summaryEntryId ?? (isSummaryEntry(selectedRow.entry) ? selectedRow.entry.id : undefined);
       if (summaryId) {
         if (this.expandedSummaryIds.has(summaryId)) this.expandedSummaryIds.delete(summaryId);
         else this.expandedSummaryIds.add(summaryId);
         this.draft.message = this.expandedSummaryIds.has(summaryId) ? "Summary opened" : "Summary closed";
-        this.clampSelection();
+        this.invalidateRows();
+        this.selectId(summaryId);
       } else this.draft.message = "Selected row is not a summary";
       changed = true;
     }
     else if (selectedRowKey && key === "v") {
       if (this.draft.markId) { this.draft.markId = null; this.draft.message = "Range cancelled"; }
-      else { this.draft.markId = selectedRowKey; this.draft.message = `Range started at ${selectedId}; move cursor, then y to copy, c to cut, or S to summarize`; }
+      else { this.draft.markId = selectedRowKey; this.draft.message = `Range started at ${selectedId}; move cursor, then y to copy or c to cut`; }
       changed = true;
     } else if (selectedRowKey && selectedId && key === "y") {
       this.draft.checkpoint();
-      this.draft.copyRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false), this.includeSubbranches ? "preserve" : "linear");
+      this.draft.copyRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey), this.includeSubbranches ? "preserve" : "linear");
       changed = true;
     } else if (selectedId && key === "c") {
       if (isVirtual) changed = virtualReadOnly();
-      else { this.draft.checkpoint(); this.draft.cutRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false), this.includeSubbranches ? "preserve" : "linear"); this.clampSelection(); changed = true; }
+      else { this.draft.checkpoint(); this.draft.cutRange(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey), this.includeSubbranches ? "preserve" : "linear"); this.invalidateDraft(); this.clampSelection(); changed = true; }
     } else if (selectedId && key === "p") {
       if (isVirtual) { this.draft.message = "Select a real tree row to paste"; changed = true; }
-      else { this.draft.checkpoint(); const pastedId = this.draft.markId ? this.draft.replaceRangeWithClipboard(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)) : this.draft.pasteAfter(selectedId, false); this.selectId(pastedId); changed = true; }
+      else { this.draft.checkpoint(); const pastedId = this.draft.markId ? this.draft.replaceRangeWithClipboard(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey)) : this.draft.pasteAfter(selectedId, false); this.invalidateDraft(); this.selectId(pastedId); changed = true; }
     } else if (selectedId && key === "P") {
       if (isVirtual) this.draft.message = "Select a real tree row to paste";
       else if (this.draft.markId) this.draft.message = "P is disabled while a range is active; use p to replace the range or v to cancel";
-      else { this.draft.checkpoint(); const pastedId = this.draft.pasteAfter(selectedId, true); this.selectId(pastedId); }
+      else { this.draft.checkpoint(); const pastedId = this.draft.pasteAfter(selectedId, true); this.invalidateDraft(); this.selectId(pastedId); }
       changed = true;
     } else if (selectedId && key === "C") {
       if (isVirtual) { this.draft.message = "Select a real tree row to compact before"; changed = true; }
@@ -164,39 +169,54 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       else { this.draft.viewSelectedId = selectedId; this.close({ action: "compact", id: selectedId }); return; }
     } else if (selectedId && key === "d") {
       if (isVirtual) changed = virtualReadOnly();
-      else { this.draft.checkpoint(); this.draft.deleteRangeOrEntry(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)); this.clampSelection(); changed = true; }
+      else { this.draft.checkpoint(); this.draft.deleteRangeOrEntry(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey)); this.invalidateDraft(); this.clampSelection(); changed = true; }
     } else if (selectedId && key === "D") {
       if (isVirtual) changed = virtualReadOnly();
-      else { this.draft.checkpoint(); this.draft.deleteSubtree(selectedId); this.clampSelection(); changed = true; }
+      else { this.draft.checkpoint(); this.draft.deleteSubtree(selectedId); this.invalidateDraft(); this.clampSelection(); changed = true; }
     } else if (selectedId && key === "t") {
       if (isVirtual) changed = virtualReadOnly();
-      else { this.draft.checkpoint(); this.draft.pruneToolOutputs(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey, false)); changed = true; }
+      else { this.draft.checkpoint(); this.draft.pruneToolOutputs(selectedId, this.foldedIds, this.operationRangeEntries(rows, selectedRowKey)); this.invalidateDraft(); changed = true; }
     } else if (selectedId && (key === "b" || key === "return")) {
       if (isVirtual) { this.draft.message = "Virtual summary rows cannot be the current location"; changed = true; }
-      else { this.draft.checkpoint(); this.draft.targetLeafId = selectedId; this.draft.dirty = true; this.draft.message = `Current location set to ${selectedId}`; changed = true; }
+      else { this.draft.checkpoint(); this.draft.targetLeafId = selectedId; this.draft.dirty = true; this.draft.message = `Current location set to ${selectedId}`; this.invalidateRows(); this.selectId(selectedId); changed = true; }
     } else if (selectedId && key === "e") {
       if (isVirtual) { this.draft.message = "Virtual summary rows are read-only"; changed = true; }
       else { this.draft.viewSelectedId = selectedId; this.close({ action: "edit", id: selectedId }); return; }
     } else if (selectedId && key === "L") {
       if (isVirtual) { this.draft.message = "Virtual summary rows cannot be labeled"; changed = true; }
       else { this.draft.viewSelectedId = selectedId; this.close({ action: "label", id: selectedId }); return; }
-    } else if (selectedId && key === "S") {
-      if (isVirtual) { this.draft.message = "Select real rows to summarize"; changed = true; }
-      else {
-        this.draft.viewSelectedId = selectedId;
-        const visibleRangeEntries = this.operationRangeEntries(rows, selectedRowKey, true).map(clone);
-        if (this.includeSubbranches) this.draft.message = "Summarization uses main path only; subbranches excluded";
-        this.close({ action: "summarize", id: selectedId, foldedIds: new Set<string>(), visibleRangeEntries });
-        return;
-      }
     }
 
     if (changed) this.requestRender();
   }
 
+  private invalidateRows(): void {
+    this.rowsCache = undefined;
+    this.allRowsCache = undefined;
+  }
+
+  private invalidateDraft(): void {
+    this.invalidateRows();
+    this.dataCache = undefined;
+    this.contextCache = undefined;
+  }
+
+  private data() {
+    return this.dataCache ??= { byId: entryMap(this.draft.entries), children: childrenMap(this.draft.entries), labels: buildLabels(this.draft.entries) };
+  }
+
+  private contextPercents(): Map<string, number> {
+    const window = this.ctx.model?.contextWindow ?? 0;
+    if (!this.contextCache || this.contextCache.window !== window) this.contextCache = { window, percentages: contextPercentByEntry(this.draft.entries, window) };
+    return this.contextCache.percentages;
+  }
+
   private visibleRows(): TreeRow[] {
-    const base = visibleRows(this.draft.entries, this.filterMode, this.foldedIds, this.searchQuery, this.draft.targetLeafId);
-    return expandSummaryRows(base, this.draft.entries, this.expandedSummaryIds);
+    if (!this.rowsCache) {
+      const base = visibleRows(this.draft.entries, this.filterMode, this.foldedIds, this.searchQuery, this.draft.targetLeafId);
+      this.rowsCache = expandSummaryRows(base, this.draft.entries, this.expandedSummaryIds);
+    }
+    return this.rowsCache;
   }
 
   private visibleRangeEntries(rows = this.visibleRows(), selectedKey = rows[this.selected] ? rowKey(rows[this.selected]) : undefined): Entry[] {
@@ -217,61 +237,63 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     const selectedId = selectedRow?.entry.id;
     if (!selectedId) return [];
     if (!this.draft.markId) return [selectedRow.entry];
-    const byId = entryMap(this.draft.entries);
+    const byId = this.data().byId;
     const pathToRoot = (id: string): string[] => {
       const path: string[] = [];
       const seen = new Set<string>();
       let cur = byId.get(id);
       while (cur && !seen.has(cur.id)) {
         seen.add(cur.id);
-        path.unshift(cur.id);
+        path.push(cur.id);
         cur = cur.parentId ? byId.get(cur.parentId) : undefined;
       }
-      return path;
+      return path.reverse();
     };
     const markPath = pathToRoot(this.draft.markId);
     const selectedPath = pathToRoot(selectedId);
     let common = 0;
     while (common < markPath.length && common < selectedPath.length && markPath[common] === selectedPath[common]) common++;
     const mainIds = new Set([...markPath.slice(common - 1), ...selectedPath.slice(common - 1)]);
-    const fullRows = visibleRows(this.draft.entries, "all", new Set(), "", this.draft.targetLeafId);
+    const fullRows = this.allRowsCache ??= visibleRows(this.draft.entries, "all", new Set(), "", this.draft.targetLeafId);
     const out = fullRows.map((row) => row.entry).filter((entry) => mainIds.has(entry.id));
     return out.length ? out : this.visibleRangeEntries(rows, selectedKey);
   }
 
-  private operationRangeEntries(rows = this.visibleRows(), selectedKey = rows[this.selected] ? rowKey(rows[this.selected]) : undefined, forceMainPath = false): Entry[] {
-    const base = forceMainPath || !this.includeSubbranches ? this.mainPathRangeEntries(rows, selectedKey) : this.visibleRangeEntries(rows, selectedKey);
-    if (forceMainPath || !this.includeSubbranches) return base;
-    const ids = new Set(base.map((entry) => entry.id));
-    for (const entry of base) {
-      for (const childId of descendantsOf(this.draft.entries, entry.id)) ids.add(childId);
+  private operationRangeEntries(rows = this.visibleRows(), selectedKey = rows[this.selected] ? rowKey(rows[this.selected]) : undefined): Entry[] {
+    const base = !this.includeSubbranches ? this.mainPathRangeEntries(rows, selectedKey) : this.visibleRangeEntries(rows, selectedKey);
+    if (!this.includeSubbranches) return base;
+    const ids = new Set<string>();
+    const children = this.data().children;
+    const pending = [...base];
+    while (pending.length) {
+      const entry = pending.pop()!;
+      if (ids.has(entry.id)) continue;
+      ids.add(entry.id);
+      for (const child of children.get(entry.id) ?? []) pending.push(child);
     }
     return this.draft.entries.filter((entry) => ids.has(entry.id));
   }
 
   private clampSelection(): void {
-    const count = this.visibleRows().length;
-    this.selected = clampSelectedIndex(this.selected, count);
-    const pageSize = this.pageSize();
-    this.scroll = selectionOffset(this.selected, this.scroll, count, pageSize);
-    this.draft.viewSelectedId = this.visibleRows()[this.selected]?.entry.id ?? null;
+    const rows = this.visibleRows();
+    this.selected = clampSelectedIndex(this.selected, rows.length);
+    this.scroll = selectionOffset(this.selected, this.scroll, rows.length, this.pageSize());
+    this.draft.viewSelectedId = rows[this.selected] ? rowKey(rows[this.selected]) : null;
   }
 
   private selectId(id: string | null): void {
-    if (!id) return;
     const rows = this.visibleRows();
-    let idx = rows.findIndex((r) => r.entry.id === id);
-    if (idx < 0) {
-      const byId = entryMap(this.draft.entries);
-      let cur = id ? byId.get(id) : undefined;
-      while (cur && idx < 0) {
-        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
-        if (cur) idx = rows.findIndex((r) => r.entry.id === cur!.id);
-      }
+    const indexes = new Map<string, number>();
+    for (let i = 0; i < rows.length; i++) indexes.set(rowKey(rows[i]), i);
+    let current = id;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      const index = indexes.get(current);
+      if (index !== undefined) { this.selected = index; break; }
+      seen.add(current);
+      current = this.data().byId.get(current)?.parentId ?? null;
     }
-    if (idx >= 0) this.selected = idx;
     this.clampSelection();
-    this.draft.viewSelectedId = id;
   }
 
   private move(delta: number): void {
@@ -280,7 +302,7 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
   }
 
   private pageSize(): number {
-    return this.overlayRowBudget({
+    return this.renderedPageSize ?? this.overlayRowBudget({
       maxRows: TREE_EDIT_MAX_ROWS,
       minRows: TREE_EDIT_MIN_ROWS,
       reservedRows: TREE_EDIT_RESERVED_ROWS,
@@ -292,19 +314,24 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     return mode;
   }
 
-  private treePrefix(row: TreeRow): string {
+  private treePrefix(row: TreeRow, maxWidth: number): string {
     const displayIndent = row.multipleRoots ? Math.max(0, row.depth - 1) : row.depth;
     const connector = row.showConnector && !row.isVirtualRootChild;
     const connectorPosition = connector ? displayIndent - 1 : -1;
     const totalChars = displayIndent * 3;
-    const chars: string[] = [];
+    // Deep branches can have thousands of gutter columns. Build only the tail
+    // that fits, leaving room for message text instead of drawing invisible padding.
+    const clipped = totalChars > maxWidth;
+    const chars: string[] = clipped ? ["… "] : [];
+    const start = Math.max(0, totalChars - Math.max(0, maxWidth - (clipped ? 2 : 0)));
+    const gutters = new Map(row.gutters.map((gutter) => [gutter.position, gutter.show]));
 
-    for (let i = 0; i < totalChars; i++) {
+    for (let i = start; i < totalChars; i++) {
       const level = Math.floor(i / 3);
       const posInLevel = i % 3;
-      const gutter = row.gutters.find((g) => g.position === level);
-      if (gutter) {
-        chars.push(posInLevel === 0 ? (gutter.show ? "│" : " ") : " ");
+      const gutter = gutters.get(level);
+      if (gutter !== undefined) {
+        chars.push(posInLevel === 0 ? (gutter ? "│" : " ") : " ");
       } else if (connector && level === connectorPosition) {
         if (posInLevel === 0) chars.push(row.isLast ? "└" : "├");
         else if (posInLevel === 1) chars.push(row.folded ? "⊞" : row.foldable ? "⊟" : "─");
@@ -358,17 +385,18 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     const th = this.theme;
     const rows = this.visibleRows();
     const allCount = this.draft.entries.length;
-    const labels = buildLabels(this.draft.entries);
+    const labels = this.data().labels;
     const selectedRow = rows[this.selected];
     const selectedId = selectedRow?.entry.id;
     const selectedKey = selectedRow ? rowKey(selectedRow) : undefined;
     const visibleRange = this.draft.markId && selectedKey ? this.visibleRangeEntries(rows, selectedKey) : [];
-    const operationRange = this.draft.markId && selectedKey ? this.operationRangeEntries(rows, selectedKey, false) : [];
+    const operationRange = this.draft.markId && selectedKey ? this.operationRangeEntries(rows, selectedKey) : [];
     const rangeIds = new Set(operationRange.map((e) => e.id));
-    const hiddenFoldedCount = operationRange.length ? operationRange.filter((entry) => !visibleRange.some((visible) => visible.id === entry.id)).length : 0;
+    const visibleRangeIds = new Set(visibleRange.map((entry) => entry.id));
+    const hiddenFoldedCount = operationRange.filter((entry) => !visibleRangeIds.has(entry.id)).length;
     const flashIds = new Set<string>(this.draft.flashEntryIds);
     const highlightIds = new Set<string>(this.draft.highlightEntryIds);
-    const contextPercents = contextPercentByEntry(this.draft.entries, this.ctx.model?.contextWindow ?? 0);
+    const contextPercents = this.contextPercents();
     const lines: string[] = [];
     const rangeStatus = operationRange.length ? `${operationRange.length} selected${hiddenFoldedCount ? ` (${visibleRange.length} visible + ${hiddenFoldedCount} subbranch)` : ""}` : "none";
     const branchStatus = this.includeSubbranches ? th.fg("warning", "include branches") : th.fg("accent", "main path");
@@ -380,6 +408,14 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     lines.push(...wrapHelp(HELP_ITEMS, bodyWidth - 4, th));
     if (this.draft.message) lines.push(th.fg(this.draft.message.toLowerCase().includes("cannot") || this.draft.message.toLowerCase().includes("error") ? "error" : "accent", this.draft.message));
     lines.push("");
+    const terminalRows = this.terminalRows();
+    this.renderedPageSize = terminalRows === undefined ? TREE_EDIT_MAX_ROWS : Math.max(1, Math.min(TREE_EDIT_MAX_ROWS, Math.floor(terminalRows * TREE_EDIT_OVERLAY_MAX_HEIGHT_RATIO) - Math.max(5, lines.length) - 3));
+    if (this.centerOnFirstRender) {
+      this.scroll = Math.max(0, Math.min(rows.length - this.pageSize(), this.selected - Math.floor(this.pageSize() / 2)));
+      this.centerOnFirstRender = false;
+    } else {
+      this.scroll = selectionOffset(this.selected, this.scroll, rows.length, this.pageSize());
+    }
     const visible = rows.slice(this.scroll, this.scroll + this.pageSize());
     for (let i = 0; i < visible.length; i++) {
       const real = this.scroll + i;
@@ -387,7 +423,7 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       const entry = row.entry;
       const selected = real === this.selected;
       const rowId = rowKey(row);
-      const inRange = rangeIds.has(entry.id) || Boolean(this.draft.markId && visibleRange.some((visible) => visible.id === entry.id));
+      const inRange = rangeIds.has(entry.id) || Boolean(this.draft.markId && visibleRangeIds.has(entry.id));
       const isMark = this.draft.markId === rowId;
       const isTarget = this.draft.targetLeafId === entry.id;
       const isFlashing = this.flashOn && flashIds.has(entry.id);
@@ -395,7 +431,7 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       const cursor = selected ? th.fg("accent", "› ") : "  ";
       const label = labels.get(entry.id);
       const labelText = label ? th.fg("warning", `[${label}] `) : "";
-      const prefix = th.fg(row.virtual ? "warning" : "dim", this.treePrefix(row));
+      const prefix = th.fg(row.virtual ? "warning" : "dim", this.treePrefix(row, Math.floor(bodyWidth / 3)));
       const pathMarker = row.virtual ? th.fg("warning", "• ") : isTarget ? th.fg("accent", "◆ ") : row.activePath ? th.fg("accent", "• ") : "";
       let line = `${cursor}${prefix}${pathMarker}${labelText}${this.displayText(row, selected)}`;
       if (selected) line = th.bg("selectedBg", line);
@@ -403,7 +439,7 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
       else if (isFlashing) line = th.bg("toolPendingBg", line);
       else if ((inRange || isMark) && isHighlighted) line = th.bg("toolErrorBg", line);
       else if (isHighlighted && this.draft.highlightKind === "copy") line = th.bg("toolSuccessBg", line);
-      else if (isHighlighted && this.draft.highlightKind === "summary") line = th.bg("toolSuccessBg", line);
+      else if (isHighlighted && this.draft.highlightKind === "prune") line = th.bg("toolSuccessBg", line);
       else if (isHighlighted && this.draft.highlightKind === "paste") line = th.bg("toolPendingBg", line);
       else if (inRange || isMark) line = th.bg("customMessageBg", line);
       lines.push(truncateToWidth(line, bodyWidth));
@@ -417,6 +453,8 @@ class TreeEditComponent extends PipCustomComponent<ExitResult> {
     return boxLines(lines, Math.max(40, bodyWidth), th, { title: " tree-edit " });
   }
 }
+
+export const __test = { TreeEditComponent };
 
 async function saveDraft(sessionFile: string, draft: DraftSession, ctx: Ctx): Promise<void> {
   draft.cleanupLabels();
@@ -472,13 +510,7 @@ export default function (pi: ExtensionAPI) {
           await draft.editEntry(result.id, ctx);
           continue;
         }
-        if (result?.action === "summarize") {
-          draft.checkpoint();
-          await draft.summarizeToClipboard(result.id, ctx, result.foldedIds, result.visibleRangeEntries);
-          continue;
-        }
         if (result?.action === "compact") {
-          draft.checkpoint();
           await draft.compactBefore(result.id, ctx);
           continue;
         }

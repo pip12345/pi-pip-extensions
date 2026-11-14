@@ -221,7 +221,7 @@ describe("pi-tree-edit", () => {
     }
   });
 
-  it("compacts only entries since the previous compaction on the selected branch", async () => {
+  it("compacts the previous checkpoint and retained entries on the selected branch", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tree-edit-compaction-after-existing-"));
     const sessionFile = join(dir, "session.jsonl");
     writeFileSync(
@@ -275,42 +275,19 @@ describe("pi-tree-edit", () => {
       expect(summaryPrompt).toContain("new user");
       expect(summaryPrompt).toContain("new assistant");
       expect(summaryPrompt).not.toContain("old user");
-      expect(summaryPrompt).not.toContain("old assistant");
+      expect(summaryPrompt).toContain("old assistant");
+      expect(summaryPrompt).toContain("already compacted");
       const entries = readFileSync(sessionFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
       const compaction = entries.find((entry) => entry.summary === "reviewed second compaction summary");
-      expect(compaction.details.sourceEntryIds).toEqual(["new-user", "new-assistant"]);
+      expect(compaction.details.sourceEntryIds).toEqual(["existing-compaction", "old-assistant", "new-user", "new-assistant"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("routes range summaries through the model runtime", async () => {
-    const entries: any[] = [
-      { type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "range user" }] } },
-      { type: "message", id: "a1", parentId: "u1", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "assistant", content: [{ type: "text", text: "range assistant" }] } },
-    ];
-    const draft = new DraftSession({ type: "session", id: "session-test" }, entries, "a1");
-    const complete = vi.fn(async (_model: any, _context: any, _options: any) => summaryResponse("generated range summary"));
-    const ctx: any = {
-      model: { provider: "test", id: "test-model", modelId: "test-model", maxTokens: 8192 },
-      modelRegistry: { complete },
-      ui: {
-        notify: () => undefined,
-        editor: async () => "reviewed range summary",
-      },
-    };
-
-    await draft.summarizeToClipboard("a1", ctx, new Set(), entries);
-
-    expect(complete).toHaveBeenCalledWith(
-      ctx.model,
-      expect.objectContaining({ messages: expect.any(Array) }),
-      expect.objectContaining({ cacheRetention: "none", sessionId: expect.any(String) }),
-    );
-    const summaryPrompt = complete.mock.calls[0][1].messages.find((message: any) => message.role === "user").content[0].text;
-    expect(summaryPrompt).toContain("range user");
-    expect(summaryPrompt).toContain("range assistant");
-    expect(draft.clipboard).toMatchObject({ kind: "summary", summary: "reviewed range summary", sourceEntryIds: ["u1", "a1"] });
+  it("does not offer selected-range summary generation", () => {
+    const draft = new DraftSession({ type: "session" }, [], null);
+    expect((draft as any).summarizeToClipboard).toBeUndefined();
   });
 
   it("checkpoints draft prompt and deferred-tool state across repeated compactions", async () => {

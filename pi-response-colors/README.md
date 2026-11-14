@@ -1,6 +1,6 @@
 # pi-response-colors
 
-Renders paired color tags in assistant responses without requiring models to emit terminal escape sequences. Requires Pi 0.84.0 or newer.
+Renders paired color tags in assistant responses without requiring models to emit terminal escape sequences. Requires Pi 1.5.2 or newer.
 
 Preferred tags:
 

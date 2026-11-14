@@ -1,3 +1,4 @@
+import type { ToolRendererResolver, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { createSettingsRegistry, setPipSettingsRegistryForTests } from "./settings.ts";
 
 export interface MockEventBus {
@@ -44,6 +45,9 @@ export interface MockPi {
   events: MockEventBus;
   registerProvider(providerOrName: any, config?: any): void;
   registerTool(tool: any): void;
+  toolRenderers: ToolRendererResolver[];
+  registerToolRenderer(resolver: ToolRendererResolver): void;
+  resolveToolRenderers(toolName: string, base?: () => ToolRenderers | undefined): ToolRenderers | undefined;
   registerCommand(name: string, command: any): void;
   registerShortcut(shortcut: string, shortcutDef: any): void;
   registerMarkdownTransformer(transformer: any): void;
@@ -70,6 +74,16 @@ export function createMockPi(events = createMockEventBus().facade()): MockPi {
     },
     registerTool(tool: any) {
       this.tools.set(tool.name, tool);
+    },
+    toolRenderers: [],
+    registerToolRenderer(resolver) {
+      this.toolRenderers.push(resolver);
+    },
+    resolveToolRenderers(toolName, base = () => this.tools.get(toolName)) {
+      const resolve = (index: number): ToolRenderers | undefined => index < this.toolRenderers.length
+        ? this.toolRenderers[index](toolName, () => resolve(index + 1))
+        : base();
+      return resolve(0);
     },
     registerCommand(name: string, command: any) {
       this.commands.set(name, command);

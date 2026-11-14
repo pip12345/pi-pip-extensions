@@ -61,8 +61,7 @@ describe("pi package manifests", () => {
     for (const dir of packageDirs()) {
       const manifest = readJson(join(dir, "package.json"));
       for (const dependency of importsByPackage[manifest.name] ?? []) {
-        const expectedRange = manifest.name === "pi-response-colors" && dependency === "@earendil-works/pi-coding-agent" ? ">=0.84.0" : "*";
-        expect(manifest.peerDependencies?.[dependency], `${manifest.name} declares peer ${dependency}`).toBe(expectedRange);
+        expect(manifest.peerDependencies?.[dependency], `${manifest.name} declares peer ${dependency}`).toBe("*");
       }
     }
   });

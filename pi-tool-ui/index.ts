@@ -1,5 +1,4 @@
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { createEditToolDefinition, createFindToolDefinition, createGrepToolDefinition, createLsToolDefinition, createReadToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { createLifecycle, firstResultText, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "../pip-common/index.ts";
@@ -10,35 +9,8 @@ const HOME = homedir();
 const SETTINGS_ID = "tool-ui";
 
 type BuiltinName = "read" | "grep" | "find" | "ls" | "edit";
-type BuiltIns = Record<BuiltinName, ToolDefinition<any, any, any>>;
-type SlotAdapter = {
-  tool: BuiltinName;
-  shell?: "self" | "default";
-  renderCall?: NonNullable<ToolDefinition<any, any, any>["renderCall"]>;
-  renderResult?: NonNullable<ToolDefinition<any, any, any>["renderResult"]>;
-};
-
-const toolCache = new Map<string, BuiltIns>();
+type SlotAdapter = ToolRenderers & { tool: BuiltinName };
 const COMPACT_PIP_TOOLS = new Set(["todo_write", "todo_update", "todo_read"]);
-
-function createBuiltInTools(cwd: string): BuiltIns {
-  return {
-    read: createReadToolDefinition(cwd),
-    grep: createGrepToolDefinition(cwd),
-    find: createFindToolDefinition(cwd),
-    ls: createLsToolDefinition(cwd),
-    edit: createEditToolDefinition(cwd),
-  };
-}
-
-function getBuiltInTools(cwd: string): BuiltIns {
-  let tools = toolCache.get(cwd);
-  if (!tools) {
-    tools = createBuiltInTools(cwd);
-    toolCache.set(cwd, tools);
-  }
-  return tools;
-}
 
 function shortenPath(path: unknown, fallback = "."): string {
   const raw = typeof path === "string" && path.length > 0 ? path : fallback;
@@ -72,10 +44,6 @@ function editDiffEnabled(settings: ScopedSettings): boolean {
   return toolUiEnabled(settings) && settings.get("editDiff", true);
 }
 
-function builtinRenderFallback(name: BuiltinName, kind: "renderCall" | "renderResult", args: any[], fallback: Component): Component {
-  return (getBuiltInTools(process.cwd())[name] as any)[kind]?.(...args) ?? fallback;
-}
-
 function collapsedError(result: any): string {
   const firstLine = firstResultText(result).trim().split(/\r?\n/, 1)[0] || "Tool failed";
   return safeTruncateToWidth(firstLine, 200);
@@ -89,12 +57,9 @@ function quietCall(label: string, summarize: (args: any) => string) {
   return (args: any, theme: any, context: any) => toolLine(theme, label, summarize(args), context);
 }
 
-function quietResult(settings: ScopedSettings, tool: BuiltinName) {
-  return (result: any, { expanded }: any, theme: any, context: any) => {
-    if (!toolUiEnabled(settings)) return builtinRenderFallback(tool, "renderResult", [result, { expanded }, theme, context], expandedOutput(result, theme));
-    if (!expanded) return renderErrorIfCollapsed(result, theme, Boolean(context?.isError));
-    return expandedOutput(result, theme);
-  };
+function quietResult(result: any, { expanded }: any, theme: any, context: any): Component {
+  if (!expanded) return renderErrorIfCollapsed(result, theme, Boolean(context?.isError));
+  return expandedOutput(result, theme);
 }
 
 function editDiffComponentForDiff(settings: ScopedSettings, diff: unknown, theme: any): Component | undefined {
@@ -140,47 +105,44 @@ function editCallComponent(args: any, theme: any, context?: any): Component {
   return toolShellComponent({ render: (width: number) => [safeTruncateToWidth(line, width)], invalidate() {} }, theme, { role: "call", status: toolShellStatus(context) });
 }
 
-function makeQuietAdapter(settings: ScopedSettings, tool: BuiltinName, summarize: (args: any) => string): SlotAdapter {
+function makeQuietAdapter(tool: BuiltinName, summarize: (args: any) => string): SlotAdapter {
   return {
     tool,
-    shell: "self",
+    renderShell: "self",
     renderCall(args, theme, context) {
-      if (!toolUiEnabled(settings)) return safeCachedComponent(builtinRenderFallback(tool, "renderCall", [args, theme, context], toolLine(theme, tool, "", context)));
       return safeCachedComponent(quietCall(tool, summarize)(args, theme, context));
     },
     renderResult(result, options, theme, context) {
-      return safeCachedComponent(quietResult(settings, tool)(result, options, theme, context));
+      return safeCachedComponent(quietResult(result, options, theme, context));
     },
   };
 }
 
 function createBuiltinAdapters(settings: ScopedSettings): SlotAdapter[] {
   return [
-  makeQuietAdapter(settings, "read", (args) => {
+  makeQuietAdapter("read", (args) => {
     const path = shortenPath(args.path, "");
     const start = typeof args.offset === "number" ? args.offset : undefined;
     const end = typeof args.limit === "number" ? (start ?? 1) + args.limit - 1 : undefined;
     const range = start || end ? `:${start ?? 1}${end ? `-${end}` : ""}` : "";
     return `${path}${range}`;
   }),
-  makeQuietAdapter(settings, "grep", (args) => {
+  makeQuietAdapter("grep", (args) => {
     const pattern = args.literal ? String(args.pattern ?? "") : `/${String(args.pattern ?? "")}/`;
     const bits = [pattern, `in ${shortenPath(args.path, ".")}`];
     if (args.glob) bits.push(String(args.glob));
     if (args.ignoreCase) bits.push("-i");
     return bits.join(" ");
   }),
-  makeQuietAdapter(settings, "find", (args) => `${String(args.pattern ?? "")} in ${shortenPath(args.path, ".")}`),
-  makeQuietAdapter(settings, "ls", (args) => shortenPath(args.path, ".")),
+  makeQuietAdapter("find", (args) => `${String(args.pattern ?? "")} in ${shortenPath(args.path, ".")}`),
+  makeQuietAdapter("ls", (args) => shortenPath(args.path, ".")),
   {
     tool: "edit",
-    shell: "self",
+    renderShell: "self",
     renderCall(args, theme, context) {
-      if (!editDiffEnabled(settings)) return safeCachedComponent(builtinRenderFallback("edit", "renderCall", [args, theme, context], toolLine(theme, "edit", shortenPath((args as any)?.path, ""), context)));
       return editCallComponent(args, theme, context);
     },
-    renderResult(result, options, theme, context) {
-      if (!editDiffEnabled(settings)) return safeCachedComponent(builtinRenderFallback("edit", "renderResult", [result, options, theme, context], expandedOutput(result, theme)));
+    renderResult(result, _options, theme, context) {
       const renderedDiff = context?.isError ? undefined : reusableEditResultComponent(settings, result, theme, context?.lastComponent);
       return renderedDiff ?? safeCachedComponent(renderErrorIfCollapsed(result, theme, Boolean(context?.isError)));
     },
@@ -233,20 +195,6 @@ function registerToolUiSettings(pi: ExtensionAPI): void {
   });
 }
 
-function registerBuiltInAdapter(pi: ExtensionAPI, adapter: SlotAdapter, settings: ScopedSettings): void {
-  const builtin = getBuiltInTools(process.cwd())[adapter.tool];
-  const tool: ToolDefinition<any, any, any> = {
-    ...builtin,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      return getBuiltInTools(ctx.cwd ?? process.cwd())[adapter.tool].execute(toolCallId, params, signal, onUpdate, ctx);
-    },
-  };
-  if (adapter.shell) tool.renderShell = adapter.tool === "edit" ? (editDiffEnabled(settings) ? adapter.shell : "default") : (toolUiEnabled(settings) ? adapter.shell : "default");
-  if (adapter.renderCall) tool.renderCall = adapter.renderCall;
-  if (adapter.renderResult) tool.renderResult = adapter.renderResult;
-  pi.registerTool(tool);
-}
-
 export default function (pi: ExtensionAPI) {
   const lifecycle = createLifecycle();
   const settings = settingsFor(pi, SETTINGS_ID);
@@ -254,5 +202,10 @@ export default function (pi: ExtensionAPI) {
   registerToolUiSettings(pi);
   lifecycle.add(registerToolUiPipFinalizer(pi, settings));
   pi.on("session_shutdown", async () => { await lifecycle.disposeAll(); });
-  for (const adapter of adapters) registerBuiltInAdapter(pi, adapter, settings);
+  pi.registerToolRenderer((toolName, next) => {
+    const adapter = adapters.find(({ tool }) => tool === toolName);
+    if (!adapter || !toolUiEnabled(settings) || (toolName === "edit" && !editDiffEnabled(settings))) return next();
+    const { tool: _tool, ...renderers } = adapter;
+    return renderers;
+  });
 }

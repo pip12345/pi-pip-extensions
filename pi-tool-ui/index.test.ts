@@ -6,7 +6,16 @@ import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
 import subagents from "../pi-subagents/index.ts";
 import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "../pip-common/index.ts";
-import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
+import { createMockPi } from "../pip-common/testing.ts";
+
+// Resolve display adapters first; Pip-owned tools remain the resolver's base.
+function getRegisteredTool(pi: ReturnType<typeof createMockPi>, name: string): any {
+  return pi.resolveToolRenderers(name);
+}
+
+function getBuiltinRenderer(pi: ReturnType<typeof createMockPi>, name: string): any {
+  return pi.resolveToolRenderers(name);
+}
 
 const theme = { fg: (_name: string, text: string) => text, bg: (_name: string, text: string) => text, bold: (text: string) => text } as any;
 const markedTheme = { fg: (name: string, text: string) => `<${name}>${text}</${name}>`, bg: (name: string, text: string) => `<bg:${name}>${text}</bg:${name}>`, bold: (text: string) => text } as any;
@@ -26,10 +35,11 @@ describe("pi-tool-ui", () => {
     expect(contentLine).not.toContain("\x1b[0m  ");
   });
 
-  it("registers built-in tool ui overrides", () => {
+  it("registers built-in display renderers without replacing tools", () => {
     const pi = createMockPi();
     toolUi(pi as any);
-    expect([...pi.tools.keys()]).toEqual(["read", "grep", "find", "ls", "edit"]);
+    expect([...pi.tools.keys()]).toEqual([]);
+    expect(pi.toolRenderers).toHaveLength(1);
     expect(Object.keys(getPipSettingsRegistry(pi).definition("tool-ui") ?? {})).toEqual(["enabled", "diffLayout", "editDiff"]);
     expect(getPipSettingsRegistry(pi).definition("tool-ui")?.editDiff.description).toContain("diffs");
   });
@@ -43,22 +53,15 @@ describe("pi-tool-ui", () => {
     expect(rendered).not.toContain("expanded");
   });
 
-  it("preserves full built-in prompt contracts while replacing rendering", () => {
+  it("owns only rendering slots for the five targeted tools", () => {
     const pi = createMockPi();
     toolUi(pi as any);
-    const read = getRegisteredTool(pi, "read");
-    const edit = getRegisteredTool(pi, "edit");
-
-    for (const name of ["read", "grep", "find", "ls", "edit"]) expect(getRegisteredTool(pi, name).promptSnippet).toBeTypeOf("string");
-    expect(read.promptSnippet).toBe("Read file contents");
-    expect(read.promptGuidelines).toContain("Use read to examine files instead of cat or sed.");
-    expect(read.renderShell).toBe("self");
-    expect(read.renderCall).toBeTypeOf("function");
-    expect(edit.promptSnippet).toContain("precise file edits");
-    expect(edit.promptGuidelines).toContain("Use edit for precise changes (edits[].oldText must match exactly)");
-    expect(edit.renderShell).toBe("self");
-    expect(edit.renderCall).toBeTypeOf("function");
-    expect(edit.renderResult).toBeTypeOf("function");
+    for (const name of ["read", "grep", "find", "ls", "edit"]) {
+      const renderer = getBuiltinRenderer(pi, name);
+      expect(Object.keys(renderer).sort()).toEqual(["renderCall", "renderResult", "renderShell"]);
+      expect(renderer.renderShell).toBe("self");
+    }
+    expect(pi.tools.size).toBe(0);
   });
 
   it("warns when tool output is globally expanded", () => {
@@ -89,7 +92,7 @@ describe("pi-tool-ui", () => {
     expect(edit.renderShell).toBe("self");
     expect(edit.renderCall).toBeTypeOf("function");
     expect(edit.renderResult).toBeTypeOf("function");
-    expect(edit.prepareArguments).toBeTypeOf("function");
+    expect(edit.prepareArguments).toBeUndefined();
     const rendered = edit.renderCall({ path: "a.ts", edits: [{ oldText: "a", newText: "b" }] }, theme, {}).render(80).join("\n");
     expect(rendered).toContain("edit a.ts 1 edit");
     expect(rendered).not.toContain("›");
@@ -125,12 +128,9 @@ describe("pi-tool-ui", () => {
     const pi = createMockPi();
     setPipSettingsRegistryForTests(pi, createSettingsRegistry({ "tool-ui": { enabled: true, editDiff: false } }, { persistPath: false }));
     toolUi(pi as any);
-    const edit = getRegisteredTool(pi, "edit");
-    const args = { path: "a.ts", edits: [] };
-    const rendered = edit.renderCall(args, markedTheme, { state: {}, args, cwd: process.cwd(), isPartial: false, isError: false, expanded: false }).render(80).join("\n");
-
-    expect(edit.renderShell).toBe("default");
-    expect(rendered).not.toContain("<bg:toolSuccessBg>");
+    const underlying = { renderShell: "default" as const, renderCall: () => ({ render: () => ["original edit"], invalidate() {} }) };
+    expect(pi.resolveToolRenderers("edit", () => underlying)).toBe(underlying);
+    expect(getBuiltinRenderer(pi, "read").renderShell).toBe("self");
   });
 
   it("renders split edit diffs as result output without depending on call component internals", () => {
@@ -311,6 +311,43 @@ describe("pi-tool-ui", () => {
     expect(rendered).toContain("<toolDiffRemoved>-2 old value</toolDiffRemoved>");
     expect(rendered).toContain("<toolDiffAdded>+2 new value</toolDiffAdded>");
     expect(rendered).not.toContain("│");
+  });
+
+  it("keeps expanded quiet-tool output and compact call summaries", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const cases = [
+      ["grep", { pattern: "needle", path: "src", glob: "*.ts", ignoreCase: true }, "/needle/ in src *.ts -i"],
+      ["find", { pattern: "*.ts", path: "src" }, "*.ts in src"],
+      ["ls", { path: "src" }, "src"],
+    ] as const;
+    for (const [name, args, summary] of cases) {
+      const renderer = getRegisteredTool(pi, name);
+      expect(renderer.renderCall(args, theme, {}).render(80).join("\n")).toContain(summary);
+      const expanded = renderer.renderResult({ content: [{ type: "text", text: "first\nsecond" }] }, { expanded: true }, theme, {}).render(80).join("\n");
+      expect(expanded.split("\n").map((line: string) => line.trim()).filter(Boolean)).toEqual(["first", "second"]);
+    }
+  });
+
+  it("invalidates cached diff layout and replaces stale diff components", () => {
+    const pi = createMockPi();
+    toolUi(pi as any);
+    const edit = getRegisteredTool(pi, "edit");
+    const result = { content: [], details: { diff: " 1 same\n-2 old\n+2 new" } };
+    const context: any = { isError: false };
+    const first = edit.renderResult(result, {}, theme, context);
+    expect(first.render(140).join("\n")).toContain("│");
+    getPipSettingsRegistry(pi).set("tool-ui.diffLayout", "unified");
+    first.invalidate();
+    expect(first.render(140).join("\n")).not.toContain("│");
+    context.lastComponent = first;
+    const changed = edit.renderResult({ content: [], details: { diff: "-1 before\n+1 after" } }, {}, theme, context);
+    expect(changed).not.toBe(first);
+    expect(changed.render(140).join("\n")).toContain("after");
+    context.isError = true;
+    const error = edit.renderResult({ ...result, content: [{ type: "text", text: "failed" }] }, {}, theme, context);
+    expect(error).not.toBe(first);
+    expect(error.render(140).join("\n").trim()).toBe("failed");
   });
 
   it("renders todo tools through display metadata when both plugins are loaded", () => {

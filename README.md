@@ -4,7 +4,7 @@ One aggregate Pi package containing separately filterable extension features. Ea
 
 ## Dependencies
 
-Requires Pi `0.99.1` or newer and Node.js `22.19` or newer.
+Requires Pi `1.5.2` or newer and Node.js `22.19` or newer.
 
 The extensions use Pi's built-in packages, Node.js built-ins, and the bundled `pip-common` runtime. Aggregate source checkouts load `pip-common` directly from this repository without installed workspace links. Standalone feature packages bundle their own copy. `pi-claude-agent` additionally uses the Anthropic Agent SDK and MCP SDK, installed as package dependencies, and requires a local Claude Code installation. For local source checkouts, run `npm ci --ignore-scripts` before using that provider.
 

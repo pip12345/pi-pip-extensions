@@ -4,7 +4,7 @@ A separate `claude-agent` model provider that runs the real Claude Code executab
 
 ## Requirements
 
-- Pi `0.99.1` or newer and Node.js `22.19` or newer.
+- Pi `1.5.2` or newer and Node.js `22.19` or newer.
 - Claude Code `2.1.248` or newer, installed and signed in on the **same machine as Pi**. In a container, a host-only installation is not sufficient.
 - This package's npm dependencies. Pi installs these for managed git/npm packages. For a local checkout of the aggregate repository, run `npm ci --ignore-scripts` at its root.
 

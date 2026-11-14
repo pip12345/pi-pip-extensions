@@ -53,7 +53,7 @@ Only needed when changing code or running tests:
 npm install
 ```
 
-This installs TypeScript, Vitest, and Pi `0.99.1` packages for local development. Runtime use through Pi does not require this step.
+This installs TypeScript, Vitest, and pinned Pi `1.5.2` packages for local development, the supported runtime baseline. Runtime use through Pi does not require this step. Host-provided Pi packages remain external peers with `"*"` ranges, as required by Pi's package guidance.
 
 ## Run tests
 
@@ -93,7 +93,7 @@ The package tests install every feature tarball in isolation and load it through
 
 ## Unit-test approach
 
-Tests use Vitest and mostly avoid launching Pi. Extensions are imported directly and passed a mocked `ExtensionAPI` from `pip-common/testing.ts`.
+Tests use Vitest and mostly avoid launching Pi. Extensions are imported directly and passed a mocked `ExtensionAPI` from `pip-common/testing.ts`. `test/pi-contracts.test.ts` additionally exercises real Pi SDK sessions with isolated local state and a deterministic in-process provider; it requires no credentials or network requests.
 
 Example:
 
@@ -142,7 +142,7 @@ Minimal `package.json`:
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.99.1"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "dependencies": {
     "pip-common": "0.1.0"
