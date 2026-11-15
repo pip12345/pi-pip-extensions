@@ -144,11 +144,7 @@ function promptText(entry: SessionEntry, entries: readonly SessionEntry[]): stri
 }
 
 function sessionFileFromCtx(ctx: Ctx): string | undefined {
-  return ctx.sessionManager.getSessionFile?.();
-}
-
-function leafFromCtx(ctx: Ctx, branch: any[]): string | undefined {
-  return ctx.sessionManager.getLeafId?.() ?? branch.at(-1)?.id;
+  return ctx.sessionManager.getSessionFile();
 }
 
 function backupOptions() {
@@ -167,9 +163,8 @@ export interface UndoPlan {
   promptText: string;
 }
 
-export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], leafId?: string): UndoPlan {
+export function planUndo(branch: SessionEntry[], allEntries: SessionEntry[], currentLeafId: string | null | undefined): UndoPlan {
   if (!branch.length) throw new Error("Nothing to undo.");
-  const currentLeafId = leafId ?? branch.at(-1)?.id;
   if (!currentLeafId || branch.at(-1)?.id !== currentLeafId) throw new Error("Cannot undo: current leaf mismatch.");
 
   let targetIndex = -1;
@@ -200,12 +195,7 @@ function backupAndCleanup(sessionFile: string, reason: string): void {
 }
 
 async function replaceCurrentSession(ctx: Ctx, sessionFile: string, withSession?: (ctx: Ctx) => Promise<void> | void): Promise<void> {
-  if (typeof ctx.switchSession === "function") {
-    await ctx.switchSession(sessionFile, { withSession });
-    return;
-  }
-  await ctx.reload?.();
-  await withSession?.(ctx);
+  await ctx.switchSession(sessionFile, { withSession });
 }
 
 function removeTail(file: ParsedSessionFile, tail: SessionEntry[], previousLeafId: string | null): SessionRecord[] {
@@ -225,12 +215,12 @@ function restoreTail(_file: ParsedSessionFile, slot: RedoSlot): SessionRecord[] 
 
 async function undo(ctx: Ctx, settings: ScopedSettings) {
   if (!settingsEnabled(settings)) return ctx.ui.notify("Undo/redo is disabled.", "warning");
-  if (ctx.isIdle?.() === false) return ctx.ui.notify("Cannot undo while pi is running.", "warning");
+  if (ctx.isIdle() === false) return ctx.ui.notify("Cannot undo while pi is running.", "warning");
   const sessionFile = sessionFileFromCtx(ctx);
   if (!sessionFile) return ctx.ui.notify("Cannot undo: no session file.", "warning");
 
-  const branch = ctx.sessionManager.getBranch?.() ?? [];
-  const currentLeafId = leafFromCtx(ctx, branch);
+  const branch = ctx.sessionManager.getBranch();
+  const currentLeafId = ctx.sessionManager.getLeafId();
   const file = parseSessionFile(sessionFile);
   const fileLeafValues = sessionHeaderLeafValues(file.header);
   if (fileLeafValues.some((fileLeaf) => fileLeaf !== currentLeafId)) throw new Error("Cannot undo: session file is out of sync.");
@@ -250,14 +240,14 @@ async function undo(ctx: Ctx, settings: ScopedSettings) {
     createdAt: Date.now(),
   });
   await replaceCurrentSession(ctx, sessionFile, async (newCtx) => {
-    newCtx.ui.setEditorText?.(plan.promptText);
+    newCtx.ui.setEditorText(plan.promptText);
     newCtx.ui.notify(`Undid latest prompt. Use /redo to restore it.`, "info");
   });
 }
 
 async function redo(ctx: Ctx, settings: ScopedSettings) {
   if (!settingsEnabled(settings)) return ctx.ui.notify("Undo/redo is disabled.", "warning");
-  if (ctx.isIdle?.() === false) return ctx.ui.notify("Cannot redo while pi is running.", "warning");
+  if (ctx.isIdle() === false) return ctx.ui.notify("Cannot redo while pi is running.", "warning");
   const slot = redoSlot();
   if (!slot) return ctx.ui.notify("Nothing to redo.", "info");
   const sessionFile = sessionFileFromCtx(ctx);
@@ -327,7 +317,7 @@ export default function undoRedoExtension(pi: ExtensionAPI) {
     clearRedoStack();
     const sessionFile = sessionFileFromCtx(ctx);
     if (!sessionFile) return;
-    setPendingRawPrompt({ sessionFile, beforeLeafId: ctx.sessionManager.getLeafId?.() ?? null, rawText });
+    setPendingRawPrompt({ sessionFile, beforeLeafId: ctx.sessionManager.getLeafId(), rawText });
   });
 
   pi.on("message_end", (event: any) => {

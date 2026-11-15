@@ -1,11 +1,11 @@
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import toolUi from "./index.ts";
 import { parseEditDisplayDiff, renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 import { toolShellComponent } from "./src/shell.ts";
 import todo from "../pi-todo/index.ts";
 import subagents from "../pi-subagents/index.ts";
-import { createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "../pip-common/index.ts";
+import { createSettingsRegistry, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi } from "../pip-common/testing.ts";
 
 // Resolve display adapters first; Pip-owned tools remain the resolver's base.
@@ -354,7 +354,6 @@ describe("pi-tool-ui", () => {
     const pi = createMockPi();
     todo(pi as any);
     toolUi(pi as any);
-    flushPipTools(pi as any);
     const write = getRegisteredTool(pi, "todo_write");
 
     expect(write.renderShell).toBe("self");
@@ -363,11 +362,10 @@ describe("pi-tool-ui", () => {
     expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_write).toBeUndefined();
   });
 
-  it("display metadata rendering is load-order safe before flush", () => {
+  it("display metadata rendering resolves tools declared after Tool UI", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     todo(pi as any);
-    flushPipTools(pi as any);
     const update = getRegisteredTool(pi, "todo_update");
 
     expect(update.renderShell).toBe("self");
@@ -375,16 +373,49 @@ describe("pi-tool-ui", () => {
     expect(getPipSettingsRegistry(pi).definition("tool-ui")?.todo_update).toBeUndefined();
   });
 
-  it("display metadata rendering is re-applied when Tool UI loads after pip tools registered", () => {
+  it("resolves metadata when Tool UI loads later without registering tools again", () => {
     const pi = createMockPi();
+    const register = vi.spyOn(pi, "registerTool");
     todo(pi as any);
     expect(getRegisteredTool(pi, "todo_update").renderShell).toBeUndefined();
+    expect(register).toHaveBeenCalledTimes(3);
 
     toolUi(pi as any);
+    expect(register).toHaveBeenCalledTimes(3);
     const update = getRegisteredTool(pi, "todo_update");
     expect(update.renderShell).toBe("self");
     expect(update.renderCall({ updates: [{ match: "x", status: "done" }] }, theme, { expanded: false }).render(80).join("\n")).toContain("› todo_update: 1 updates");
     expect(update.renderResult({ content: [{ type: "text", text: "Updated 1 todo" }], details: { todos: [] } }, { expanded: false }, theme, {}).render(80)).toEqual([]);
+  });
+
+  it("delegates todo rendering unchanged when disabled and responds to settings changes", () => {
+    const pi = createMockPi();
+    const settings = createSettingsRegistry({ "tool-ui": { enabled: false } }, { persistPath: false });
+    setPipSettingsRegistryForTests(pi, settings);
+    todo(pi as any);
+    toolUi(pi as any);
+    const base = pi.tools.get("todo_read");
+    expect(getRegisteredTool(pi, "todo_read")).toBe(base);
+    settings.set("tool-ui.enabled", true);
+    expect(getRegisteredTool(pi, "todo_read").renderShell).toBe("self");
+    settings.set("tool-ui.enabled", false);
+    expect(getRegisteredTool(pi, "todo_read")).toBe(base);
+  });
+
+  it("keeps collapsed todo errors and expanded todo details visible", () => {
+    const pi = createMockPi();
+    todo(pi as any);
+    toolUi(pi as any);
+    const result = { content: [{ type: "text", text: `Failed ${"x".repeat(400)}\nmore` }], details: { todos: [{ id: 1, status: "active", text: "work" }] } };
+    for (const name of ["todo_write", "todo_update", "todo_read"]) {
+      const renderer = getRegisteredTool(pi, name);
+      const error = renderer.renderResult(result, { expanded: false }, theme, { isError: true }).render(500).join("\n");
+      expect(error).toContain("Failed");
+      expect(error).not.toContain("more");
+      expect(visibleWidth(error.trimEnd())).toBeLessThanOrEqual(200);
+      const expanded = renderer.renderResult(result, { expanded: true }, theme, {}).render(80).join("\n");
+      expect(expanded).toContain("[active] #1 work");
+    }
   });
 
   it("does not compact-render subagent just because it has display metadata", () => {
@@ -393,7 +424,6 @@ describe("pi-tool-ui", () => {
     const before = getRegisteredTool(pi, "subagent");
 
     toolUi(pi as any);
-    flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "subagent");
 
     expect(tool.renderShell).toBe(before.renderShell);

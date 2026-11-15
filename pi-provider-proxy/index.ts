@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { pipPath, registerProviderOverrideContributor } from "../pip-common/index.ts";
+import { pipPath } from "../pip-common/index.ts";
 
 export interface ProviderProxyConfig {
   enabled: boolean;
@@ -980,7 +980,6 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
   let config: ProviderProxyConfig = { ...DEFAULT_CONFIG, providers: {}, auth: {} };
   let loadError: string | undefined;
   const appliedRegistrations = new Map<string, Record<string, unknown>>();
-  const providerOverrides = registerProviderOverrideContributor(pi, { id: "pi-provider-proxy", role: "transport" });
 
   const cloneConfig = (value: ProviderProxyConfig): ProviderProxyConfig => ({ enabled: value.enabled, providers: { ...value.providers }, auth: { ...value.auth } });
 
@@ -997,18 +996,27 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
   const reconcile = (value: ProviderProxyConfig) => {
     const desired = desiredRegistrations(value);
     const previous = new Map(appliedRegistrations);
+    const attempted = new Set<string>();
     try {
-      // Replacements are applied before removals so each provider retains the
-      // coordinator's per-provider rollback until its new registration works.
-      for (const [provider, registration] of desired) providerOverrides.set(provider, registration);
-      for (const provider of previous.keys()) if (!desired.has(provider)) providerOverrides.remove(provider);
+      for (const [provider, registration] of desired) {
+        attempted.add(provider);
+        // Pi merges defined registration fields. Clear an owned registration
+        // before replacing it so removed OAuth/endpoint fields cannot linger.
+        if (previous.has(provider)) pi.unregisterProvider(provider);
+        pi.registerProvider(provider, registration);
+      }
+      for (const provider of previous.keys()) {
+        if (desired.has(provider)) continue;
+        attempted.add(provider);
+        pi.unregisterProvider(provider);
+      }
     } catch (error) {
       const rollbackErrors: unknown[] = [];
-      for (const provider of new Set([...desired.keys(), ...previous.keys()])) {
+      for (const provider of attempted) {
         try {
+          pi.unregisterProvider(provider);
           const registration = previous.get(provider);
-          if (registration) providerOverrides.set(provider, registration);
-          else providerOverrides.remove(provider);
+          if (registration) pi.registerProvider(provider, registration);
         } catch (rollbackError) {
           rollbackErrors.push(rollbackError);
         }
@@ -1028,7 +1036,11 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
       saveProviderProxyConfig(normalized, configPath);
       config = normalized;
     } catch (error) {
-      reconcile(previous);
+      try {
+        reconcile(previous);
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "Provider proxy persistence and rollback failed");
+      }
       throw error;
     }
   };
@@ -1200,7 +1212,7 @@ export function registerProviderProxyExtension(pi: ExtensionAPI, options: Provid
   });
 
   pi.on("session_shutdown", async () => {
-    providerOverrides.dispose();
+    for (const provider of appliedRegistrations.keys()) pi.unregisterProvider(provider);
     appliedRegistrations.clear();
   });
 }

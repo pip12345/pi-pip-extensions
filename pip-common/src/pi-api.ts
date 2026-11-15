@@ -1,10 +1,9 @@
 export interface SessionManagerLike {
-  getBranch?: () => any[];
-  getEntries?: () => any[];
-  getLeafId?: () => string | null | undefined;
-  getLeafEntry?: () => { id?: string } | undefined;
-  getSessionFile?: () => string | undefined;
-  getSessionId?: () => string | undefined;
+  getBranch: () => any[];
+  getEntries: () => any[];
+  getLeafId: () => string | null | undefined;
+  getSessionFile: () => string | undefined;
+  getSessionId: () => string | undefined;
 }
 
 export interface ExtensionContextLike {
@@ -21,23 +20,23 @@ export interface ExtensionContextLike {
 }
 
 export function branchEntries(ctx: ExtensionContextLike | undefined): any[] {
-  return ctx?.sessionManager?.getBranch?.() ?? ctx?.sessionManager?.getEntries?.() ?? [];
+  return ctx?.sessionManager?.getBranch() ?? [];
 }
 
 export function sessionEntries(ctx: ExtensionContextLike | undefined): any[] {
-  return ctx?.sessionManager?.getEntries?.() ?? [];
+  return ctx?.sessionManager?.getEntries() ?? [];
 }
 
 export function leafId(ctx: ExtensionContextLike | undefined): string | null | undefined {
-  return ctx?.sessionManager?.getLeafId?.() ?? ctx?.sessionManager?.getLeafEntry?.()?.id;
+  return ctx?.sessionManager?.getLeafId();
 }
 
 export function sessionFile(ctx: ExtensionContextLike | undefined): string | undefined {
-  return ctx?.sessionManager?.getSessionFile?.();
+  return ctx?.sessionManager?.getSessionFile();
 }
 
 export function sessionKey(ctx: ExtensionContextLike | undefined, fallback = "unknown"): string {
-  return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.getSessionId?.() ?? fallback;
+  return ctx?.sessionManager?.getSessionFile() ?? ctx?.sessionManager?.getSessionId() ?? fallback;
 }
 
 export function hasTuiCustom(ctx: ExtensionContextLike | undefined): boolean {

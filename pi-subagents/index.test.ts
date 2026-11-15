@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { createMockCtx, createMockPi, emitEvent, getRegisteredShortcut, getRegisteredTool, runCommand } from "../pip-common/testing.ts";
-import { addUsage, createSettingsRegistry, flushPipTools, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type TokenUsage } from "../pip-common/index.ts";
+import { addUsage, createSettingsRegistry, getPipSettingsRegistry, resetPipToolsForTests, setPipSettingsRegistryForTests, type TokenUsage } from "../pip-common/index.ts";
 import { __test, createSubagentsExtension } from "./index.ts";
 import { SubagentManager } from "./src/manager.ts";
 import { SubagentViewer } from "./src/view.ts";
@@ -128,7 +128,6 @@ function setup(runner: Runner = new FakeRunner(), initialSettings: Record<string
   const pi = createMockPi();
   setPipSettingsRegistryForTests(pi, createSettingsRegistry({ subagents: initialSettings }, { persistPath: false }));
   createSubagentsExtension({ runner })(pi as any);
-  flushPipTools(pi as any);
   return { pi, runner, tool: getRegisteredTool(pi, "subagent") };
 }
 
@@ -138,7 +137,6 @@ function persistedSetup(runner: Runner = new FakeRunner(), initialSettings: Reco
   const pi = createMockPi();
   setPipSettingsRegistryForTests(pi, createSettingsRegistry({ subagents: initialSettings }, { persistPath: false }));
   createSubagentsExtension({ manager })(pi as any);
-  flushPipTools(pi as any);
   return { dir, manager, pi, runner, tool: getRegisteredTool(pi, "subagent"), cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -551,7 +549,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const secondTool = getRegisteredTool(secondPi, "subagent");
       const restored = await secondTool.execute("2", { action: "status", id: "usage-run" }, undefined, undefined, ctx);
       expect(restored.content[0].text).toContain("usage: ↓:172k ↑:6k ↻:848k · $0.42");
@@ -581,7 +578,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       await emitEvent(secondPi, "session_start", {}, ctx);
       const secondTool = getRegisteredTool(secondPi, "subagent");
       const restored = await secondTool.execute("2", { action: "status", id: "model-run" }, undefined, undefined, ctx);
@@ -607,7 +603,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: secondRunner, persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const secondTool = getRegisteredTool(secondPi, "subagent");
       await emitEvent(secondPi, "session_start", {}, ctx);
       const list = await secondTool.execute("2", {}, undefined, undefined, ctx);
@@ -631,7 +626,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const secondTool = getRegisteredTool(secondPi, "subagent");
 
       await emitEvent(secondPi, "session_start", {}, ctx);
@@ -662,7 +656,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const secondTool = getRegisteredTool(secondPi, "subagent");
 
       const otherBranch = ctxForSession(parentFile, process.cwd(), "m0", ["root", "m0"]);
@@ -695,7 +688,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: secondRunner, persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const secondTool = getRegisteredTool(secondPi, "subagent");
       await emitEvent(secondPi, "session_start", {}, ctx);
       const listed = await secondTool.execute("2", {}, undefined, undefined, ctx);
@@ -725,7 +717,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: secondRunner, persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const secondTool = getRegisteredTool(secondPi, "subagent");
 
       await emitEvent(secondPi, "session_start", {}, ctxA);
@@ -767,7 +758,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       await emitEvent(secondPi, "session_start", {}, ctx);
       const list = await getRegisteredTool(secondPi, "subagent").execute("3", {}, undefined, undefined, ctx);
       expect(list.content[0].text).toContain("forgotten");
@@ -795,7 +785,6 @@ describe("pi-subagents", () => {
       const secondManager = new SubagentManager({ runner: new FakeRunner(), persistenceDir: first.dir });
       const secondPi = createMockPi();
       createSubagentsExtension({ manager: secondManager })(secondPi as any);
-      flushPipTools(secondPi as any);
       const ctx = ctxForSession(otherParent);
       await emitEvent(secondPi, "session_start", {}, ctx);
       const orphanCtx = ctxForSession(parentFile);
@@ -813,7 +802,6 @@ describe("pi-subagents", () => {
     const pi = createMockPi();
     setPipSettingsRegistryForTests(pi, createSettingsRegistry({}, { persistPath: false }));
     createSubagentsExtension({ manager })(pi as any);
-    flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "subagent");
     const ctx = createMockCtx();
     const launched = await tool.execute("1", { agent: "explore", prompt: "first", keep: true }, undefined, undefined, ctx);
@@ -911,7 +899,6 @@ describe("pi-subagents", () => {
     const manager = new SubagentManager({ runner, contextDir });
     const pi = createMockPi();
     createSubagentsExtension({ manager })(pi as any);
-    flushPipTools(pi as any);
     const ctx = createMockCtx();
     try {
       const tool = getRegisteredTool(pi, "subagent");
@@ -1277,7 +1264,6 @@ describe("pi-subagents", () => {
     const manager = new SubagentManager({ runner });
     const pi = createMockPi();
     createSubagentsExtension({ manager })(pi as any);
-    flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "subagent");
     const promise = tool.execute("1", { agent: "explore", prompt: "slow", background: true }, undefined, undefined, createMockCtx());
     await new Promise((resolve) => setTimeout(resolve, 0));

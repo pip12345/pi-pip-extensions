@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Text, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
-import { createLifecycle, firstResultText, registerPipToolFinalizer, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "../pip-common/index.ts";
+import { firstResultText, getPipToolMetadata, registerSettingsSection, setting, settingsFor, themeFg, safeTruncateToWidth, type ScopedSettings } from "../pip-common/index.ts";
 import { safeCachedComponent, themeBold, toolShellComponent } from "./src/shell.ts";
 import { renderSplitEditDiff, renderUnifiedEditDiff } from "./src/split-diff.ts";
 
@@ -170,17 +170,6 @@ function renderDisplayPipResult(display: any) {
   };
 }
 
-function registerToolUiPipFinalizer(pi: ExtensionAPI, settings: ScopedSettings): () => void {
-  return registerPipToolFinalizer(pi, {
-    id: "tool-ui",
-    order: 100,
-    finalize({ tool, metadata }) {
-      if (!COMPACT_PIP_TOOLS.has(tool.name) || !metadata?.display || !toolUiEnabled(settings)) return tool;
-      return { ...tool, renderShell: "self", renderCall: renderDisplayPipCall(tool.name, metadata.display), renderResult: renderDisplayPipResult(metadata.display) };
-    },
-  });
-}
-
 function registerToolUiSettings(pi: ExtensionAPI): void {
   registerSettingsSection(pi, {
     id: SETTINGS_ID,
@@ -196,15 +185,15 @@ function registerToolUiSettings(pi: ExtensionAPI): void {
 }
 
 export default function (pi: ExtensionAPI) {
-  const lifecycle = createLifecycle();
   const settings = settingsFor(pi, SETTINGS_ID);
   const adapters = createBuiltinAdapters(settings);
   registerToolUiSettings(pi);
-  lifecycle.add(registerToolUiPipFinalizer(pi, settings));
-  pi.on("session_shutdown", async () => { await lifecycle.disposeAll(); });
   pi.registerToolRenderer((toolName, next) => {
+    if (!toolUiEnabled(settings)) return next();
+    const display = COMPACT_PIP_TOOLS.has(toolName) ? getPipToolMetadata(pi, toolName)?.display : undefined;
+    if (display) return { renderShell: "self", renderCall: renderDisplayPipCall(toolName, display), renderResult: renderDisplayPipResult(display) };
     const adapter = adapters.find(({ tool }) => tool === toolName);
-    if (!adapter || !toolUiEnabled(settings) || (toolName === "edit" && !editDiffEnabled(settings))) return next();
+    if (!adapter || (toolName === "edit" && !editDiffEnabled(settings))) return next();
     const { tool: _tool, ...renderers } = adapter;
     return renderers;
   });

@@ -113,12 +113,13 @@ export function createMockPi(events = createMockEventBus().facade()): MockPi {
   return pi;
 }
 
-export function createMockSessionManager(entries: any[] = [], leafId?: string) {
+export function createMockSessionManager(entries: any[] = [], leafId?: string | null) {
   return {
     getEntries: () => entries,
     getBranch: () => entries,
-    getLeafId: () => leafId ?? entries.at(-1)?.id,
+    getLeafId: () => leafId === undefined ? entries.at(-1)?.id ?? null : leafId,
     getSessionFile: () => undefined,
+    getSessionId: () => undefined,
     getLabel: (id: string) => entries.find((entry) => entry.type === "label" && entry.targetId === id)?.label,
   };
 }
