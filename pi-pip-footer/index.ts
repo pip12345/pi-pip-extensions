@@ -10,6 +10,7 @@ import {
   clampPercent,
   detectQuotaProvider,
   fetchQuotaForProvider,
+  getClaudeCodeCredentials,
   quotaAdapters,
   quotaCacheIdentity,
   quotaProviderForModelProvider,
@@ -136,9 +137,12 @@ export default function (pi: ExtensionAPI) {
     if (!provider) return null;
     const matchesModelProvider = quotaProviderForModelProvider(model?.provider) === provider;
     const modelBaseUrl = matchesModelProvider && typeof model?.baseUrl === "string" ? model.baseUrl : undefined;
-    const credentials = matchesModelProvider && usingOAuth
-      ? await activeModelCredentials(ctx)
-      : quotaAdapters[provider].getCredentials() ?? null;
+    const usesClaudeCode = matchesModelProvider && model?.provider?.toLowerCase() === "claude-agent";
+    const credentials = usesClaudeCode
+      ? getClaudeCodeCredentials() ?? null
+      : matchesModelProvider && usingOAuth
+        ? await activeModelCredentials(ctx)
+        : quotaAdapters[provider].getCredentials() ?? null;
     return { provider, modelBaseUrl, credentials, identity: quotaCacheIdentity(provider, modelBaseUrl, credentials) };
   }
 

@@ -21,7 +21,8 @@ export const quotaAdapters: Record<QuotaProvider, QuotaProviderAdapter> = {
 export function quotaProviderForModelProvider(modelProvider: string | undefined): QuotaProvider | null {
   switch (String(modelProvider ?? "").toLowerCase()) {
     case "openai-codex": return "codex";
-    case "anthropic": return "anthropic";
+    case "anthropic":
+    case "claude-agent": return "anthropic";
     case "github-copilot": return "copilot";
     default: return null;
   }
@@ -29,7 +30,10 @@ export function quotaProviderForModelProvider(modelProvider: string | undefined)
 
 export function detectQuotaProvider(modelProvider: string | undefined, configured: QuotaProviderSetting, usingOAuth = false): QuotaProvider | null {
   if (configured !== "auto") return configured === "off" ? null : configured;
-  return usingOAuth ? quotaProviderForModelProvider(modelProvider) : null;
+  // Claude Agent authenticates outside Pi. Its quota reader checks Claude Code's
+  // OAuth file instead of relying on Pi's subscription-login flag.
+  const externalOAuth = String(modelProvider ?? "").toLowerCase() === "claude-agent";
+  return usingOAuth || externalOAuth ? quotaProviderForModelProvider(modelProvider) : null;
 }
 
 export function quotaCacheIdentity(provider: QuotaProvider, modelBaseUrl: string | undefined, credentials: QuotaCredentials | null | undefined): string {

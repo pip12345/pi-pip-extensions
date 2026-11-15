@@ -1,7 +1,7 @@
 import { getClaudeToken } from "../auth.ts";
 import { fetchWithTimeout, joinUrlPath } from "../http.ts";
 import type { QuotaFetchOptions, QuotaSnapshot, QuotaWindow } from "../types.ts";
-import { normalizePercent, formatResetTime } from "../util.ts";
+import { clampPercent, formatResetTime } from "../util.ts";
 
 const PROVIDER = "Claude";
 const PROVIDER_ID = "anthropic" as const;
@@ -14,11 +14,12 @@ function snapshot(windows: QuotaWindow[], options: QuotaFetchOptions | undefined
 
 export function parseAnthropicUsageResponse(data: any, now = Date.now()): QuotaWindow[] {
   const windows: QuotaWindow[] = [];
+  // Utilization is already a percentage, including values below 1%.
   if (data?.five_hour?.utilization !== undefined) {
-    windows.push({ label: "5h", usedPercent: normalizePercent(data.five_hour.utilization), resetsIn: data.five_hour.resets_at ? formatResetTime(new Date(data.five_hour.resets_at), now) : undefined, raw: data.five_hour });
+    windows.push({ label: "5h", usedPercent: clampPercent(data.five_hour.utilization), resetsIn: data.five_hour.resets_at ? formatResetTime(new Date(data.five_hour.resets_at), now) : undefined, raw: data.five_hour });
   }
   if (data?.seven_day?.utilization !== undefined) {
-    windows.push({ label: "Week", usedPercent: normalizePercent(data.seven_day.utilization), resetsIn: data.seven_day.resets_at ? formatResetTime(new Date(data.seven_day.resets_at), now) : undefined, raw: data.seven_day });
+    windows.push({ label: "Week", usedPercent: clampPercent(data.seven_day.utilization), resetsIn: data.seven_day.resets_at ? formatResetTime(new Date(data.seven_day.resets_at), now) : undefined, raw: data.seven_day });
   }
   return windows;
 }

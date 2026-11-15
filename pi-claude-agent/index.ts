@@ -21,7 +21,7 @@ export default function claudeAgent(pi: ExtensionAPI): void {
         `Claude Agent executable: ${path ?? "not found"}`,
         `Requires Claude Code ${MINIMUM_VERSION}+ on this machine. Set PI_CLAUDE_PATH to use a specific executable.`,
         "Sign in using `claude auth login`, then select a claude-agent model with /model.",
-        "Pi does not read Claude Code credentials. Anthropic approval for OpenCode does not establish approval for Pi subscription use.",
+        "Claude Code owns model authentication. Anthropic approval for OpenCode does not establish approval for Pi subscription use.",
       ].join("\n"), path ? "info" : "warning");
     },
   });

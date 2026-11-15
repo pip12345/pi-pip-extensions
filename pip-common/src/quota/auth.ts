@@ -31,6 +31,19 @@ export function getClaudeToken(auth: Record<string, any> = loadPiAuthJson()): st
   return credential?.type === "oauth" && typeof credential.access === "string" ? credential.access : undefined;
 }
 
+// Claude Code owns this file and refreshes its tokens. Read it on each quota check
+// so refreshed credentials are used without importing them into Pi's auth store.
+export function getClaudeCodeCredentials(env: NodeJS.ProcessEnv = process.env): QuotaCredentials | undefined {
+  const path = join(env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), ".credentials.json");
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    const token = data?.claudeAiOauth?.accessToken;
+    return typeof token === "string" && token.trim() ? { token } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function getCopilotToken(auth: Record<string, any> = loadPiAuthJson(), env: NodeJS.ProcessEnv = process.env): string | undefined {
   const credential = auth["github-copilot"];
   if (credential?.type === "oauth") return credential.access ?? credential.refresh;

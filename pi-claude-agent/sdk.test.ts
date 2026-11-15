@@ -114,6 +114,7 @@ describe("Claude Agent setup", () => {
     await runCommand(pi, "claude-agent", args, ctx);
     expect(ctx.ui.notifications).toHaveLength(1);
     expect(ctx.ui.notifications[0].message).toContain("with /model.");
+    expect(ctx.ui.notifications[0].message).toContain("Claude Code owns model authentication.");
     expect(ctx.ui.notifications[0].message).not.toContain("/claude-agent refresh");
     expect(ctx.modelRegistry.refresh).not.toHaveBeenCalled();
     await emitEvent(pi, "session_shutdown");

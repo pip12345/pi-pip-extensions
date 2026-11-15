@@ -27,6 +27,15 @@ describe("quota helpers", () => {
     expect(detectQuotaProvider("openai-codex", "off", true)).toBeNull();
   });
 
+  it("detects Claude Agent's external subscription login without Pi OAuth", () => {
+    expect(detectQuotaProvider("claude-agent", "auto", false)).toBe("anthropic");
+    expect(detectQuotaProvider("claude-agent", "auto", true)).toBe("anthropic");
+    expect(detectQuotaProvider("claude-agent", "off", false)).toBeNull();
+    expect(detectQuotaProvider("claude-agent", "codex", false)).toBe("codex");
+    expect(detectQuotaProvider("claude-agent-other", "auto", false)).toBeNull();
+    expect(detectQuotaProvider("anthropic", "auto", false)).toBeNull();
+  });
+
   it("accepts only Codex subscription credentials", () => {
     expect(getCodexCredentials({ auth: { "openai-codex": { type: "oauth", access: "pi-token", accountId: "acct" } }, env: {} })).toEqual({ token: "pi-token", accountId: "acct" });
     expect(getCodexCredentials({ auth: { "openai-codex": { type: "api_key", key: "api-token" } }, env: { OPENAI_API_KEY: "env-token" }, codexAuthPath: "/does/not/exist" })).toBeUndefined();
@@ -56,13 +65,25 @@ describe("quota helpers", () => {
   });
 
   it("parses anthropic and copilot usage windows", () => {
-    expect(parseAnthropicUsageResponse({ five_hour: { utilization: 0.5 }, seven_day: { utilization: 25 } }, now).map((window) => window.usedPercent)).toEqual([50, 25]);
+    expect(parseAnthropicUsageResponse({ five_hour: { utilization: 50 }, seven_day: { utilization: 25 } }, now).map((window) => window.usedPercent)).toEqual([50, 25]);
     expect(parseCopilotUsageResponse({ quota_reset_date_utc: new Date(now + 3600_000).toISOString(), quota_snapshots: { premium_interactions: { percent_remaining: 80 }, chat: { percent_remaining: 50 } } }, now).map((window) => window.usedPercent)).toEqual([20, 50]);
+  });
+
+  it.each([0, 0.5, 1, 25, 100])("keeps Anthropic utilization %s in percentage points", (utilization) => {
+    const windows = parseAnthropicUsageResponse({ five_hour: { utilization }, seven_day: { utilization } }, now);
+    expect(windows.map((window) => window.usedPercent)).toEqual([utilization, utilization]);
   });
 
   it("keeps unknown api shapes easy to inspect", () => {
     expect(parseCodexUsageResponse({ something_else: true }, now)).toEqual([]);
     expect(getWindowLabel(604_800_000, "fallback")).toBe("Week");
+  });
+
+  it("does not request Anthropic quota without resolved credentials", async () => {
+    const fetchImpl = vi.fn();
+    const snapshot = await fetchQuotaForProvider("anthropic", { credentials: null, fetchImpl });
+    expect(snapshot.error).toBe("no-auth");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("routes Codex quota through the active model baseUrl", async () => {
@@ -92,7 +113,7 @@ describe("quota helpers", () => {
       now: () => now,
       fetchImpl: async (input: RequestInfo | URL) => {
         urls.push(String(input));
-        return new Response(JSON.stringify({ five_hour: { utilization: 0.5 } }), { status: 200 });
+        return new Response(JSON.stringify({ five_hour: { utilization: 50 } }), { status: 200 });
       },
     });
 

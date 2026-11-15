@@ -1,9 +1,29 @@
+import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import pipFooter, { __test } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent } from "../pip-common/testing.ts";
 import { getPipSettingsRegistry, registerFooterItem } from "../pip-common/index.ts";
+import { USAGE_REFRESH_INTERVAL } from "./src/constants.ts";
 
 const theme = { fg: (_name: string, text: string) => text };
+const temporaryHomes: string[] = [];
+
+function claudeCodeHome(token?: string): string {
+  const home = mkdtempSync(join(tmpdir(), "claude-footer-"));
+  temporaryHomes.push(home);
+  const directory = join(home, ".claude");
+  mkdirSync(directory);
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("CLAUDE_CONFIG_DIR", directory);
+  const path = join(directory, ".credentials.json");
+  if (token) writeFileSync(path, JSON.stringify({ claudeAiOauth: { accessToken: token } }));
+  const piAuth = join(home, ".pi", "agent");
+  mkdirSync(piAuth, { recursive: true });
+  writeFileSync(join(piAuth, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "other-pi-login" } }));
+  return path;
+}
 
 function oauthRegistry(token: string, accountId?: string) {
   return {
@@ -22,6 +42,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  for (const home of temporaryHomes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
 describe("pi-pip-footer", () => {
@@ -230,6 +251,99 @@ describe("pi-pip-footer", () => {
       "https://three.example/wham/usage",
     ]);
     await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it.each(["auto", "anthropic"])("shows Claude Agent quota with Claude Code credentials in %s mode", async (configured) => {
+    claudeCodeHome("native-token");
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      five_hour: { utilization: 37 }, seven_day: { utilization: 12 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    getPipSettingsRegistry(pi).set("pi-pip-footer.quotaProvider", configured);
+    const ctx = createMockCtx({ model: { provider: "claude-agent", baseUrl: "https://api.anthropic.com", contextWindow: 200_000 } });
+    const getApiKey = vi.fn();
+    ctx.modelRegistry = { isUsingOAuth: () => false, getApiKeyForProvider: getApiKey };
+    const getFooter = captureFooter(ctx);
+
+    await emitEvent(pi, "session_start", {}, ctx);
+    await vi.waitFor(() => expect(getFooter().render(120).join("\n")).toContain("37%"));
+    expect(getFooter().render(120).join("\n")).toContain("12%");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(url).toBe("https://api.anthropic.com/api/oauth/usage");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer native-token");
+    expect(getApiKey).not.toHaveBeenCalled();
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it("rereads Claude Code tokens on quota refresh and clears quota after logout", async () => {
+    vi.useFakeTimers();
+    const path = claudeCodeHome("first-native-token");
+    const tokens: Array<string | null> = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      tokens.push(new Headers(init?.headers).get("Authorization"));
+      return new Response(JSON.stringify({ five_hour: { utilization: tokens.length === 1 ? 37 : 48 } }), { status: 200 });
+    });
+    const pi = createMockPi();
+    pipFooter(pi as any);
+    const ctx = createMockCtx({ model: { provider: "claude-agent", contextWindow: 200_000 } });
+    ctx.modelRegistry = { isUsingOAuth: () => false };
+    const getFooter = captureFooter(ctx);
+    await emitEvent(pi, "session_start", {}, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getFooter().render(120).join("\n")).toContain("37%");
+
+    writeFileSync(path, JSON.stringify({ claudeAiOauth: { accessToken: "second-native-token" } }));
+    await vi.advanceTimersByTimeAsync(USAGE_REFRESH_INTERVAL);
+    expect(tokens).toEqual(["Bearer first-native-token", "Bearer second-native-token"]);
+    expect(getFooter().render(120).join("\n")).toContain("48%");
+    expect(getFooter().render(120).join("\n")).not.toContain("37%");
+
+    unlinkSync(path);
+    await vi.advanceTimersByTimeAsync(USAGE_REFRESH_INTERVAL);
+    expect(tokens).toHaveLength(2);
+    expect(getFooter().render(120).join("\n")).not.toContain("48%");
+    expect(getFooter().render(120).join("\n")).toContain("usage offline");
+    await emitEvent(pi, "session_shutdown", {}, ctx);
+  });
+
+  it.each([undefined, "invalid json", JSON.stringify({ apiKey: "native-api-key" })])(
+    "does not use another Pi login when Claude Code OAuth is unavailable: %s",
+    async (contents) => {
+      const path = claudeCodeHome();
+      if (contents) writeFileSync(path, contents);
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      const pi = createMockPi();
+      pipFooter(pi as any);
+      const ctx = createMockCtx({ model: { provider: "claude-agent", contextWindow: 200_000 } });
+      ctx.modelRegistry = oauthRegistry("unrelated-pi-token");
+      const getFooter = captureFooter(ctx);
+      await emitEvent(pi, "session_start", {}, ctx);
+      await vi.waitFor(() => expect(getFooter().render(120).join("\n")).toContain("usage offline"));
+      expect(fetchSpy).not.toHaveBeenCalled();
+      await emitEvent(pi, "session_shutdown", {}, ctx);
+    },
+  );
+
+  it("skips Claude Agent quota when headless, disabled, or quota is off", async () => {
+    claudeCodeHome("native-token");
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    for (const mode of ["headless", "disabled", "off"]) {
+      const pi = createMockPi();
+      pipFooter(pi as any);
+      if (mode === "disabled") getPipSettingsRegistry(pi).set("pi-pip-footer.enabled", false);
+      if (mode === "off") getPipSettingsRegistry(pi).set("pi-pip-footer.quotaProvider", "off");
+      const ctx = createMockCtx({ hasUI: mode !== "headless", model: { provider: "claude-agent", contextWindow: 200_000 } });
+      ctx.modelRegistry = { isUsingOAuth: () => false };
+      await emitEvent(pi, "session_start", {}, ctx);
+      await emitEvent(pi, "model_select", {}, ctx);
+      await emitEvent(pi, "session_shutdown", {}, ctx);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("uses the active OAuth model baseUrl for quota checks", async () => {

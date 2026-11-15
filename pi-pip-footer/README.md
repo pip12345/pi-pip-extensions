@@ -15,7 +15,9 @@ Pip footer for pi. This is the renamed successor to `pi-token-counter`: it keeps
 
 Token totals include Pi's persisted background usage, including cache warming. Warming does not replace the displayed cache hit rate of the latest ordinary request.
 
-Automatic quota detection still covers the listed subscription providers. Quota endpoint access using the new `/login openai` token has not been verified, so it is not mapped to the Codex quota adapter.
+Automatic quota detection covers the listed subscription providers, including `claude-agent` models authenticated through Claude Code. For `claude-agent`, the footer reads `~/.claude/.credentials.json` (or the directory set by `CLAUDE_CONFIG_DIR`) for quota requests. Claude Code still owns login and token refresh. The footer does not copy credentials into Pi's auth store or use a separate Pi login if the Claude Code file is missing or invalid.
+
+Quota endpoint access using the new `/login openai` token has not been verified, so it is not mapped to the Codex quota adapter.
 
 Quota state is isolated by provider, account credential, and effective base URL. Switching models clears old quota immediately, and disabled/headless sessions start no footer timers or quota requests.
 
@@ -24,7 +26,7 @@ Quota state is isolated by provider, account credential, and effective base URL.
 Configure in `/pip-settings` under **Pip Footer**:
 
 - Enabled
-- Quota provider: `auto`, `codex`, `anthropic`, `copilot`, `off`. Auto checks only an exact supported provider using Pi subscription OAuth; standard API-key models do not trigger subscription endpoints.
+- Quota provider: `auto`, `codex`, `anthropic`, `copilot`, `off`. Auto checks exact supported providers using Pi subscription OAuth, or Claude Code's saved OAuth credentials for `claude-agent`; standard API-key models do not trigger subscription endpoints.
 - Context bar
 - Model
 - Above-editor token counter
