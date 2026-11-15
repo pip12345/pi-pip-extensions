@@ -1,6 +1,6 @@
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import {
-  clampThinkingLevel, createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools,
+  clampThinkingLevel, createAssistantMessageEventStream, getCurrentSystemMessage, getCurrentTools, getSystemMessageText,
   type Api, type AssistantMessage, type AssistantMessageEventStream, type Model,
   type SimpleStreamOptions, type ToolResultMessage, type TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -20,6 +20,17 @@ interface Entry {
   active: boolean;
   pending: number;
   abort: AbortController;
+}
+
+// Claude Code's preset already tells Claude who it is. Pi's preamble ("You are a
+// coding assistant running inside pi...") would add a second, conflicting identity,
+// so only Pi's other sections (tools, rules, skills, extension instructions) are
+// appended. A prompt forced by an extension has no sections and is passed whole.
+export function piInstructions(messages: TranscriptContext["messages"]): string {
+  const current = getCurrentSystemMessage(messages);
+  if (!current) return "";
+  const { preamble: _preamble, ...sections } = current.sections ?? {};
+  return getSystemMessageText({ ...current, sections });
 }
 
 export interface RuntimeDependencies {
@@ -120,7 +131,7 @@ export class ClaudeRuntime {
       if (effort && !["low", "medium", "high", "xhigh", "max"].includes(effort)) throw new Error(`Unsupported Claude effort: ${effort}`);
       const system = {
         type: "preset" as const, preset: "claude_code" as const, snapshot: false,
-        append: `<runtime_info>You are running in Pi through the Claude Code harness. Mention this only when asked.</runtime_info>\n\n${getCurrentSystemPrompt(context.messages)}`,
+        append: `<runtime_info>You are running in Pi through the Claude Code harness. Mention this only when asked.</runtime_info>\n\n${piInstructions(context.messages)}`,
       };
       const launchOptions: Options = {
         ...baseOptions(path, this.cwd, env),

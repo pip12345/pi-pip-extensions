@@ -30,7 +30,7 @@ Choose a model under `claude-agent`. `/claude-agent status` shows setup instruct
 
 ## Behavior and limits
 
-- Claude receives Claude Code's base prompt plus Pi's current instructions. Claude Code's own tools, project settings, hooks, skills, memory, and automatic compaction are disabled.
+- Claude receives Claude Code's base prompt plus Pi's current instructions, without Pi's opening identity line. Claude Code's own tools, project settings, hooks, skills, memory, and automatic compaction are disabled.
 - Pi executes every offered tool normally. Claude's MCP handlers wait for Pi's results, including blocked calls and errors. Claude cannot silently fall back to its built-in tools.
 - Uninterrupted chat and tool steps share a process. Changed prompts, tools, models, or effort restart it. Edited histories and compacted conversations are reconstructed from Pi's transcript, without replaying old tools. Reload, shutdown, or five minutes idle also discard native context. Rebuilding can consume more tokens than resuming a native Claude session.
 - Claude supports text and image input and image tool results. Pi's available thinking levels follow the capabilities reported by Claude Code. Models that require thinking do not advertise an off setting.

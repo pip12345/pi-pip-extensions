@@ -18,6 +18,7 @@ import {
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { piInstructions } from "../pi-claude-agent/src/runtime.ts";
 
 // Exercise the installed host, not the permissive ExtensionAPI unit-test mock.
 // Discovery, credentials, catalog refresh, retries, and compaction are isolated.
@@ -139,6 +140,16 @@ describe("Pi 1.5.2 public contracts", () => {
     expect(JSON.stringify(failures)).toContain("fixture execution failure");
     expect(JSON.stringify(failures)).toContain("fixture gate");
     expect(f.requests).toHaveLength(2);
+  });
+
+  it("sends Pi's identity as a separate preamble section that Claude Agent can drop", async () => {
+    const f = await fixture(() => {});
+    const session = await f.open(SessionManager.inMemory(f.root));
+    await session.prompt("hello");
+    const instructions = piInstructions(f.requests[0]!.messages);
+    expect(instructions).not.toContain("You are a coding assistant running inside pi");
+    expect(instructions).toContain("<rules>");
+    expect(instructions).toContain("<cwd>");
   });
 
   it("distinguishes user (including images) and custom-message runs before agent start", async () => {

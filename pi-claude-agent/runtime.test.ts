@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 import { normalizeContext, type AssistantMessage, type Message, type Model, type ToolResultMessage, type TranscriptContext } from "@earendil-works/pi-ai";
-import { ClaudeRuntime } from "./src/runtime.ts";
+import { ClaudeRuntime, piInstructions } from "./src/runtime.ts";
 import { modelDefinition } from "./src/provider.ts";
 import { fakeSDK, type Script } from "./testing.ts";
 
@@ -40,6 +40,17 @@ describe("Claude Agent runtime", () => {
     expect(answer.usage.cost.total).toBeGreaterThan(0);
     expect(runs[0]!.options).toMatchObject({ tools: [], settingSources: [], skills: [], permissionMode: "dontAsk", verbatimPrompts: true, persistSession: false, effort: "high" });
     expect(runs[0]!.options.systemPrompt).toMatchObject({ preset: "claude_code", append: expect.stringContaining("Follow Pi's rules.") });
+  });
+
+  it("appends Pi's prompt sections without Pi's preamble identity", () => {
+    const sections = { preamble: "You are a coding assistant running inside pi.", rules: "<rules>\n- Use read\n</rules>", pip_profile: "<pip_profile>\nBe brief\n</pip_profile>" };
+    const messages = [
+      { role: "system" as const, content: "", sections, timestamp: 0 },
+      { role: "system" as const, content: "", sections: { pip_profile: "<pip_profile>\nUse colors\n</pip_profile>" }, timestamp: 1 },
+    ];
+    expect(piInstructions(messages)).toBe("<rules>\n- Use read\n</rules>\n\n<pip_profile>\nUse colors\n</pip_profile>");
+    expect(piInstructions([{ role: "system", content: "Forced prompt", timestamp: 0 }])).toBe("Forced prompt");
+    expect(piInstructions([])).toBe("");
   });
 
   it("accepts empty text responses", async () => {
