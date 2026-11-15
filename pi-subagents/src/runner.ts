@@ -134,7 +134,6 @@ export class RealRunner implements Runner {
         throw new Error("Cancelled");
       }
 
-      const starts = new Map<string, number>();
       let lastAssistantText = "";
       let assistantEventIndex: number | undefined;
       unsubscribe = activeSession.subscribe((event: any) => {
@@ -143,12 +142,9 @@ export class RealRunner implements Runner {
           lastAssistantText = "";
           assistantEventIndex = undefined;
         } else if (event.type === "tool_execution_start") {
-          starts.set(event.toolCallId, now);
           pushEvent(run, { type: "tool_start", id: event.toolCallId, name: event.toolName, argsSummary: summarizeArgs(event.args), at: now });
         } else if (event.type === "tool_execution_end") {
-          const started = starts.get(event.toolCallId);
-          starts.delete(event.toolCallId);
-          pushEvent(run, { type: "tool_end", id: event.toolCallId, ok: !event.isError, resultSummary: summarizeToolResult(event.result), durationMs: started ? now - started : undefined, at: now });
+          pushEvent(run, { type: "tool_end", id: event.toolCallId, ok: !event.isError, resultSummary: summarizeToolResult(event.result), durationMs: event.durationMs, at: now });
         } else if (event.type === "message_update" && event.message?.role === "assistant") {
           const text = textFromMessage(event.message);
           if (text.startsWith(lastAssistantText)) {

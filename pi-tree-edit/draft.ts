@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { buildSessionContext, generateSummary, generateSummaryWithUsage, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import { buildSessionProjection, estimateTokens, generateSummaryWithUsage, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import { setTextContent } from "../pip-common/index.ts";
-import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header, type SummarySnapshotPolicy } from "./types.ts";
-import { buildLabels, clone, createSummaryEntry, descendantsOf, entryKind, entryMap, estimateContextTokensForEntry, flattenEntries, isNormalMessageEntry, messagesFromEntries, nearestExistingParent, pathBetween, pathToRoot, snapshotEntries, textFromContent } from "./tree.ts";
-
-const DEFAULT_SUMMARY_SETTINGS: SummarySnapshotPolicy = { summarySnapshots: true, snapshotToolResults: "truncated", toolResultTruncation: 20000 };
+import { EXT, type Clipboard, type Ctx, type DraftSnapshot, type Entry, type Header } from "./types.ts";
+import { buildLabels, clone, descendantsOf, entryKind, entryMap, flattenEntries, isNormalMessageEntry, nearestExistingParent, pathBetween, pathToRoot, textFromContent } from "./tree.ts";
 
 function summaryStreamThroughModelRegistry(ctx: Ctx): any {
   // The model runtime owns resolved endpoints, provider-specific auth, environment,
@@ -39,14 +37,14 @@ export class DraftSession {
   viewSelectedId: string | null = null;
   flashEntryIds: string[] = [];
   flashNonce = 0;
-  flashKind: "copy" | "cut" | "paste" | "summary" | null = null;
+  flashKind: "copy" | "cut" | "paste" | "prune" | null = null;
   highlightEntryIds: string[] = [];
-  highlightKind: "copy" | "paste" | "summary" | null = null;
+  highlightKind: "copy" | "paste" | "prune" | null = null;
   lastOperation = "";
   private undoStack: DraftSnapshot[] = [];
   private redoStack: DraftSnapshot[] = [];
 
-  constructor(header: Header, entries: Entry[], currentLeafId: string | null, private readonly summarySettings: () => SummarySnapshotPolicy = () => DEFAULT_SUMMARY_SETTINGS) {
+  constructor(header: Header, entries: Entry[], currentLeafId: string | null) {
     this.header = header;
     this.entries = entries;
     this.targetLeafId = currentLeafId ?? entries[entries.length - 1]?.id ?? null;
@@ -208,9 +206,9 @@ export class DraftSession {
       return;
     }
     this.highlightEntryIds = prunedIds;
-    this.highlightKind = "summary";
+    this.highlightKind = "prune";
     this.flashEntryIds = prunedIds;
-    this.flashKind = "summary";
+    this.flashKind = "prune";
     this.flashNonce += 1;
     this.dirty = true;
     this.lastOperation = `pruned ${pruned} tool result${pruned === 1 ? "" : "s"}`;
@@ -291,48 +289,42 @@ export class DraftSession {
     let lastParent = parentId;
     const now = new Date().toISOString();
     const added: Entry[] = [];
-    if (this.clipboard.kind === "summary") {
-      const id = newId(existing);
-      added.push(createSummaryEntry(this.clipboard, id, lastParent, now));
-      lastParent = id;
-    } else {
-      const idMap = new Map<string, string>();
-      const sourceByNewId = new Map<string, Entry>();
-      for (const src of this.clipboard.entries) {
-        if (src.type === "label") continue;
-        const copy = clone(src);
-        idMap.set(src.id, newId(existing));
-        copy.id = idMap.get(src.id)!;
-        copy.timestamp = now;
-        added.push(copy);
-        sourceByNewId.set(copy.id, src);
-      }
-      if (this.clipboard.structure === "linear") {
-        let previousParent = parentId;
-        for (const copy of added) {
-          copy.parentId = previousParent;
-          previousParent = copy.id;
-        }
-      } else {
-        for (const copy of added) {
-          const original = sourceByNewId.get(copy.id);
-          copy.parentId = original?.parentId && idMap.has(original.parentId) ? idMap.get(original.parentId)! : parentId;
-        }
-      }
+    const idMap = new Map<string, string>();
+    const sourceByNewId = new Map<string, Entry>();
+    for (const src of this.clipboard.entries) {
+      if (src.type === "label") continue;
+      const copy = clone(src);
+      idMap.set(src.id, newId(existing));
+      copy.id = idMap.get(src.id)!;
+      copy.timestamp = now;
+      added.push(copy);
+      sourceByNewId.set(copy.id, src);
+    }
+    if (this.clipboard.structure === "linear") {
+      let previousParent = parentId;
       for (const copy of added) {
-        if (copy.type === "context_edit" && idMap.has(copy.targetId)) copy.targetId = idMap.get(copy.targetId)!;
+        copy.parentId = previousParent;
+        previousParent = copy.id;
       }
-      lastParent = added[added.length - 1]?.id ?? parentId;
-      for (const src of this.clipboard.entries) {
-        if (src.type !== "label" || !idMap.has(src.targetId)) continue;
-        const copy = clone(src);
-        copy.id = newId(existing);
-        copy.parentId = lastParent;
-        copy.targetId = idMap.get(src.targetId)!;
-        copy.timestamp = now;
-        added.push(copy);
-        lastParent = copy.id;
+    } else {
+      for (const copy of added) {
+        const original = sourceByNewId.get(copy.id);
+        copy.parentId = original?.parentId && idMap.has(original.parentId) ? idMap.get(original.parentId)! : parentId;
       }
+    }
+    for (const copy of added) {
+      if (copy.type === "context_edit" && idMap.has(copy.targetId)) copy.targetId = idMap.get(copy.targetId)!;
+    }
+    lastParent = added[added.length - 1]?.id ?? parentId;
+    for (const src of this.clipboard.entries) {
+      if (src.type !== "label" || !idMap.has(src.targetId)) continue;
+      const copy = clone(src);
+      copy.id = newId(existing);
+      copy.parentId = lastParent;
+      copy.targetId = idMap.get(src.targetId)!;
+      copy.timestamp = now;
+      added.push(copy);
+      lastParent = copy.id;
     }
     return added.length ? { added, lastParent } : null;
   }
@@ -364,21 +356,28 @@ export class DraftSession {
       return null;
     }
 
-    const branch = pathToRoot(this.entries, selectedId);
-    const selectedIndex = branch.findIndex((entry) => entry.id === selectedId);
-    let previousCompactionIndex = -1;
-    for (let i = Math.max(0, selectedIndex) - 1; i >= 0; i--) {
-      if (branch[i].type === "compaction") {
-        previousCompactionIndex = i;
-        break;
+    // Keep Pi's branch-local edits and previous checkpoint. Raw message extraction
+    // would resurrect omitted content and lose context on repeated compactions.
+    const projection = buildSessionProjection(this.entries as SessionEntry[], selectedId);
+    const continuation = this.targetLeafId ? pathToRoot(this.entries, this.targetLeafId) : [];
+    const boundaryIndex = continuation.findIndex((entry) => entry.id === selectedId);
+    const laterEdits = boundaryIndex < 0 ? [] : continuation.slice(boundaryIndex + 1).filter((entry) => entry.type === "context_edit");
+    let inputProjection = projection;
+    if (laterEdits.length) {
+      // Project a temporary path containing the prefix plus its later edits.
+      // Otherwise a retained omission could no longer remove original text once
+      // embedded in the checkpoint. Keep later messages and sibling edits out.
+      const byId = new Map<string, SessionEntry>(this.entries.map((entry) => [entry.id, entry as SessionEntry]));
+      let leaf = selectedId;
+      for (const edit of laterEdits) {
+        byId.set(edit.id, { ...edit, parentId: leaf } as SessionEntry);
+        leaf = edit.id;
       }
+      inputProjection = buildSessionProjection(this.entries as SessionEntry[], leaf, byId);
     }
-    const compactedEntries = branch.slice(previousCompactionIndex + 1, Math.max(0, selectedIndex));
-    if (!compactedEntries.length) {
-      this.message = previousCompactionIndex >= 0 ? "Nothing since previous compaction to compact" : "Nothing before selected message to compact";
-      return null;
-    }
-    const messages = messagesFromEntries(compactedEntries);
+    const contributions = inputProjection.entries.filter((entry) => entry.sourceEntry.id !== selectedId);
+    const messages = contributions.flatMap((entry) => entry.messages).filter((message) => message.role !== "system");
+    const compactedEntries = contributions.filter((entry) => entry.messages.some((message) => message.role !== "system")).map((entry) => entry.sourceEntry);
     if (!messages.length) {
       this.message = "No messages before selected message to compact";
       return null;
@@ -387,6 +386,13 @@ export class DraftSession {
       this.message = "No active model for compaction";
       return null;
     }
+    const instructions = await ctx.ui.editor("Compaction instructions (optional, empty uses defaults)", "");
+    if (typeof instructions !== "string") {
+      this.message = "Compaction cancelled";
+      return null;
+    }
+    const guidance = "Summarize the session entries before the selected message as a compaction checkpoint. Preserve user goals, constraints, decisions, file changes, commands run, errors, unresolved tasks, and current state. The selected message and later entries will remain after this summary.";
+    const customInstructions = instructions.trim() ? `${guidance}\n\n${instructions.trim()}` : guidance;
     ctx.ui.notify(`Compacting ${compactedEntries.length} entries before ${selectedId}...`, "info");
     const generatedResult = await generateSummaryWithUsage(
       messages,
@@ -395,7 +401,7 @@ export class DraftSession {
       undefined,
       undefined,
       ctx.signal,
-      "Summarize the session entries before the selected message as a compaction checkpoint. Preserve user goals, constraints, decisions, file changes, commands run, errors, unresolved tasks, and current state. The selected message and later entries will remain after this summary.",
+      customInstructions,
       undefined,
       "off",
       summaryStreamThroughModelRegistry(ctx)
@@ -407,12 +413,11 @@ export class DraftSession {
       return null;
     }
 
+    this.checkpoint();
     const existing = this.ids();
     const id = newId(existing);
     const continuationChild = this.childOnContinuation(selectedId);
-    // Replaying the draft honors earlier compactions and resolves all prompt/tool
-    // deltas at the retained boundary, including tools loaded by tool_search.
-    const systemMessage = getCurrentSystemMessage(buildSessionContext(this.entries as SessionEntry[], selectedId).messages);
+    const systemMessage = getCurrentSystemMessage(projection.messages);
     const entry: Entry = {
       type: "compaction",
       id,
@@ -420,13 +425,14 @@ export class DraftSession {
       timestamp: new Date().toISOString(),
       summary: summary.trim(),
       firstKeptEntryId: selectedId,
-      tokensBefore: compactedEntries.reduce((sum, entry) => sum + estimateContextTokensForEntry(entry), 0),
+      tokensBefore: messages.reduce((sum, message) => sum + estimateTokens(message), 0),
       usage: generatedResult.usage,
       ...(systemMessage ? { systemMessage: clone(systemMessage) } : {}),
       details: { from: EXT, kind: "manual", compactedBeforeEntryId: selectedId, sourceEntryIds: compactedEntries.map((entry) => entry.id) },
     };
     if (continuationChild) continuationChild.parentId = id;
     this.entries.push(entry);
+    if (this.targetLeafId === selectedId) this.targetLeafId = id;
     this.viewSelectedId = id;
     this.highlightEntryIds = [id];
     this.highlightKind = "paste";
@@ -492,8 +498,7 @@ export class DraftSession {
     this.cleanupLabels();
     this.lastOperation = `replaced ${range.length} with ${built.added.length}`;
     this.dirty = true;
-    const snapshotWarning = this.clipboard?.kind === "summary" && !this.clipboard.snapshotPolicy.summarySnapshots ? " (summary snapshots off; originals may not be recoverable)" : "";
-    this.message = `Replaced ${range.length} entr${range.length === 1 ? "y" : "ies"} with ${built.added.length}${snapshotWarning}`;
+    this.message = `Replaced ${range.length} entr${range.length === 1 ? "y" : "ies"} with ${built.added.length}`;
     return built.lastParent;
   }
 
@@ -550,54 +555,6 @@ export class DraftSession {
     apply(text);
     this.dirty = true;
     this.message = `Edited ${id}`;
-  }
-
-  async summarizeToClipboard(selectedId: string, ctx: Ctx, foldedIds: Set<string> = new Set(), visibleBase?: Entry[]): Promise<void> {
-    const entries = this.selectedEntries(selectedId, foldedIds, visibleBase);
-    if (!entries.length) {
-      this.message = "No range to summarize";
-      return;
-    }
-    if (!ctx.model) {
-      this.message = "No active model for AI summarization";
-      return;
-    }
-    const messages = messagesFromEntries(entries);
-    if (!messages.length) {
-      this.message = "No messages in selected range to summarize";
-      return;
-    }
-    ctx.ui.notify(`Summarizing ${entries.length} entries...`, "info");
-    let generated = await generateSummary(
-      messages,
-      ctx.model,
-      4096,
-      undefined,
-      undefined,
-      ctx.signal,
-      "Summarize the selected session entries so this summary can be injected into another branch as context. Preserve decisions, constraints, file changes, commands run, errors, unresolved tasks, user preferences, and final state.",
-      undefined,
-      "off",
-      summaryStreamThroughModelRegistry(ctx)
-    );
-    generated = generated.trim();
-    const summary = await ctx.ui.editor("Review branch/range summary", generated);
-    if (!summary?.trim()) {
-      this.message = "Summarization cancelled";
-      return;
-    }
-    const sourceIds = entries.map((e) => e.id);
-    const snapshotPolicy = this.summarySettings();
-    const sourceEntries = snapshotEntries(entries, snapshotPolicy);
-    this.clipboard = { kind: "summary", summary: summary.trim(), sourceEntryIds: sourceIds, sourceEntries, label: `summary of ${entries.length}`, snapshotPolicy };
-    this.flashEntryIds = sourceIds;
-    this.flashKind = "summary";
-    this.flashNonce += 1;
-    this.highlightEntryIds = sourceIds;
-    this.highlightKind = "summary";
-    this.lastOperation = `summarized ${entries.length} entr${entries.length === 1 ? "y" : "ies"} to clipboard`;
-    this.viewSelectedId = selectedId;
-    this.message = `Copied ${this.clipboard.label}; move to target and press p/P to insert it`;
   }
 }
 

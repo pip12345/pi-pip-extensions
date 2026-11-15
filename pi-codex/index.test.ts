@@ -36,7 +36,8 @@ describe("native OpenAI models", () => {
     expect(pi.providerRegistrations).toEqual([]);
     for (const provider of ["openai", "openai-codex"]) {
       for (const id of ["gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
-        expect(nativeModel(id, provider)).toMatchObject({ contextWindow: 272_000, maxTokens: 128_000 });
+        const contextWindow = provider === "openai-codex" && id === "gpt-6.1-sol" ? 500_000 : 272_000;
+        expect(nativeModel(id, provider)).toMatchObject({ contextWindow, maxTokens: 128_000 });
       }
     }
   });
@@ -70,7 +71,7 @@ describe("OpenAI long context", () => {
     const selected = structuredClone(catalogModel);
     await emitEvent(pi, "model_select", { model: selected }, ctx);
     expect(selected).toEqual(expected);
-    expect(catalogModel.contextWindow).toBe(272_000);
+    expect(catalogModel.contextWindow).toBe(provider === "openai-codex" && id === "gpt-6.1-sol" ? 500_000 : 272_000);
   });
 });
 

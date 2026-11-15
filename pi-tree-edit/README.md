@@ -22,7 +22,7 @@ By default, the view uses the `no-tools` filter: the normal tree view without to
 - `v` - start range at cursor; press `v` again to cancel
 - `y` - copy from range start to cursor, or selected entry if no range; clears range after copy
 - `c` - cut from range start to cursor, or selected entry if no range; clears range after cut
-- `C` - compact messages before selected user/assistant message
+- `C` - compact messages before selected user/assistant message, with optional custom instructions
 - `p` - paste clipboard after selected entry; with an active range, replace the range
 - `P` - paste clipboard as a new branch from selected entry; disabled while a range is active
 - `d` - delete selected range, or selected entry if no range
@@ -34,6 +34,8 @@ By default, the view uses the `no-tools` filter: the normal tree view without to
 - `L` - set or clear selected entry label
 - `b` - set current location to selected entry
 - `q` / `Esc` - exit prompt
+
+Compaction first opens an optional instructions editor, where you can focus the checkpoint on a handoff or other details. Submit it empty to use the defaults, or cancel to return without generating a checkpoint. You can review and edit the generated checkpoint before adding it to the draft.
 
 Manual compaction checkpoints preserve the draft's prompt and tool state, including tools loaded by Pi's `tool_search`, so those declarations survive compaction and resume.
 

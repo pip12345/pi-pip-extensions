@@ -5,7 +5,7 @@ import { formatAnsweredOutput } from "./src/format.ts";
 import { createQuestionState, questionSaveCustom, questionSelect, questionSetTab, questionStoreCustom, questionSubmit } from "./src/state.ts";
 import { QUESTION_LIMITS, validateQuestions, type QuestionInfo } from "./src/schema.ts";
 import { __test as uiTest } from "./src/ui.ts";
-import { resetPipToolsForTests, flushPipTools, visibleWidth } from "../pip-common/index.ts";
+import { resetPipToolsForTests, visibleWidth } from "../pip-common/index.ts";
 import { createMockPi, getRegisteredTool } from "../pip-common/testing.ts";
 
 const questions: QuestionInfo[] = [
@@ -53,14 +53,12 @@ describe("pi-question", () => {
   it("registers the question tool", () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     expect(getRegisteredTool(pi, "question").exposure).toBe("model-only");
   });
 
   it("returns answered output", async () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     const result = await exec(getRegisteredTool(pi, "question"), { questions: [questions[0]] });
     expect(result.content[0].text).toContain("User has answered your questions");
     expect(result.details.answers).toEqual([["Yes"]]);
@@ -70,7 +68,6 @@ describe("pi-question", () => {
   it("returns dismissed output", async () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     const result = await exec(getRegisteredTool(pi, "question"), { questions: [questions[0]] }, { ui: { custom: async () => ({ answers: [], rejected: true }) } });
     expect(result.content[0].text).toContain("dismissed");
     expect(result.details.rejected).toBe(true);
@@ -79,21 +76,18 @@ describe("pi-question", () => {
   it("throws without UI", async () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     await expect(exec(getRegisteredTool(pi, "question"), { questions: [questions[0]] }, { hasUI: false, ui: {} })).rejects.toThrow(/interactive UI/);
   });
 
   it("validates empty questions", async () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     await expect(exec(getRegisteredTool(pi, "question"), { questions: [] })).rejects.toThrow(/at least one question/);
   });
 
   it("treats undefined UI custom result as dismissed", async () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     const result = await exec(getRegisteredTool(pi, "question"), { questions: [questions[0]] }, { ui: { custom: async () => undefined } });
     expect(result.details.rejected).toBe(true);
   });
@@ -117,7 +111,6 @@ describe("pi-question", () => {
 
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     const result = await exec(getRegisteredTool(pi, "question"), { questions: [{ question: "What path?", header: "Path" }] }, { ui: { custom: async () => ({ answers: [["/tmp/a"]], rejected: false }) } });
     expect(result.details.questions[0].options).toEqual([]);
     expect(result.details.answers).toEqual([["/tmp/a"]]);
@@ -257,7 +250,6 @@ describe("pi-question", () => {
   it("renders answered result", () => {
     const pi = createMockPi();
     extension(pi as any);
-    flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "question");
     expect(tool).toBeTruthy();
     const result = tool.renderResult({ details: { questions: [questions[0]], answers: [["Yes"]], rejected: false }, content: [] }, {}, {});
@@ -268,7 +260,6 @@ describe("pi-question", () => {
     const pi = createMockPi();
     toolUi(pi as any);
     extension(pi as any);
-    flushPipTools(pi as any);
     const tool = getRegisteredTool(pi, "question");
     expect(tool.renderShell).toBeUndefined();
     const rendered = tool.renderResult({ details: { questions: [questions[0]], answers: [["Yes"]], rejected: false }, content: [] }, { expanded: false }, {}).render(80).join("\n");

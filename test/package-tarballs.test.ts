@@ -23,7 +23,7 @@ const EXPECTED_STANDALONE_TOOLS: Record<string, string[]> = {
   "pi-question": ["question"],
   "pi-subagents": ["subagent"],
   "pi-todo": ["todo_read", "todo_update", "todo_write"],
-  "pi-tool-ui": ["edit", "find", "grep", "ls", "read"],
+  "pi-tool-ui": [],
 };
 
 function readPackageName(dir: string): string {
@@ -112,6 +112,7 @@ describe("standalone package tarballs", () => {
       if (EXPECTED_STANDALONE_TOOLS[pack.name]) {
         expect([...featureExtension.tools.keys()].sort(), `${pack.name} registers tools without sibling features`).toEqual(EXPECTED_STANDALONE_TOOLS[pack.name]);
       }
+      if (pack.name === "pi-tool-ui") expect(featureExtension.toolRenderers, "Tool UI registers a display resolver").toHaveLength(1);
       if (pack.name === "pi-stats") expect(featureExtension.commands.has("stats"), "Stats loads without Subagents").toBe(true);
     }
   }, 120_000);

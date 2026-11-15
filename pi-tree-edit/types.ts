@@ -5,16 +5,11 @@ export type Ctx = any;
 export type Header = { type: "session"; [key: string]: any };
 export type Entry = { type: string; id: string; parentId: string | null; timestamp: string; [key: string]: any };
 export type FileEntry = Header | Entry;
-export type SnapshotToolResults = "off" | "truncated" | "full";
-export type SummarySnapshotPolicy = { summarySnapshots: boolean; snapshotToolResults: SnapshotToolResults; toolResultTruncation: number };
-export type Clipboard =
-  | { kind: "entries"; entries: Entry[]; label: string; structure?: "linear" | "preserve"; sourceEntryIds: string[] }
-  | { kind: "summary"; summary: string; sourceEntryIds: string[]; sourceEntries?: Entry[]; label: string; snapshotPolicy: SummarySnapshotPolicy };
+export type Clipboard = { kind: "entries"; entries: Entry[]; label: string; structure?: "linear" | "preserve"; sourceEntryIds: string[] };
 
 export type ExitResult =
   | { action: "quit" }
   | { action: "edit"; id: string }
-  | { action: "summarize"; id: string; foldedIds: Set<string>; visibleRangeEntries: Entry[] }
   | { action: "compact"; id: string }
   | { action: "label"; id: string };
 export type FilterMode = "default" | "show-tools" | "user-only" | "labeled-only" | "all";
@@ -34,7 +29,6 @@ export const HELP_ITEMS = [
   "y copy",
   "c cut",
   "C compact before",
-  "S summarize",
   "o open summary",
   "p paste after",
   "P paste as new branch",

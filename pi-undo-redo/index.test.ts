@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import undoRedo, { __test } from "./index.ts";
 import { createMockCtx, createMockPi, emitEvent, runCommand } from "../pip-common/testing.ts";
 import { parseSessionFile, serializeSessionFile, type SessionEntry } from "../pip-common/index.ts";
@@ -39,6 +39,89 @@ describe("pi-undo-redo", () => {
     expect(pi.commands.has("redo")).toBe(true);
     expect(pi.handlers.has("input")).toBe(true);
     expect(pi.handlers.has("session_start")).toBe(true);
+  });
+
+  it("uses fresh replacement contexts for undo and redo, never reload", async () => {
+    const entries = [user("u1", null, "one"), assistant("a1", "u1")];
+    const path = tempSession(entries);
+    const pi = createMockPi();
+    undoRedo(pi as any);
+    const replacement = createMockCtx();
+    const ctx = ctxFor(path, entries);
+    const reload = vi.fn();
+    ctx.reload = reload;
+    ctx.switchSession = vi.fn(async (target, options) => {
+      expect(target).toBe(path);
+      ctx.ui.setEditorText = () => { throw new Error("stale editor"); };
+      ctx.ui.notify = () => { throw new Error("stale notify"); };
+      await options.withSession(replacement);
+      return { cancelled: false };
+    });
+    await runCommand(pi, "undo", "", ctx);
+    expect(ctx.switchSession).toHaveBeenCalledOnce();
+    expect(replacement.ui.editorText).toBe("one");
+    expect(replacement.ui.notifications.at(-1).message).toContain("Undid");
+
+    const redoCtx = ctxFor(path, []);
+    redoCtx.reload = reload;
+    redoCtx.switchSession = vi.fn(async (_target, options) => {
+      redoCtx.ui.notify = () => { throw new Error("stale notify"); };
+      await options.withSession(replacement);
+      return { cancelled: false };
+    });
+    await runCommand(pi, "redo", "", redoCtx);
+    expect(redoCtx.switchSession).toHaveBeenCalledOnce();
+    expect(replacement.ui.notifications.at(-1).message).toContain("Redid");
+    expect(reload).not.toHaveBeenCalled();
+    expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1", "a1"]);
+  });
+
+  it("does not fall back to reload when switchSession is missing", async () => {
+    const entries = [user("u1", null, "one")];
+    const path = tempSession(entries);
+    const pi = createMockPi();
+    undoRedo(pi as any);
+    const ctx = ctxFor(path, entries);
+    ctx.switchSession = undefined;
+    ctx.reload = vi.fn();
+    await runCommand(pi, "undo", "", ctx);
+    expect(ctx.reload).not.toHaveBeenCalled();
+    expect(ctx.ui.editorText).toBe("");
+    expect(ctx.ui.notifications.at(-1).message).toContain("switchSession");
+    __test.setRedoStack([]);
+  });
+
+  it("does not infer a null leaf from entries on another branch", () => {
+    const entries = [user("u1", null, "one")];
+    expect(() => __test.planUndo(entries, entries, null)).toThrow(/leaf mismatch/);
+    expect(() => __test.planUndo([], entries, null)).toThrow("Nothing to undo.");
+  });
+
+  it.each(["undo", "redo"])("requires the native idle safety check for %s", async (command) => {
+    const entries = [user("u1", null, "one")];
+    const path = tempSession(entries);
+    const pi = createMockPi();
+    undoRedo(pi as any);
+    const ctx = ctxFor(path, entries);
+    ctx.switchSession = vi.fn();
+    ctx.isIdle = () => false;
+    await runCommand(pi, command, "", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("while pi is running");
+    ctx.isIdle = undefined;
+    await runCommand(pi, command, "", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toContain("isIdle");
+    expect(ctx.switchSession).not.toHaveBeenCalled();
+    expect(parseSessionFile(path).entries.map((entry) => entry.id)).toEqual(["u1"]);
+  });
+
+  it("leaves ephemeral sessions alone", async () => {
+    const pi = createMockPi();
+    undoRedo(pi as any);
+    const ctx = createMockCtx();
+    ctx.switchSession = vi.fn();
+    await runCommand(pi, "undo", "", ctx);
+    expect(ctx.ui.notifications.at(-1).message).toBe("Cannot undo: no session file.");
+    expect(ctx.switchSession).not.toHaveBeenCalled();
   });
 
   it("plans a tail-only undo", () => {

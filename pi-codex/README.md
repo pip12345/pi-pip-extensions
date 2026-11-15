@@ -1,6 +1,6 @@
 # pi-codex
 
-Long context and Fast mode for Pi's built-in `openai` and `openai-codex` providers, plus Codex image generation. Requires Pi `0.99.1` or newer.
+Long context and Fast mode for Pi's built-in `openai` and `openai-codex` providers, plus Codex image generation. Requires Pi `1.5.2` or newer.
 
 Pi owns the model catalog, authentication, and transport. This package does not register or replace a provider. Fast mode and long context also apply to the OpenAI provider's new Sign in with ChatGPT path.
 
@@ -18,9 +18,9 @@ The package always sets a `1,050,000` token context window when any of these mod
 
 OpenAI documents [GPT-6.1 Sol's 1,050,000-token context window](https://developers.openai.com/api/docs/models/gpt-6.1-sol). The model is supplied by Pi's native catalog; this package enables its long context when active.
 
-Pi's native catalog defaults these models to `272,000` tokens so requests stay in OpenAI's short-context pricing tier. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
+Pi 1.5.2's native catalog gives `openai-codex/gpt-6.1-sol` a `500,000`-token context window; the corresponding `openai` model remains at `272,000`. This package overrides only the active model's context-window metadata. It preserves the model's auth, transport, compatibility flags, and tiered pricing. Requests with more than 272K total input tokens use the catalog's long-context rates for the entire request.
 
-Pi's pre-session `--list-models` output still shows the raw `272K` value. After a supported model is selected, the active session, footer, context accounting, and compaction threshold use `1.05M`.
+Pi's pre-session `--list-models` output still shows the native catalog values, not this package's override. After a supported model is selected, the active session, footer, context accounting, and compaction threshold use `1.05M`.
 
 ## Fast mode
 

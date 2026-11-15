@@ -1,6 +1,6 @@
 import { getSystemMessageText } from "@earendil-works/pi-ai";
 import { hasTextContent, stripAnsi, textFromContent as commonTextFromContent } from "../pip-common/index.ts";
-import { EXT, SUMMARY_CUSTOM_TYPE, type Clipboard, type Entry, type FilterMode, type SummarySnapshotPolicy, type TreeGutter, type TreeRow } from "./types.ts";
+import { SUMMARY_CUSTOM_TYPE, type Entry, type FilterMode, type TreeGutter, type TreeRow } from "./types.ts";
 
 export function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -60,40 +60,9 @@ export function isSummaryEntry(entry: Entry): boolean {
   return entry.type === "custom_message" && entry.customType === SUMMARY_CUSTOM_TYPE && entry.details?.kind === "summary";
 }
 
-export function isToolLikeEntry(entry: Entry): boolean {
-  const role = entry.type === "message" ? entry.message?.role : undefined;
-  return role === "toolResult" || role === "bashExecution";
-}
-
 export function isNormalMessageEntry(entry: Entry | undefined): entry is Entry {
   const role = entry?.type === "message" ? entry.message?.role : undefined;
   return role === "user" || role === "assistant";
-}
-
-export function truncateStrings(value: any, limit: number): any {
-  if (typeof value === "string") return value.length > limit ? `${value.slice(0, limit)}\n...[truncated by ${EXT}: ${value.length - limit} chars omitted]` : value;
-  if (Array.isArray(value)) return value.map((item) => truncateStrings(item, limit));
-  if (value && typeof value === "object") {
-    const out: any = {};
-    for (const [key, child] of Object.entries(value)) out[key] = truncateStrings(child, limit);
-    return out;
-  }
-  return value;
-}
-
-export function snapshotEntries(entries: Entry[], policy: SummarySnapshotPolicy): Entry[] | undefined {
-  if (!policy.summarySnapshots) return undefined;
-  const snapshots: Entry[] = [];
-  for (const entry of entries) {
-    if (isToolLikeEntry(entry) && policy.snapshotToolResults === "off") continue;
-    let snapshot = clone(entry);
-    if (isToolLikeEntry(entry) && policy.snapshotToolResults === "truncated") {
-      snapshot = truncateStrings(snapshot, Math.max(1, policy.toolResultTruncation));
-      snapshot.details = { ...(snapshot.details ?? {}), snapshotTruncatedBy: EXT };
-    }
-    snapshots.push(snapshot);
-  }
-  return snapshots;
 }
 
 export function summaryDetails(entry: Entry): any | undefined {
@@ -103,26 +72,6 @@ export function summaryDetails(entry: Entry): any | undefined {
 export function summarySourceIds(entry: Entry): string[] {
   const ids = summaryDetails(entry)?.sourceEntryIds;
   return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
-}
-
-export function createSummaryEntry(clipboard: Extract<Clipboard, { kind: "summary" }>, id: string, parentId: string | null, timestamp: string): Entry {
-  return {
-    type: "custom_message",
-    id,
-    parentId,
-    timestamp,
-    customType: SUMMARY_CUSTOM_TYPE,
-    content: [{ type: "text", text: `Summary of selected tree range:\n\n${clipboard.summary}` }],
-    display: true,
-    details: {
-      from: EXT,
-      kind: "summary",
-      sourceEntryIds: clipboard.sourceEntryIds,
-      sourceEntries: clipboard.sourceEntries,
-      sourceLabel: clipboard.label,
-      snapshotPolicy: clipboard.snapshotPolicy,
-    },
-  };
 }
 
 export function missingSourceEntry(summaryEntry: Entry, sourceEntryId: string): Entry {
@@ -213,10 +162,6 @@ export function contextPercentByEntry(entries: Entry[], contextWindow: number): 
     out.set(entry.id, Math.min(999, Math.round(((state.baseline + state.trailing) / contextWindow) * 100)));
   }
   return out;
-}
-
-export function messagesFromEntries(entries: Entry[]): any[] {
-  return entries.flatMap((entry) => entry.type === "message" && entry.message ? [entry.message] : []);
 }
 
 export function buildLabels(entries: Entry[]): Map<string, string> {
@@ -424,10 +369,10 @@ export function pathToRoot(entries: Entry[], id: string): Entry[] {
   let cur = byId.get(id);
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
-    path.unshift(cur);
+    path.push(cur);
     cur = cur.parentId ? byId.get(cur.parentId) : undefined;
   }
-  return path;
+  return path.reverse();
 }
 
 export function pathBetween(entries: Entry[], a: string, b: string): Entry[] | null {
