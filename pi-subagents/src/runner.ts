@@ -212,7 +212,15 @@ export class RealRunner implements Runner {
       const modelString = input.model ?? input.agent.model;
       if (modelString) {
         const { provider, id } = parseModelRef(modelString);
-        const model = created.modelRuntime.getModel(provider, id);
+        let model = created.modelRuntime.getModel(provider, id);
+        if (!model) {
+          // Extension providers can start with an empty catalog and discover
+          // models on refresh. Only the parent's interactive mode refreshes
+          // catalogs, so the child refreshes the requested provider itself.
+          await created.modelRuntime.refresh({ providers: [provider], signal: run.abortController.signal });
+          if (run.abortController.signal.aborted) throw new Error("Cancelled");
+          model = created.modelRuntime.getModel(provider, id);
+        }
         if (!model) throw new Error(`Unknown subagent model: ${modelString}. Use subagent({ action: "models", query: ${JSON.stringify(provider)} }) to list available model IDs.`);
         await activeSession.setModel(model);
       }

@@ -11,18 +11,12 @@ export interface ChildAgentRuntime {
   create(input: LaunchInput, sessionDir: string): Promise<ChildAgentRuntimeSession>;
 }
 
-let modelRuntimePromise: Promise<ModelRuntime> | undefined;
-
-function models(): Promise<ModelRuntime> {
-  modelRuntimePromise ??= ModelRuntime.create();
-  return modelRuntimePromise;
-}
-
-export type ChildExtensionCapability = "guard" | "headless-tool" | "ui" | "parent-state" | "provider" | "external-resource" | "nested-agent" | "parent-telemetry" | "parent-prompt" | "infrastructure";
+export type ChildExtensionCapability = "guard" | "model-provider" | "headless-tool" | "ui" | "parent-state" | "provider" | "external-resource" | "nested-agent" | "parent-telemetry" | "parent-prompt" | "infrastructure";
 
 export const CHILD_EXTENSION_CAPABILITIES: Readonly<Record<string, ChildExtensionCapability>> = {
   "pip-common": "infrastructure",
   "pi-secrets-guard": "guard",
+  "pi-claude-agent": "model-provider",
   "pi-webfetch-websearch": "headless-tool",
   "pi-question": "ui",
   "pi-tool-ui": "ui",
@@ -52,7 +46,10 @@ function requestedExtensionTools(tools: AgentTools): Set<string> | "all" {
 export function childExtensionAllowed(extension: any, tools: AgentTools): boolean {
   const id = extensionFeatureId(extension);
   const capability = id ? CHILD_EXTENSION_CAPABILITIES[id] : undefined;
-  if (capability === "guard") return true;
+  // A model-provider extension registers its provider through the child's own
+  // extension runner. Without it, the child cannot resolve that provider's
+  // models even though the parent lists them.
+  if (capability === "guard" || capability === "model-provider") return true;
   if (capability && capability !== "headless-tool") return false;
 
   const requested = requestedExtensionTools(tools);
@@ -68,7 +65,11 @@ export function applyChildExtensionProfile(base: any, tools: AgentTools): any {
 
 export class PiChildAgentRuntime implements ChildAgentRuntime {
   async create(input: LaunchInput, sessionDir: string): Promise<ChildAgentRuntimeSession> {
-    const modelRuntime = await models();
+    // Each child needs its own runtime. Every child re-registers extension
+    // providers on load, and a repeated registration on a shared runtime drops
+    // the provider's fetched catalog and routes earlier children through the
+    // newest child's provider instance.
+    const modelRuntime = await ModelRuntime.create();
     if (input.resumeSessionFile && !existsSync(input.resumeSessionFile)) throw new Error(`Subagent session file not found: ${input.resumeSessionFile}`);
 
     const sessionManager = input.resumeSessionFile

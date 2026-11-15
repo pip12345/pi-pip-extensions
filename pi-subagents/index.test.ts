@@ -84,8 +84,10 @@ class UsageRuntime implements ChildAgentRuntime {
 
 class ModelRuntime implements ChildAgentRuntime {
   findCalls: Array<[string, string]> = [];
+  refreshCalls: any[] = [];
   setModels: any[] = [];
-  constructor(private readonly found = true) {}
+  // "after-refresh" models an extension provider whose catalog starts empty.
+  constructor(private found: boolean | "after-refresh" = true) {}
 
   async create(_input: any, _sessionDir: string) {
     let subscriber: ((event: any) => void) | undefined;
@@ -113,7 +115,12 @@ class ModelRuntime implements ChildAgentRuntime {
       modelRuntime: {
         getModel(provider: string, id: string) {
           runtime.findCalls.push([provider, id]);
-          return runtime.found && provider === model.provider && id === model.id ? model : undefined;
+          return runtime.found === true && provider === model.provider && id === model.id ? model : undefined;
+        },
+        async refresh(options: any) {
+          runtime.refreshCalls.push(options.providers);
+          if (runtime.found === "after-refresh") runtime.found = true;
+          return { aborted: false, errors: new Map() };
         },
       } as any,
     };
@@ -182,6 +189,8 @@ describe("pi-subagents", () => {
     const guard = extension("/workspace/pi-secrets-guard/index.ts");
     const web = extension("/workspace/pi-webfetch-websearch/index.ts", ["webfetch", "websearch"]);
     const footer = extension("/workspace/pi-pip-footer/index.ts");
+    const claudeAgent = extension("/workspace/pi-claude-agent/index.ts");
+    const providerProxy = extension("/workspace/pi-provider-proxy/index.ts");
     const custom = extension("/workspace/custom-tools/index.ts", ["custom_query"]);
     const similarlyNamed = extension("/workspace/pi-subagents-copy/index.ts", ["copy_query"]);
 
@@ -190,6 +199,8 @@ describe("pi-subagents", () => {
     expect(childExtensionAllowed(web, ["webfetch"])).toBe(true);
     expect(childExtensionAllowed(web, "builtins")).toBe(false);
     expect(childExtensionAllowed(footer, "all")).toBe(false);
+    expect(childExtensionAllowed(claudeAgent, "none")).toBe(true);
+    expect(childExtensionAllowed(providerProxy, "all")).toBe(false);
     expect(childExtensionAllowed(custom, ["custom_query"])).toBe(true);
     expect(childExtensionAllowed(similarlyNamed, "all")).toBe(true);
 
@@ -369,13 +380,25 @@ describe("pi-subagents", () => {
     const result = await tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx());
     expect(result.isError).toBeFalsy();
     expect(runtime.findCalls).toEqual([["openrouter", "anthropic/claude-sonnet-4"]]);
+    expect(runtime.refreshCalls).toEqual([]);
+    expect(runtime.setModels).toEqual([{ provider: "openrouter", id: "anthropic/claude-sonnet-4" }]);
+  });
+
+  it("real runner refreshes only the requested provider when its catalog is not loaded yet", async () => {
+    const runtime = new ModelRuntime("after-refresh");
+    const { tool } = setup(new RealRunner(runtime));
+    const result = await tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx());
+    expect(result.isError).toBeFalsy();
+    expect(runtime.refreshCalls).toEqual([["openrouter"]]);
+    expect(runtime.findCalls).toHaveLength(2);
     expect(runtime.setModels).toEqual([{ provider: "openrouter", id: "anthropic/claude-sonnet-4" }]);
   });
 
   it("real runner unknown model errors point to model discovery", async () => {
-    const runner = new RealRunner(new ModelRuntime(false));
-    const { tool } = setup(runner);
+    const runtime = new ModelRuntime(false);
+    const { tool } = setup(new RealRunner(runtime));
     await expect(tool.execute("1", { agent: "explore", prompt: "model", model: "openrouter/anthropic/claude-sonnet-4" }, undefined, undefined, createMockCtx())).rejects.toThrow(/Unknown subagent model: openrouter\/anthropic\/claude-sonnet-4.*action: "models".*query: "openrouter"/s);
+    expect(runtime.refreshCalls).toEqual([["openrouter"]]);
   });
 
   it("accumulates real child assistant usage and renders compact usage with cost", async () => {
