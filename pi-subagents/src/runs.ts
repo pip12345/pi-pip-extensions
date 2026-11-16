@@ -21,7 +21,10 @@ export interface SubagentRun {
   projectTrusted: boolean;
   background: boolean;
   status: RunStatus;
+  /** When the run was launched. */
   startedAt: number;
+  /** When the latest turn began; equals startedAt until the run is continued. */
+  turnStartedAt: number;
   completedAt?: number;
   resultText?: string;
   errorText?: string;
@@ -45,6 +48,7 @@ export interface RunSnapshot {
   status: RunStatus;
   background: boolean;
   startedAt: number;
+  turnStartedAt: number;
   completedAt?: number;
   toolCalls: number;
   usage: TokenUsage;
@@ -95,6 +99,7 @@ export function snapshot(run: SubagentRun): RunSnapshot {
     status: run.status,
     background: run.background,
     startedAt: run.startedAt,
+    turnStartedAt: run.turnStartedAt,
     completedAt: run.completedAt,
     toolCalls: run.toolCalls,
     usage: { ...run.usage },
@@ -140,6 +145,7 @@ export class SubagentRuns {
       background: options.background,
       status: "running",
       startedAt: this.now(),
+      turnStartedAt: this.now(),
       usage: emptyUsage(),
       toolCalls: 0,
       sessionManager: SessionManager.inMemory(options.cwd),
@@ -198,6 +204,7 @@ export class SubagentRuns {
     run.resultText = undefined;
     run.errorText = undefined;
     run.completedAt = undefined;
+    run.turnStartedAt = this.now();
     run.done = this.execute(run, prompt, options);
   }
 

@@ -2,8 +2,9 @@ import { Text } from "@earendil-works/pi-tui";
 import { firstResultText, formatCompactUsage, themeFg, truncateToWidth, wrapAnsi } from "../../pip-common/index.ts";
 import type { RunSnapshot } from "./runs.ts";
 
-export function elapsed(run: Pick<RunSnapshot, "startedAt" | "completedAt">): string {
-  const ms = Math.max(0, (run.completedAt ?? Date.now()) - run.startedAt);
+/** Duration of the latest turn, so idle time between continuations is not counted. */
+export function elapsed(run: Pick<RunSnapshot, "turnStartedAt" | "completedAt">): string {
+  const ms = Math.max(0, (run.completedAt ?? Date.now()) - run.turnStartedAt);
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 

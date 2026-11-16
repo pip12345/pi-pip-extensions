@@ -3,6 +3,7 @@ import { createMockCtx, createMockPi, emitEvent, getRegisteredTool } from "../pi
 import { getPipSettingsRegistry } from "../pip-common/index.ts";
 import { createSubagentsExtension } from "./index.ts";
 import { childExtensionAllowed, type ChildSessionOptions } from "./src/child.ts";
+import { elapsed } from "./src/render.ts";
 import { SubagentRuns } from "./src/runs.ts";
 import { SubagentViewer } from "./src/view.ts";
 
@@ -228,6 +229,29 @@ describe("subagent_message", () => {
     expect(children).toHaveLength(2);
     expect(children[1].options.sessionManager).toBe(children[0].options.sessionManager);
     expect(second.details.run).toMatchObject({ id: first.details.run.id, toolCalls: 2, usage: { input: 20, output: 10 } });
+  });
+
+  it("reports elapsed time for the latest turn, not since launch", async () => {
+    let now = 1_000;
+    const runs = new SubagentRuns({
+      createChild: async (options) => {
+        const child = new FakeChild(options);
+        // Each turn takes 2s of clock time.
+        const prompt = child.prompt.bind(child);
+        child.prompt = async (text: string) => { now += 2_000; await prompt(text); };
+        return { session: child as any, close: async () => child.dispose() };
+      },
+      maxRunning: () => 5,
+      onBackgroundDone: () => undefined,
+      now: () => now,
+    });
+    const run = runs.launch({ agent: { name: "general", description: "", tools: "all", systemPrompt: "", source: "builtin", filePath: "" }, prompt: "x", cwd: "/", projectTrusted: true, background: false });
+    await run.done;
+    expect(elapsed(run)).toBe("2.0s");
+    now += 60_000;
+    await runs.message(run, "again");
+    expect(elapsed(run)).toBe("2.0s");
+    expect(run.startedAt).toBe(1_000);
   });
 
   it("refuses a message while the previous turn's session is still closing", async () => {
