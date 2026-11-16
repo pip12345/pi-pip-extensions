@@ -2,7 +2,29 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentConfig, AgentDiagnostic, AgentDiscoveryResult, AgentSource, AgentTools } from "./types.ts";
+
+export type AgentTools = "all" | "none" | "builtins" | string[];
+export type AgentSource = "builtin" | "user" | "legacy" | "project";
+
+export interface AgentConfig {
+  name: string;
+  description: string;
+  model?: string;
+  tools: AgentTools;
+  systemPrompt: string;
+  source: AgentSource;
+  filePath: string;
+}
+
+export interface AgentDiagnostic {
+  path: string;
+  message: string;
+}
+
+export interface AgentDiscoveryResult {
+  agents: AgentConfig[];
+  diagnostics: AgentDiagnostic[];
+}
 
 const BUILTIN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "agents");
 
@@ -117,26 +139,3 @@ export function discoverAgents(cwd: string, options: AgentDiscoveryOptions = {})
   }
   return { agents: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)), diagnostics };
 }
-
-export function formatAgent(agent: AgentConfig): string {
-  return [
-    `agent: ${agent.name}`,
-    `source: ${agent.source}`,
-    `file: ${agent.filePath}`,
-    `description: ${agent.description}`,
-    agent.model ? `model: ${agent.model}` : "model: <parent/current>",
-    `tools: ${Array.isArray(agent.tools) ? agent.tools.join(", ") : agent.tools}`,
-    "",
-    "--- prompt ---",
-    agent.systemPrompt || "(empty)",
-  ].join("\n");
-}
-
-export const AGENT_TEMPLATE = `---
-description: What this agent is good at and when to use it
-# optional: model: provider/model-id
-# optional: tools: all | none | builtins | read, grep, find, ls, bash
----
-
-Write the subagent system prompt here. The caller must pass all task context in the prompt.
-`;

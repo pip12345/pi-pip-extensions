@@ -1,43 +1,44 @@
 # pi-subagents
 
-Minimal quiet subagent task runs for pi.
+Quiet subagent task runs for pi.
 
-A subagent is a child task run with isolated context. The caller must put all needed context in the prompt. Subagents are persisted locally to their parent session and anchored to the parent branch entry that created them.
+A subagent is a separate agent with its own isolated context. It runs one task and returns its final answer. The caller must put all needed context in the prompt.
 
-Usage includes child assistant responses, billed tool results, and persisted background calls such as cache warming.
+Subagents belong to the parent session and live in memory. Starting a new session, resuming another one, reloading, or quitting stops them. `/tree` navigation does not affect them.
 
-## Tool
+## Tools
 
 ```text
-subagent({ agent, prompt, model?, background?, keep?, name? })
-subagent({ id, prompt })                 # continue retained runs
-subagent({ action: "agents" })
-subagent({ action: "get_agent", agent })
-subagent({ action: "models", query? })          # tool-only; exact model override ids
-subagent({ action: "status"|"read", id })
-subagent({ action: "steer", id, message })
-subagent({ action: "background", id? })
-subagent({ action: "cancel"|"keep"|"forget", id })
+subagent({ agent, prompt, model?, background? })
+subagent_message({ id, message, background? })
+subagent_status({ id? })
 ```
 
-Ephemeral subagents can be continued or steered while they are retained. Their TTL is refreshed whenever they run, receive a message/steer, or emit activity. Use `keep:true` or `action:"keep"` to disable TTL expiry. `action:"forget"` toggles a kept run back to ephemeral without changing its branch anchor. Failed or parent-cancelled foreground launches and continuations reject the tool call; status/read remains the successful inspection path for retained failed runs.
+- `subagent` launches a run. A foreground run returns its result. A background run returns its id right away, and the result arrives later as a follow-up message. Aborting a foreground call cancels the run.
+- `subagent_message` sends a steering note to a running subagent, which keeps working on its task. A finished subagent instead continues its conversation with the message as the next prompt.
+- `subagent_status` shows one run's state and latest result, or lists the session's runs when `id` is omitted.
 
-## Commands
+`model` must be `provider/model-id`. Provider-specific model ids may contain more slashes. An unknown model fails with the list of available models for that provider. Without `model`, the run uses the agent file's model, or the parent's current model when the agent file has none.
+
+## Command
 
 ```text
 /subagent
-/subagent view <id-or-name>
-/subagent steer <id-or-name> <message>
-/subagent status <id-or-name>
-/subagent read <id-or-name>
-/subagent keep <id-or-name>
-/subagent forget <id-or-name>
-/subagent cancel <id-or-name>
-/subagent background [id-or-name]
-/subagent agents [name]
+/subagent view <id>
 ```
 
-`/subagent view` opens a fullscreen manager-backed live viewer for output/tools and inline steering. Use ↑/↓/PgUp/PgDn to scroll, End to follow live output, `s` to steer, and `q`/Esc to close. Steering is wrapped as a mid-run note so the child keeps completing its original delegated task unless explicitly told to abandon it. It does not switch into the child session. `Ctrl+Shift+B` moves all foreground subagents to background. Subagents are visible only while their creation anchor is in the current branch; off-branch ephemerals are pruned, off-branch kept runs are hidden. If a parent session file is deleted from `/resume`, its persisted subagents are lazily cleaned up on the next subagent/session activation. Restored workspace paths are recomputed from validated run IDs; malformed persistence indexes are quarantined rather than used for cleanup.
+`/subagent` picks a run and opens its live view. The view shows the prompt, assistant text, tool calls, and the first line of each tool result. Use ↑/↓/PgUp/PgDn to scroll, End to follow live output, `s` to steer, `c` to cancel, and `q`/Esc to close. Steering a finished run continues it in the background, so its reply reaches the parent as a follow-up message.
+
+## What a subagent loads
+
+A subagent starts like a normal pi session in the same working directory. It loads your settings, context files, skills, and the extensions the parent loads, except these packages:
+
+- `pi-subagents`: subagents cannot start their own subagents.
+- `pi-stats`: it would count subagent usage a second time.
+- `pi-prompt-profiles`: the parent's working style is not the subagent's prompt.
+- `pi-question`: subagents have no UI to answer questions.
+
+Pi's built-in MCP, `codemode`, and `tool_search` support is loaded, so configured MCP servers work in subagents. Each subagent connects to the servers while it runs and disconnects when it finishes. Project resources and project MCP servers load only when the parent project is trusted.
 
 ## Agent files
 
@@ -65,22 +66,14 @@ tools: read, grep, find, ls, bash
 System prompt for the subagent.
 ```
 
-Defaults: filename stem for name, the agent file `model` when set, parent/current model when no agent model is set, and `tools: all` when tools is omitted.
+Defaults: filename stem for name, the parent's current model when `model` is not set, and `tools: all` when tools is omitted.
 
-Launch calls can override the agent file/default model without creating a new agent file:
-
-```text
-subagent({ agent: "explore", prompt: "...", model: "anthropic/claude-sonnet-4-5" })
-subagent({ agent: "explore", prompt: "...", model: "openrouter/anthropic/claude-sonnet-4" })
-```
-
-`model` must be `provider/model-id`; provider-specific model IDs may contain additional slashes. Agents can use `subagent({ action: "models", query: "codex" })` to discover exact available override IDs; there is intentionally no `/subagent models` human command because `/model` already owns that UI. The effective model is shown in status/read output and `/subagent view` when known.
+`tools` sets the subagent's active tools after startup. `all` keeps every tool the session activates, including MCP access. `builtins` keeps pi's built-in file and shell tools, and `none` disables tools. A list names exact tools. Include `codemode`, `tool_search`, or `mcp__<server>__<tool>` names in a list to keep MCP access.
 
 ## Settings
 
 Configure in `/pip-settings` under **Subagents**:
 
 - Enabled
-- Ephemeral TTL
 - Max running
 - Inject background results

@@ -28,6 +28,6 @@ describe("pip settings descriptions", () => {
     }
 
     expect(missing).toEqual([]);
-    expect(getPipSettingsRegistry(owner).rows()).toHaveLength(33);
+    expect(getPipSettingsRegistry(owner).rows()).toHaveLength(32);
   });
 });

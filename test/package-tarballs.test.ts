@@ -21,7 +21,7 @@ let featurePacks: PackResult[];
 
 const EXPECTED_STANDALONE_TOOLS: Record<string, string[]> = {
   "pi-question": ["question"],
-  "pi-subagents": ["subagent"],
+  "pi-subagents": ["subagent", "subagent_message", "subagent_status"],
   "pi-todo": ["todo_read", "todo_update", "todo_write"],
   "pi-tool-ui": [],
 };

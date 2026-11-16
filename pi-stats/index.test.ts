@@ -92,15 +92,15 @@ describe("pi-stats", () => {
 
   it("deduplicates cumulative subagent usage by run id and applies continuation deltas", async () => {
     const { __test } = await loadStatsModule();
-    const snapshot = (input: number, output: number, cost: number) => ({ type: "message", message: { role: "toolResult", toolName: "subagent", details: { run: { id: "sa_1", usage: { input, output, cacheRead: 0, cost } } } } });
+    const snapshot = (input: number, output: number, cost: number, toolName = "subagent") => ({ type: "message", message: { role: "toolResult", toolName, details: { run: { id: "sa_1", usage: { input, output, cacheRead: 0, cost } } } } });
     const ctx = createMockCtx({
       entries: [
         { type: "message", message: { role: "user", content: "launch" } },
         snapshot(20, 6, 0.02),
         snapshot(20, 6, 0.02),
         { type: "message", message: { role: "user", content: "continue" } },
-        snapshot(25, 8, 0.03),
-        snapshot(25, 8, 0.03),
+        snapshot(25, 8, 0.03, "subagent_message"),
+        snapshot(25, 8, 0.03, "subagent_status"),
       ],
       model: { contextWindow: 1000 },
     });

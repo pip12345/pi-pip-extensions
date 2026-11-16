@@ -155,8 +155,11 @@ interface SubagentUsageSnapshot {
   usage: Tokens;
 }
 
+// pi-subagents tools whose results carry a run's cumulative usage in details.run.
+const SUBAGENT_TOOLS = new Set(["subagent", "subagent_message", "subagent_status"]);
+
 function subagentUsagesFromToolResult(msg: any): SubagentUsageSnapshot[] {
-  if (msg?.role !== "toolResult" || msg?.toolName !== "subagent") return [];
+  if (msg?.role !== "toolResult" || !SUBAGENT_TOOLS.has(msg?.toolName)) return [];
   const out: SubagentUsageSnapshot[] = [];
   const add = (value: any) => {
     const usage = normalizeUsage(value?.usage);
@@ -238,7 +241,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
       if (standard?.kind === "tool") {
         const row = ensureCurrent(entry);
         addTokens(row, standard.usage);
-        if (msg.toolName === "subagent") {
+        if (SUBAGENT_TOOLS.has(msg.toolName)) {
           addTokens(row.subagents, standard.usage);
           row.subagentCount += 1;
         } else {
@@ -248,7 +251,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
         continue;
       }
 
-      // Pre-0.81 subagent results stored cumulative child usage in details.
+      // Subagent tool results carry the run's cumulative child usage in details.run.
       const usages = subagentUsagesFromToolResult(msg);
       if (!usages.length) continue;
       const row = ensureCurrent(entry);
