@@ -35,32 +35,40 @@ describe("pi-pip-footer token breakdown", () => {
     expect(tokens?.latestCacheHitRate).toBe(0);
   });
 
-  it("counts persisted parent usage plus linked subagent ledger usage without double counting the parent ledger", async () => {
-    const parentSession = "/tmp/parent.jsonl";
-    const childSession = "/tmp/child.jsonl";
+  it("uses persisted session usage without adding the session's ledger events", async () => {
+    const sessionPath = "/tmp/session.jsonl";
     const usageDir = join(home, ".pi", "agent", "pip", "usage", "events", "2026-06-02");
     mkdirSync(usageDir, { recursive: true });
     writeFileSync(
       join(usageDir, "events.jsonl"),
-      [
-        JSON.stringify({ id: "parent-duplicate", ts: Date.UTC(2026, 5, 2, 13), sessionFile: parentSession, provider: "openai", model: "gpt", input: 999, output: 999, cacheRead: 0, cacheWrite: 0, cache: 0, total: 1998, cost: 9.99 }),
-        JSON.stringify({ id: "child", ts: Date.UTC(2026, 5, 2, 12), sessionFile: childSession, provider: "openai", model: "gpt", input: 20, output: 6, cacheRead: 3, cacheWrite: 0, cache: 3, total: 29, cost: 0.02 }),
-      ].join("\n") + "\n",
+      JSON.stringify({ id: "duplicate", ts: Date.UTC(2026, 5, 2, 13), sessionFile: sessionPath, provider: "openai", model: "gpt", input: 999, output: 999, cacheRead: 0, cacheWrite: 0, cache: 0, total: 1998, cost: 9.99 }) + "\n",
       "utf8"
     );
-    const parentsDir = join(home, ".pi", "agent", "pip", "subagents", "parents", "parent-record");
-    mkdirSync(parentsDir, { recursive: true });
-    writeFileSync(join(parentsDir, "runs.json"), JSON.stringify({ parentSessionFile: parentSession, runs: [{ sessionFile: childSession }] }), "utf8");
     const { getHistoricalSessionTokens } = await loadBreakdown();
-    const parentEntries = [
+    const entries = [
       { type: "message", id: "a1", timestamp: Date.UTC(2026, 5, 2, 13), message: { role: "assistant", provider: "openai", model: "gpt", usage: { input: 10, output: 5, cacheRead: 2, cost: { total: 0.01 } } } },
       { type: "message", id: "t1", timestamp: Date.UTC(2026, 5, 2, 13, 1), message: { role: "toolResult", toolName: "paid-tool", usage: { input: 3, output: 1, cost: { total: 0.005 } } } },
       { type: "compaction", id: "c1", timestamp: Date.UTC(2026, 5, 2, 13, 2), tokensBefore: 90_000, usage: { input: 7, output: 2, cost: { total: 0.015 } } },
     ];
-    const ctx = createMockCtx({ sessionManager: { getSessionFile: () => parentSession, getEntries: () => parentEntries } });
+    const ctx = createMockCtx({ sessionManager: { getSessionFile: () => sessionPath, getEntries: () => entries } });
     const tokens = getHistoricalSessionTokens(ctx);
-    expect(tokens).toMatchObject({ input: 40, output: 14, cache: 5, cost: 0.05 });
+    expect(tokens).toMatchObject({ input: 20, output: 8, cache: 2, cost: 0.03 });
     expect(tokens?.latestCacheHitRate).toBe(0);
+  });
+
+  it("falls back to the session's ledger events when the session has no persisted usage", async () => {
+    const sessionPath = "/tmp/legacy.jsonl";
+    const usageDir = join(home, ".pi", "agent", "pip", "usage", "events", "2026-06-02");
+    mkdirSync(usageDir, { recursive: true });
+    const event = { id: "legacy", ts: Date.UTC(2026, 5, 2, 12), sessionFile: sessionPath, provider: "openai", model: "gpt", input: 20, output: 6, cacheRead: 3, cacheWrite: 0, cache: 3, total: 29, cost: 0.02 };
+    writeFileSync(
+      join(usageDir, "events.jsonl"),
+      [event, event, { ...event, id: "other", sessionFile: "/tmp/other.jsonl" }].map((line) => JSON.stringify(line)).join("\n") + "\n",
+      "utf8"
+    );
+    const { getHistoricalSessionTokens } = await loadBreakdown();
+    const ctx = createMockCtx({ sessionManager: { getSessionFile: () => sessionPath, getEntries: () => [] } });
+    expect(getHistoricalSessionTokens(ctx)).toMatchObject({ input: 20, output: 6, cache: 3, cost: 0.02 });
   });
 
   it("counts persisted cache warming without changing the last assistant cache hit rate", async () => {

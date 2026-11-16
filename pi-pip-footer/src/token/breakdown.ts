@@ -58,13 +58,7 @@ function emptyBreakdown(): TokenBreakdown {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cache: 0, total: 0, cost: 0 };
 }
 
-interface TimedBreakdown {
-  tokens: TokenBreakdown;
-  latestTs: number;
-  found: boolean;
-}
-
-function persistedSessionTokenAggregate(ctx: any): TimedBreakdown {
+function persistedSessionTokenAggregate(ctx: any): { tokens: TokenBreakdown; found: boolean } {
   const total = emptyBreakdown();
   let found = false;
   let latestTs = -Infinity;
@@ -84,7 +78,7 @@ function persistedSessionTokenAggregate(ctx: any): TimedBreakdown {
     found = true;
   }
   if (latestCacheHitRate !== undefined) total.latestCacheHitRate = latestCacheHitRate;
-  return { tokens: total, latestTs, found };
+  return { tokens: total, found };
 }
 
 export function getPersistedSessionTokens(ctx: any): TokenBreakdown | undefined {
@@ -94,27 +88,6 @@ export function getPersistedSessionTokens(ctx: any): TokenBreakdown | undefined 
 
 function sessionFile(ctx: any): string | undefined {
   return ctx?.sessionManager?.getSessionFile?.() ?? ctx?.sessionManager?.sessionFile;
-}
-
-function linkedSessionFiles(parentSessionFile: string | undefined): Set<string> {
-  const files = new Set<string>();
-  if (!parentSessionFile) return files;
-  files.add(parentSessionFile);
-  const parentsDir = pipPath("subagents", "parents");
-  if (!existsSync(parentsDir)) return files;
-  for (const dirent of readdirSync(parentsDir, { withFileTypes: true })) {
-    if (!dirent.isDirectory()) continue;
-    const path = join(parentsDir, dirent.name, "runs.json");
-    if (!existsSync(path)) continue;
-    try {
-      const record = JSON.parse(readFileSync(path, "utf8"));
-      if (record?.parentSessionFile !== parentSessionFile && record?.parentSessionKey !== parentSessionFile) continue;
-      for (const run of Array.isArray(record.runs) ? record.runs : []) {
-        if (typeof run?.sessionFile === "string") files.add(run.sessionFile);
-      }
-    } catch {}
-  }
-  return files;
 }
 
 function eventDays(): string[] {
@@ -128,21 +101,20 @@ function eventDays(): string[] {
 let historicalCache: { key: string; expiresAt: number; tokens: TokenBreakdown | undefined } | undefined;
 
 export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean } = {}): TokenBreakdown | undefined {
-  const parentSessionFile = sessionFile(ctx);
-  const ledgerSessions = linkedSessionFiles(parentSessionFile);
   const persisted = persistedSessionTokenAggregate(ctx);
-  // Persisted parent entries are canonical in Pi 0.81. The event ledger remains
-  // the source for linked child sessions and a fallback for legacy parent sessions.
-  if (persisted.found && parentSessionFile) ledgerSessions.delete(parentSessionFile);
-  if (!persisted.found && !ledgerSessions.size) return undefined;
-  const cacheKey = [parentSessionFile ?? "", ...ledgerSessions].sort().join("\0");
+  // Persisted session entries are canonical since Pi 0.81. The usage event ledger is only a
+  // fallback for older sessions that have none.
+  if (persisted.found) return { ...persisted.tokens };
+  const sessionPath = sessionFile(ctx);
+  if (!sessionPath) return undefined;
+  const cacheKey = sessionPath;
   const now = Date.now();
   if (!options.fresh && historicalCache?.key === cacheKey && historicalCache.expiresAt > now) return historicalCache.tokens ? { ...historicalCache.tokens } : undefined;
-  const total = persisted.found ? { ...persisted.tokens } : emptyBreakdown();
+  const total = emptyBreakdown();
   const seen = new Set<string>();
-  let found = persisted.found;
-  let latestTs = persisted.latestTs;
-  let latestCacheHitRate = persisted.tokens.latestCacheHitRate;
+  let found = false;
+  let latestTs = -Infinity;
+  let latestCacheHitRate: number | undefined;
   for (const day of eventDays()) {
     const dayDir = pipPath("usage", "events", day);
     for (const file of readdirSync(dayDir, { withFileTypes: true })) {
@@ -152,7 +124,7 @@ export function getHistoricalSessionTokens(ctx: any, options: { fresh?: boolean 
         if (!line) continue;
         try {
           const event = JSON.parse(line);
-          if (!ledgerSessions.has(event?.sessionFile)) continue;
+          if (event?.sessionFile !== sessionPath) continue;
           const dedupe = typeof event.id === "string" && event.id ? event.id : createHash("sha1").update(line).digest("hex");
           if (seen.has(dedupe)) continue;
           seen.add(dedupe);
