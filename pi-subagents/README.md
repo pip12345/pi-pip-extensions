@@ -15,8 +15,12 @@ subagent_status({ id? })
 ```
 
 - `subagent` launches a run. A foreground run returns its result. A background run returns its id right away, and the result arrives later as a follow-up message. Aborting a foreground call cancels the run.
-- `subagent_message` sends a steering note to a running subagent, which keeps working on its task. A finished subagent instead continues its conversation with the message as the next prompt.
+- `subagent_message` sends a steering note to a running subagent, which keeps working on its task. If the subagent finishes its turn before the note arrives, it handles the note in one more turn. A finished subagent instead continues its conversation with the message as the next prompt.
 - `subagent_status` shows one run's state and latest result, or lists the session's runs when `id` is omitted.
+
+A failed or cancelled foreground run returns an error result instead of its answer.
+
+Each finished turn's usage counts toward the parent session's totals. A foreground turn reports it on its own tool result. A background turn has no tool result of its own, so its usage is added to the parent's next tool result, whichever tool that is. Usage from background turns that finish after the parent's last tool call in a session is not counted.
 
 `model` must be `provider/model-id`. Provider-specific model ids may contain more slashes. An unknown model fails with the list of available models for that provider. Without `model`, the run uses the agent file's model, or the parent's current model when the agent file has none.
 
@@ -68,7 +72,7 @@ System prompt for the subagent.
 
 Defaults: filename stem for name, the parent's current model when `model` is not set, and `tools: all` when tools is omitted.
 
-`tools` sets the subagent's active tools after startup. `all` keeps every tool the session activates, including MCP access. `builtins` keeps pi's built-in file and shell tools, and `none` disables tools. A list names exact tools. Include `codemode`, `tool_search`, or `mcp__<server>__<tool>` names in a list to keep MCP access.
+`tools` limits which tools the subagent can use, including MCP tools that appear after its servers connect. `all` keeps every tool the session activates, including MCP access. `builtins` keeps pi's built-in file and shell tools, and `none` disables tools. A list names exact tools. Include `codemode`, `tool_search`, or `mcp__<server>__<tool>` names in a list to keep MCP access.
 
 ## Settings
 

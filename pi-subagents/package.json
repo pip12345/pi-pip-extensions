@@ -33,6 +33,7 @@
     "src/runs.ts",
     "src/schema.ts",
     "src/settings.ts",
+    "src/usage.ts",
     "src/view.ts",
     "README.md",
     "agents/explore.md",

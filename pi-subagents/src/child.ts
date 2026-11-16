@@ -65,7 +65,12 @@ export interface ChildSession {
 
 export type CreateChildSession = (options: ChildSessionOptions) => Promise<ChildSession>;
 
-function activeTools(tools: AgentTools): string[] | undefined {
+/**
+ * The agent's tools as a createAgentSession allowlist. Pi applies it to tools registered later
+ * too, so MCP tools that appear once their server connects stay limited to the list: they are
+ * reachable only when it names them (`mcp__...`) or `codemode`/`tool_search`.
+ */
+function toolAllowlist(tools: AgentTools): string[] | undefined {
   if (tools === "all") return undefined;
   if (tools === "none") return [];
   if (tools === "builtins") return [...BUILTIN_TOOL_NAMES];
@@ -102,7 +107,7 @@ export const createChildSession: CreateChildSession = async (options) => {
     extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter(childExtensionAllowed) }),
   });
   await resourceLoader.reload();
-  const { session } = await createAgentSession({ cwd: options.cwd, agentDir, sessionManager: options.sessionManager, modelRuntime, settingsManager, resourceLoader });
+  const { session } = await createAgentSession({ cwd: options.cwd, agentDir, sessionManager: options.sessionManager, modelRuntime, settingsManager, resourceLoader, tools: toolAllowlist(options.agent.tools) });
   // AgentSession.dispose() does not emit session_shutdown; Pi's runtime emits it first. Without
   // it, child extensions keep MCP server processes and provider connections alive, which also
   // keeps the parent process from exiting. Pending credential writes are awaited because an OAuth
@@ -121,8 +126,6 @@ export const createChildSession: CreateChildSession = async (options) => {
     await session.bindExtensions({ mode: "print" });
     // Resolve the model only now: extension providers register while the session loads extensions.
     if (options.model) await session.setModel(await resolveModel(modelRuntime, options.model, options.signal));
-    const tools = activeTools(options.agent.tools);
-    if (tools) session.setActiveToolsByName(tools);
   } catch (error) {
     await close().catch(() => undefined);
     throw error;

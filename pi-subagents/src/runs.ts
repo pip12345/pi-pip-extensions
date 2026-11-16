@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { addUsage, emptyUsage, sessionUsageRecord, type TokenUsage } from "../../pip-common/index.ts";
+import { emptyUsage, sumSessionUsage, type TokenUsage } from "../../pip-common/index.ts";
 import type { AgentConfig } from "./agents.ts";
 import type { ChildSession, CreateChildSession } from "./child.ts";
+import { subtractUsage } from "./usage.ts";
 
 export type RunStatus = "running" | "completed" | "error" | "cancelled";
 
@@ -30,13 +31,18 @@ export interface SubagentRun {
   errorText?: string;
   /** Usage across all of the run's turns, including continuations. */
   usage: TokenUsage;
+  /** Usage of the latest turn. Each finished turn reports it to the parent once. */
+  turnUsage: TokenUsage;
   toolCalls: number;
   sessionManager: SessionManager;
   session?: AgentSession;
   /** Transcript captured when the last session was disposed. */
   messages: any[];
   done: Promise<void>;
-  cancelRequested: boolean;
+  /** Aborted to cancel the current turn; replaced when a new turn starts. */
+  abort: AbortController;
+  /** Steering notes that are still on their way into the child session. */
+  steering: Set<Promise<unknown>>;
 }
 
 /** Serializable view of a run for tool results. pi-stats reads `id` and the cumulative `usage`. */
@@ -70,7 +76,10 @@ export interface LaunchOptions {
 export interface SubagentRunsOptions {
   createChild: CreateChildSession;
   maxRunning: () => number;
-  /** Called when a background run finishes; foreground callers read the result themselves. */
+  /**
+   * Called when a background turn ends, including cancelled ones, unless the runs are closing.
+   * Foreground callers read the result themselves.
+   */
   onBackgroundDone: (run: SubagentRun) => void;
   now?: () => number;
 }
@@ -83,6 +92,25 @@ function steeringNote(message: string): string {
     message,
     "</subagent_steering>",
   ].join("\n");
+}
+
+const UPDATE_EVENTS = new Set(["message_end", "tool_execution_start", "tool_execution_end", "compaction_end", "entry_appended"]);
+
+function requestCancel(run: SubagentRun): void {
+  run.abort.abort();
+  void run.session?.abort();
+}
+
+/**
+ * steer() awaits input hooks before it queues a note, so a note can arrive after the child's turn
+ * ended, and Pi then leaves it queued. Returns such notes as the next prompt, so a turn only ends
+ * once every note that was accepted has reached the child.
+ */
+async function takeStrandedSteering(run: SubagentRun, session: AgentSession): Promise<string | undefined> {
+  await Promise.allSettled(run.steering);
+  const { steering, followUp } = session.clearQueue();
+  const notes = [...steering, ...followUp];
+  return notes.length ? notes.join("\n\n") : undefined;
 }
 
 function lastAssistant(messages: any[]): any {
@@ -147,11 +175,13 @@ export class SubagentRuns {
       startedAt: this.now(),
       turnStartedAt: this.now(),
       usage: emptyUsage(),
+      turnUsage: emptyUsage(),
       toolCalls: 0,
       sessionManager: SessionManager.inMemory(options.cwd),
       messages: [],
       done: Promise.resolve(),
-      cancelRequested: false,
+      abort: new AbortController(),
+      steering: new Set(),
     };
     this.start(run, options.prompt, options);
     this.runs.set(run.id, run);
@@ -164,8 +194,16 @@ export class SubagentRuns {
    */
   async message(run: SubagentRun, message: string, options: { background?: boolean; signal?: AbortSignal; onUpdate?: (run: SubagentRun) => void } = {}): Promise<"steered" | "continued"> {
     if (run.status === "running") {
-      if (!run.session?.isStreaming) throw new Error(`Subagent ${run.id} is starting or finishing a turn; try again shortly.`);
-      await run.session.steer(steeringNote(message));
+      const session = run.session;
+      if (!session?.isStreaming) throw new Error(`Subagent ${run.id} is starting or finishing a turn; try again shortly.`);
+      // Registered before the first await, so execute() sees it if the turn ends meanwhile.
+      const delivery = session.steer(steeringNote(message));
+      run.steering.add(delivery);
+      try {
+        await delivery;
+      } finally {
+        run.steering.delete(delivery);
+      }
       return "steered";
     }
     const background = options.background ?? false;
@@ -176,8 +214,7 @@ export class SubagentRuns {
 
   async cancel(run: SubagentRun): Promise<void> {
     if (run.status !== "running") throw new Error(`Subagent ${run.id} is not running.`);
-    run.cancelRequested = true;
-    await run.session?.abort();
+    requestCancel(run);
     await run.done;
   }
 
@@ -185,11 +222,8 @@ export class SubagentRuns {
   async close(): Promise<void> {
     this.closed = true;
     const running = this.list().filter((run) => run.status === "running");
-    for (const run of running) run.cancelRequested = true;
-    await Promise.allSettled(running.map(async (run) => {
-      await run.session?.abort();
-      await run.done;
-    }));
+    for (const run of running) requestCancel(run);
+    await Promise.allSettled(running.map((run) => run.done));
     this.runs.clear();
   }
 
@@ -200,7 +234,8 @@ export class SubagentRuns {
     if (running >= maxRunning) throw new Error(`Maximum concurrent subagents reached (${maxRunning}).`);
     run.status = "running";
     run.background = options.background;
-    run.cancelRequested = false;
+    run.abort = new AbortController();
+    run.turnUsage = emptyUsage();
     run.resultText = undefined;
     run.errorText = undefined;
     run.completedAt = undefined;
@@ -209,50 +244,67 @@ export class SubagentRuns {
   }
 
   private async execute(run: SubagentRun, prompt: string, options: { background: boolean; signal?: AbortSignal; onUpdate?: (run: SubagentRun) => void }): Promise<void> {
+    const cancelled = run.abort.signal;
     // A foreground run belongs to the parent tool call, so aborting that call cancels it.
-    const onParentAbort = () => { run.cancelRequested = true; void run.session?.abort(); };
+    const onParentAbort = () => requestCancel(run);
     options.signal?.addEventListener("abort", onParentAbort, { once: true });
-    if (options.signal?.aborted) run.cancelRequested = true;
+    if (options.signal?.aborted) requestCancel(run);
+    // Usage comes from the child's persisted entries, which include every billable record
+    // (assistant messages, tool results, compaction, cache warming) exactly once.
+    const usageBefore = { ...run.usage };
+    const refreshUsage = () => {
+      run.usage = sumSessionUsage(run.sessionManager.getEntries()) ?? emptyUsage();
+      run.turnUsage = subtractUsage(run.usage, usageBefore);
+    };
     let child: ChildSession | undefined;
     // The outcome is applied only after the child session is closed, so the run counts as running
     // until then and no new turn can start on it while the old session shuts down.
     let outcome: Pick<SubagentRun, "status" | "resultText" | "errorText">;
     try {
-      if (run.cancelRequested) throw new Error("Cancelled");
-      child = await this.options.createChild({ cwd: run.cwd, agent: run.agent, model: run.model, projectTrusted: run.projectTrusted, sessionManager: run.sessionManager });
+      if (cancelled.aborted) throw new Error("Cancelled");
+      child = await this.options.createChild({ cwd: run.cwd, agent: run.agent, model: run.model, projectTrusted: run.projectTrusted, sessionManager: run.sessionManager, signal: cancelled });
       const session = child.session;
       run.session = session;
-      if (run.cancelRequested) throw new Error("Cancelled");
+      if (cancelled.aborted) throw new Error("Cancelled");
       const unsubscribe = session.subscribe((event: any) => {
-        const billed = event.type === "message_end"
-          ? sessionUsageRecord({ type: "message", message: event.message })
-          : event.type === "entry_appended" && event.entry?.type !== "message" ? sessionUsageRecord(event.entry) : undefined;
-        if (billed) addUsage(run.usage, billed.usage);
+        // Pi ignores abort() while a prompt is still in its preflight (input hooks, auth checks), so
+        // a cancelled turn aborts again on every event until it stops.
+        if (cancelled.aborted) void session.abort();
         if (event.type === "tool_execution_start") run.toolCalls += 1;
-        if (event.type === "message_end" || event.type === "tool_execution_start" || event.type === "tool_execution_end") options.onUpdate?.(run);
+        if (UPDATE_EVENTS.has(event.type)) {
+          refreshUsage();
+          options.onUpdate?.(run);
+        }
       });
       try {
         // Child prompts are task text, never commands or prompt templates.
-        await session.prompt(prompt, { expandPromptTemplates: false });
+        let next: string | undefined = prompt;
+        while (next !== undefined && !cancelled.aborted) {
+          await session.prompt(next, { expandPromptTemplates: false });
+          next = await takeStrandedSteering(run, session);
+        }
       } finally {
         unsubscribe();
       }
       const last = lastAssistant(session.messages);
-      if (run.cancelRequested) outcome = { status: "cancelled", errorText: "Cancelled" };
+      if (cancelled.aborted) outcome = { status: "cancelled", errorText: "Cancelled" };
       else if (last?.stopReason === "error" || last?.stopReason === "aborted") outcome = { status: "error", errorText: last.errorMessage ?? session.state.errorMessage ?? `Child run ended with ${last.stopReason}.` };
       else outcome = { status: "completed", resultText: session.getLastAssistantText() ?? "" };
     } catch (error) {
-      outcome = run.cancelRequested ? { status: "cancelled", errorText: "Cancelled" } : { status: "error", errorText: error instanceof Error ? error.message : String(error) };
+      outcome = cancelled.aborted ? { status: "cancelled", errorText: "Cancelled" } : { status: "error", errorText: error instanceof Error ? error.message : String(error) };
     } finally {
-      options.signal?.removeEventListener("abort", onParentAbort);
       if (child) {
         run.messages = [...child.session.messages];
         await child.close().catch(() => undefined);
       }
       run.session = undefined;
+      options.signal?.removeEventListener("abort", onParentAbort);
+      refreshUsage();
     }
+    // A cancel that arrives while the child closes still wins over the outcome decided before it.
+    if (cancelled.aborted) outcome = { status: "cancelled", errorText: "Cancelled", resultText: undefined };
     Object.assign(run, outcome, { completedAt: this.now() });
     options.onUpdate?.(run);
-    if (run.background && run.status !== "cancelled" && !this.closed) this.options.onBackgroundDone(run);
+    if (run.background && !this.closed) this.options.onBackgroundDone(run);
   }
 }

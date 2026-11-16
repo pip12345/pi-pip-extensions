@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { hasTuiCustom, setPromptInstructions } from "../pip-common/index.ts";
+import { addUsage, emptyUsage, hasTuiCustom, setPromptInstructions } from "../pip-common/index.ts";
 import { discoverAgents, type AgentConfig } from "./src/agents.ts";
 import { createChildSession, type CreateChildSession } from "./src/child.ts";
 import { parseModelRef } from "./src/model-ref.ts";
@@ -7,6 +7,7 @@ import { elapsed, formatRun, renderLaunchCall, renderMessageCall, renderRunResul
 import { snapshot, SubagentRuns, type SubagentRun } from "./src/runs.ts";
 import { LaunchParams, MessageParams, StatusParams, type LaunchParamsType, type MessageParamsType, type StatusParamsType } from "./src/schema.ts";
 import { registerSubagentSettings, subagentSettings } from "./src/settings.ts";
+import { addToPiUsage, hasUsage } from "./src/usage.ts";
 import { SubagentViewer } from "./src/view.ts";
 
 function projectTrusted(ctx: any): boolean {
@@ -38,11 +39,16 @@ function runResult(run: SubagentRun) {
   return { content: [{ type: "text" as const, text: formatRun(details.run) }], details };
 }
 
-/** Foreground callers return the result; a failed or cancelled run fails the tool call. */
+/**
+ * Result of a foreground turn. It carries the turn's usage, so Pi counts it in session totals. A
+ * failed or cancelled turn is an error result rather than a throw, so its usage is still counted.
+ */
 function finishedResult(run: SubagentRun) {
-  if (run.status === "error") throw new Error(`Subagent ${run.id} failed: ${run.errorText ?? "unknown error"}`);
-  if (run.status === "cancelled") throw new Error(`Subagent ${run.id} was cancelled.`);
-  return runResult(run);
+  const result = runResult(run);
+  const usage = hasUsage(run.turnUsage) ? addToPiUsage(undefined, run.turnUsage) : undefined;
+  if (run.status === "completed") return { ...result, usage };
+  const text = run.status === "cancelled" ? `Subagent ${run.id} was cancelled.` : `Subagent ${run.id} failed: ${run.errorText ?? "unknown error"}`;
+  return { ...result, content: [{ type: "text" as const, text }], isError: true, usage };
 }
 
 export interface SubagentsExtensionOptions {
@@ -58,11 +64,22 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
       ? "The result arrives as a follow-up message when it finishes; do not poll subagent_status."
       : "Background result messages are disabled; use subagent_status later.";
 
+    // Background turns have no tool result of their own to carry their usage, so it is added to the
+    // parent's next tool result instead. Usage still pending when the session ends is not counted.
+    let unreportedUsage = emptyUsage();
+    pi.on("tool_result", (event: any) => {
+      if (!hasUsage(unreportedUsage)) return;
+      const usage = addToPiUsage(event.usage, unreportedUsage);
+      unreportedUsage = emptyUsage();
+      return { usage };
+    });
+
     const newRuns = () => new SubagentRuns({
       createChild: options.createChild ?? createChildSession,
       maxRunning: () => settings.get("maxRunning", 6),
       onBackgroundDone: (run) => {
-        if (!settings.get("injectBackgroundResults", true)) return;
+        addUsage(unreportedUsage, run.turnUsage);
+        if (run.status === "cancelled" || !settings.get("injectBackgroundResults", true)) return;
         pi.sendUserMessage(`Background subagent ${run.id} finished.\n\n${formatRun(snapshot(run))}`, { deliverAs: "followUp" });
       },
     });
@@ -80,6 +97,7 @@ export function createSubagentsExtension(options: SubagentsExtensionOptions = {}
 
     // Runs belong to one parent session. Replacing or quitting the session stops them.
     pi.on("session_shutdown", async () => {
+      unreportedUsage = emptyUsage();
       const closing = runs;
       runs = newRuns();
       await closing.close();

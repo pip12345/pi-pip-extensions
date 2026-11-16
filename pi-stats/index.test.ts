@@ -92,15 +92,15 @@ describe("pi-stats", () => {
 
   it("deduplicates cumulative subagent usage by run id and applies continuation deltas", async () => {
     const { __test } = await loadStatsModule();
-    const snapshot = (input: number, output: number, cost: number, toolName = "subagent") => ({ type: "message", message: { role: "toolResult", toolName, details: { run: { id: "sa_1", usage: { input, output, cacheRead: 0, cost } } } } });
+    const snapshot = (input: number, output: number, cost: number) => ({ type: "message", message: { role: "toolResult", toolName: "subagent", details: { run: { id: "sa_1", usage: { input, output, cacheRead: 0, cost } } } } });
     const ctx = createMockCtx({
       entries: [
         { type: "message", message: { role: "user", content: "launch" } },
         snapshot(20, 6, 0.02),
         snapshot(20, 6, 0.02),
         { type: "message", message: { role: "user", content: "continue" } },
-        snapshot(25, 8, 0.03, "subagent_message"),
-        snapshot(25, 8, 0.03, "subagent_status"),
+        snapshot(25, 8, 0.03),
+        snapshot(25, 8, 0.03),
       ],
       model: { contextWindow: 1000 },
     });
@@ -269,6 +269,32 @@ describe("pi-stats", () => {
       total: 34,
       cost: 0.06,
     });
+  });
+
+  it("counts native subagent turn usage once and ignores display-only run usage", async () => {
+    const { __test } = await loadStatsModule();
+    const result = (toolName: string, turn?: { input: number; output: number; cost: number }) => ({
+      type: "message",
+      message: {
+        role: "toolResult", toolName,
+        ...(turn ? { usage: { input: turn.input, output: turn.output, cacheRead: 0, cacheWrite: 0, totalTokens: turn.input + turn.output, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: turn.cost } } } : {}),
+        details: { run: { id: "sa_1", usage: { input: 30, output: 9, cacheRead: 0, cost: 0.03 } } },
+      },
+    });
+    const ctx = createMockCtx({
+      entries: [
+        { type: "message", message: { role: "user", content: "launch" } },
+        result("subagent", { input: 20, output: 6, cost: 0.02 }),
+        result("subagent_message", { input: 10, output: 3, cost: 0.01 }),
+        result("subagent_status"),
+        result("subagent_message"),
+      ],
+      model: { contextWindow: 1000 },
+    });
+    const rows = __test.buildSessionRows(ctx);
+    expect(rows[0].subagents).toMatchObject({ input: 30, output: 9 });
+    expect(rows[0].subagents.cost).toBeCloseTo(0.03);
+    expect(rows[0].subagentCount).toBe(2);
   });
 
   it("records aborted assistant usage so cancelled subagent cost remains billable", async () => {

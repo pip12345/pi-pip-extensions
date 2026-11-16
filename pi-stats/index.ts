@@ -155,11 +155,14 @@ interface SubagentUsageSnapshot {
   usage: Tokens;
 }
 
-// pi-subagents tools whose results carry a run's cumulative usage in details.run.
+// pi-subagents tools. Their results report each finished child turn's usage in the native usage field.
 const SUBAGENT_TOOLS = new Set(["subagent", "subagent_message", "subagent_status"]);
 
+// Earlier pi-subagents versions reported only the run's cumulative usage in details.run of a
+// `subagent` result. Current results also carry details.run.usage for display, but report billing
+// natively, so reading the other subagent tools here would count their usage twice.
 function subagentUsagesFromToolResult(msg: any): SubagentUsageSnapshot[] {
-  if (msg?.role !== "toolResult" || !SUBAGENT_TOOLS.has(msg?.toolName)) return [];
+  if (msg?.role !== "toolResult" || msg?.toolName !== "subagent") return [];
   const out: SubagentUsageSnapshot[] = [];
   const add = (value: any) => {
     const usage = normalizeUsage(value?.usage);
@@ -251,7 +254,7 @@ function buildSessionRows(ctx: any): SessionRow[] {
         continue;
       }
 
-      // Subagent tool results carry the run's cumulative child usage in details.run.
+      // Earlier subagent results without native usage carry cumulative child usage in details.
       const usages = subagentUsagesFromToolResult(msg);
       if (!usages.length) continue;
       const row = ensureCurrent(entry);

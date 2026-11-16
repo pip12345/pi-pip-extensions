@@ -36,8 +36,14 @@ class FakeChild {
     for (const listener of this.listeners) listener(event);
   }
 
+  /** Messages are persisted like Pi does, because run usage is read from the session entries. */
+  record(message: any) {
+    this.messages.push(message);
+    this.options.sessionManager.appendMessage(message);
+  }
+
   async prompt(text: string) {
-    this.messages.push({ role: "user", content: [{ type: "text", text }] });
+    this.record({ role: "user", content: [{ type: "text", text }], timestamp: Date.now() });
     this.isStreaming = true;
     this.emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "read", args: { path: "a.ts" } });
     if (this.hold) await this.hold.promise;
@@ -46,7 +52,7 @@ class FakeChild {
       : this.fail
         ? { role: "assistant", content: [], stopReason: "error", errorMessage: this.fail, usage: { input: 2, output: 0, cost: { total: 0 } } }
         : { role: "assistant", content: [{ type: "text", text: `${this.reply}: ${text}` }], stopReason: "stop", usage: { input: 10, output: 5, cost: { total: 0.01 } } };
-    this.messages.push(message);
+    this.record(message);
     this.emit({ type: "message_end", message });
     this.isStreaming = false;
   }
@@ -54,6 +60,10 @@ class FakeChild {
   async steer(text: string) {
     this.steered.push(text);
     return "queued";
+  }
+
+  clearQueue() {
+    return { steering: [], followUp: [] };
   }
 
   async abort() {
@@ -136,12 +146,13 @@ describe("subagent launch", () => {
     await expect(call("subagent", { agent: "nope", prompt: "x" })).rejects.toThrow(/Unknown subagent agent: nope\. Available: .*explore/);
   });
 
-  it("fails the tool call when the child turn errors, while keeping the run addressable", async () => {
+  it("returns an error result with the turn's usage when the child turn errors", async () => {
     const { call } = setup((child) => { child.fail = "rate limited"; });
-    const error = await call("subagent", { agent: "general", prompt: "x" }).catch((caught: Error) => caught);
-    expect(error.message).toMatch(/^Subagent (sa_\w+) failed: rate limited$/);
-    const id = /^Subagent (sa_\w+)/.exec(error.message)![1];
-    const status = await call("subagent_status", { id });
+    const result = await call("subagent", { agent: "general", prompt: "x" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/^Subagent sa_\w+ failed: rate limited$/);
+    expect(result.usage).toMatchObject({ input: 2, totalTokens: 2 });
+    const status = await call("subagent_status", { id: result.details.run.id });
     expect(status.details.run).toMatchObject({ status: "error", errorText: "rate limited", usage: { input: 2 } });
   });
 
@@ -151,7 +162,9 @@ describe("subagent launch", () => {
     const pending = call("subagent", { agent: "general", prompt: "slow" }, controller.signal);
     await flush();
     controller.abort();
-    await expect(pending).rejects.toThrow(/was cancelled/);
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/was cancelled/);
     expect(children[0].aborted).toBe(true);
   });
 
@@ -275,6 +288,88 @@ describe("subagent_message", () => {
     const { call } = setup();
     const first = await call("subagent", { agent: "general", prompt: "x" });
     await expect(call("subagent_message", { id: "sa_missing", message: "x" })).rejects.toThrow(`Known ids: ${first.details.run.id}`);
+  });
+});
+
+const AGENT = { name: "general", description: "", tools: "all" as const, systemPrompt: "", source: "builtin" as const, filePath: "" };
+
+describe("subagent usage", () => {
+  it("reports each foreground turn's usage on its own tool result", async () => {
+    const { call } = setup();
+    const first = await call("subagent", { agent: "general", prompt: "a" });
+    expect(first.usage).toMatchObject({ input: 10, output: 5, totalTokens: 15, cost: { total: 0.01 } });
+    const second = await call("subagent_message", { id: first.details.run.id, message: "b" });
+    expect(second.usage).toMatchObject({ input: 10, output: 5, totalTokens: 15 });
+    expect(second.details.run.usage).toMatchObject({ input: 20, output: 10 });
+    const status = await call("subagent_status", { id: first.details.run.id });
+    expect(status.usage).toBeUndefined();
+  });
+
+  it("adds background turn usage to the parent's next tool result", async () => {
+    const { pi, ctx, call } = setup();
+    const first = await call("subagent", { agent: "general", prompt: "a", background: true });
+    await call("subagent", { agent: "general", prompt: "b", background: true });
+    expect(first.usage).toBeUndefined();
+    await flush();
+    await flush();
+    expect(pi.userMessages).toHaveLength(2);
+    const [patch] = await emitEvent(pi, "tool_result", { toolName: "read", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 } } }, ctx);
+    expect(patch.usage).toMatchObject({ input: 21, output: 11, totalTokens: 32, cost: { input: 0.1, output: 0.2 } });
+    expect(patch.usage.cost.total).toBeCloseTo(0.32);
+    expect(await emitEvent(pi, "tool_result", { toolName: "read" }, ctx)).toEqual([undefined]);
+  });
+
+  it("drops unreported background usage when the parent session ends", async () => {
+    const { pi, ctx, call } = setup();
+    await call("subagent", { agent: "general", prompt: "a", background: true });
+    await flush();
+    await flush();
+    await emitEvent(pi, "session_shutdown", { reason: "new" }, ctx);
+    expect(await emitEvent(pi, "tool_result", { toolName: "read" }, ctx)).toEqual([undefined]);
+  });
+
+  it("counts every billable entry in the child session, including compaction and cache warming", async () => {
+    const runs = new SubagentRuns({
+      createChild: async (options) => {
+        const child = new FakeChild(options);
+        const prompt = child.prompt.bind(child);
+        child.prompt = async (text: string) => {
+          await prompt(text);
+          const sm = options.sessionManager;
+          sm.appendCompaction("summary", sm.getEntries()[0]!.id, 100, undefined, false, { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 120, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.1 } });
+          sm.appendUsage("cache_warm", "p", "m", { input: 0, output: 0, cacheRead: 50, cacheWrite: 0, totalTokens: 50, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 } });
+        };
+        return { session: child as any, close: async () => child.dispose() };
+      },
+      maxRunning: () => 5,
+      onBackgroundDone: () => undefined,
+    });
+    const run = runs.launch({ agent: AGENT, prompt: "x", cwd: "/", projectTrusted: true, background: false });
+    await run.done;
+    expect(run.turnUsage).toMatchObject({ input: 110, output: 25, cacheRead: 50 });
+    expect(run.turnUsage.cost).toBeCloseTo(0.111);
+  });
+});
+
+describe("subagent cancellation", () => {
+  it("reports a cancel that arrives while the child closes as cancelled", async () => {
+    const closing = deferred();
+    const finished: string[] = [];
+    let closeStarted!: () => void;
+    const closeEntered = new Promise<void>((resolve) => { closeStarted = resolve; });
+    const runs = new SubagentRuns({
+      createChild: async (options) => ({ session: new FakeChild(options) as any, close: async () => { closeStarted(); await closing.promise; } }),
+      maxRunning: () => 5,
+      onBackgroundDone: (run) => finished.push(run.status),
+    });
+    const run = runs.launch({ agent: AGENT, prompt: "x", cwd: "/", projectTrusted: true, background: true });
+    await closeEntered;
+    const cancel = runs.cancel(run);
+    closing.resolve();
+    await cancel;
+    expect(run.status).toBe("cancelled");
+    expect(run.resultText).toBeUndefined();
+    expect(finished).toEqual(["cancelled"]);
   });
 });
 
